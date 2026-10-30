@@ -1,0 +1,12 @@
+# Deterministic environment reset request/response.
+uint64 seed
+bool randomization_enabled
+string randomization_profile
+bool has_object_pose_override
+geometry_msgs/Pose object_pose_override
+string task_instruction
+---
+bool success
+string message
+uint64 applied_seed
+string applied_config_json

@@ -1,0 +1,16 @@
+# Request a batch of scripted-expert rollouts.
+uint32 num_rollouts
+uint64 seed
+string task_instruction
+uint8 sampling_mode
+string failure_distribution_ref
+bool include_perturbed
+
+uint8 SAMPLING_UNIFORM=0
+uint8 SAMPLING_FAILURE_TARGETED=1
+---
+bool success
+uint32 num_generated
+uint32 num_failed
+string message
+string result_metadata_json
