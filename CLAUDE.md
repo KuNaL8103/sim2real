@@ -148,8 +148,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=113 failed=0 skipped=0 errors=0 | date=2026-10-30 | base_commit=none
-- Task 1 status: complete with pending checks: VS Code WSL check, spec copy, CI run, remote push
+- Last verified test run: passed=113 failed=0 skipped=0 errors=0 | date=2026-10-30 | base_commit=ce2eaa6
+- Task 1 status: complete with pending checks: VS Code WSL check, spec copy, CI run
 
 Run breakdown:
 
@@ -161,6 +161,8 @@ Run breakdown:
   also passed in the colcon console; they are not counted in the xunit total.
 - `ros2 interface list` shows all six `sim2real_msgs` interfaces; each
   `ros2 interface show` exits successfully.
+- Initial push to `origin/main` succeeded; `main` tracks `origin/main` at `ce2eaa6`.
+  The GitHub Actions run has **not** been verified by this session.
 
 There is no previous test count to compare against; this is the first task.
 
