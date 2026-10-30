@@ -193,9 +193,10 @@ core. Any change must update both, this table, and `tests/test_contracts.py`.
    (717 lines); its SHA-256 is recorded in `CLAUDE.md`.
 7. **License is provisional** (Apache-2.0 in `pyproject.toml` and all
    `package.xml` files).
-8. **ROS build verified locally**, not in CI: `colcon build --symlink-install`
-   and `colcon test` passed on 2026-10-30 with ROS Jazzy. The GitHub ROS job is
-   still unverified.
+8. **ROS build verified locally and in CI**: `colcon build --symlink-install`
+   and `colcon test` passed on 2026-10-30 with ROS Jazzy. CI run `41052752256`
+   reports both the core and ROS jobs as `success` via the GitHub API; the user
+   still needs to confirm the Actions tab.
 9. **`.venv-ros` includes an editable install of the core package** so the same
    suite can run with ROS available. It installs no dependencies (`--no-deps`),
    preserving the system NumPy.

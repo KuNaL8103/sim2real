@@ -143,8 +143,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=113 failed=0 skipped=0 errors=0 | date=2026-10-30 | base_commit=ce2eaa6
-- Task 1 status: complete with pending checks: CI run
+- Last verified test run: passed=113 failed=0 skipped=0 errors=0 | date=2026-10-30 | base_commit=838a2b1
+- Task 1 status: complete with pending checks: CI run (user confirmation)
 
 Run breakdown:
 
@@ -156,8 +156,10 @@ Run breakdown:
   also passed in the colcon console; they are not counted in the xunit total.
 - `ros2 interface list` shows all six `sim2real_msgs` interfaces; each
   `ros2 interface show` exits successfully.
-- Initial push to `origin/main` succeeded; `main` tracks `origin/main` at `ce2eaa6`.
-  The GitHub Actions run has **not** been verified by this session.
+- Initial push succeeded at `ce2eaa6`; CI fixes landed at `838a2b1`.
+- GitHub Actions run `41052752256` for `838a2b1`: **both jobs reported `success`**
+  via the GitHub API (Core and ROS 2 Jazzy). User confirmation from the Actions
+  tab is still pending, so CI is not marked fully verified here.
 
 There is no previous test count to compare against; this is the first task.
 
@@ -166,8 +168,8 @@ There is no previous test count to compare against; this is the first task.
 - No simulator, dataset, training, mapping, inference, or safety code exists.
 - Docker image not pulled or built; Docker WSL integration is disabled.
 - The first CI run failed twice: `setup-uv@v10` had no floating tag, and rosdep
-  has no rule for the `ament_python` build type. Both are fixed in the workflow;
-  a green run is still pending.
+  has no rule for the `ament_python` build type. Both are fixed in `838a2b1`;
+  run `41052752256` reports both jobs green via API, pending user confirmation.
 - `.venv-ml` is documented only and not created.
 - License is provisional (Apache-2.0).
 - `hydra-core`/`omegaconf` are installed for later tasks but unused in Task 1.
@@ -177,5 +179,6 @@ There is no previous test count to compare against; this is the first task.
 
 - [x] VS Code WSL verification — confirmed 2026-10-30 from user terminal output.
 - [x] Copy the master spec to `docs/MASTER_SPEC.md` — SHA-256 recorded above.
-- [ ] Confirm the GitHub Actions tab shows both jobs green after the CI fix.
+- [ ] Confirm the GitHub Actions tab shows both jobs green after the CI fix
+  (API run `41052752256` reports `success` for both).
 - [ ] Approve and build the Docker image separately if desired.
