@@ -39,19 +39,14 @@ preflight, not a claim that the environment is fully validated.
 | CUDA toolkit | Not installed and not claimed; `nvidia-smi` works through the Windows driver |
 | Docker | Windows Docker CLI path is visible, but WSL integration is **disabled** (`docker` unusable here) |
 | GitHub CLI | `gh` not installed (not needed for push via git credentials) |
-| VS Code WSL check | **PENDING** — user has not yet supplied the integrated-terminal output |
+| VS Code WSL check | **VERIFIED 2026-10-30** from user-supplied integrated-terminal output: `WSL_DISTRO_NAME=Ubuntu-24.04`, kernel `6.18.54.1-microsoft-standard-WSL2`, `pwd=/home/kunal/Python/sim2real`; `ms-vscode-remote.remote-wsl` is installed. Status-bar text was not included in that output. |
 
-**VS Code WSL check: PENDING.** Do not write "VS Code WSL verified" or
-"environment ready" until the user confirms:
+**VS Code WSL check: VERIFIED** by the user's terminal output on 2026-10-30.
+The status bar itself was not captured, but the integrated terminal is the WSL
+Ubuntu-24.04 environment.
 
-```bash
-echo $WSL_DISTRO_NAME ; uname -r ; pwd
-```
-
-expected `Ubuntu-24.04`, a kernel containing `microsoft-standard-WSL2`, and a
-`/home` path, with the VS Code status bar showing `WSL: Ubuntu-24.04`.
-
-**Master spec SHA-256:** pending. `docs/MASTER_SPEC.md` is a placeholder.
+**Master spec SHA-256:** `3ec2f13b8abc8f61ee65a9b66683346f8557fe85d3ae1959d6cab13986b3d1ad`
+(717 lines, 43,406 bytes). `docs/MASTER_SPEC.md` is the real specification.
 
 ## Canonical commands
 
@@ -149,7 +144,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 ## Current status
 
 - Last verified test run: passed=113 failed=0 skipped=0 errors=0 | date=2026-10-30 | base_commit=ce2eaa6
-- Task 1 status: complete with pending checks: VS Code WSL check, spec copy, CI run
+- Task 1 status: complete with pending checks: CI run
 
 Run breakdown:
 
@@ -169,9 +164,10 @@ There is no previous test count to compare against; this is the first task.
 ## Known limitations
 
 - No simulator, dataset, training, mapping, inference, or safety code exists.
-- `docs/MASTER_SPEC.md` is a placeholder; no spec hash recorded.
 - Docker image not pulled or built; Docker WSL integration is disabled.
-- CI workflow not executed; first run depends on the push and the Actions tab.
+- The first CI run failed twice: `setup-uv@v10` had no floating tag, and rosdep
+  has no rule for the `ament_python` build type. Both are fixed in the workflow;
+  a green run is still pending.
 - `.venv-ml` is documented only and not created.
 - License is provisional (Apache-2.0).
 - `hydra-core`/`omegaconf` are installed for later tasks but unused in Task 1.
@@ -179,7 +175,7 @@ There is no previous test count to compare against; this is the first task.
 
 ## Pending manual checks
 
-- [ ] VS Code WSL verification (`echo $WSL_DISTRO_NAME ; uname -r ; pwd` from the integrated terminal).
-- [ ] Copy the master spec to `docs/MASTER_SPEC.md` and record its SHA-256.
-- [ ] Check the GitHub Actions tab after the first push.
+- [x] VS Code WSL verification — confirmed 2026-10-30 from user terminal output.
+- [x] Copy the master spec to `docs/MASTER_SPEC.md` — SHA-256 recorded above.
+- [ ] Confirm the GitHub Actions tab shows both jobs green after the CI fix.
 - [ ] Approve and build the Docker image separately if desired.

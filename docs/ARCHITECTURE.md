@@ -185,11 +185,12 @@ core. Any change must update both, this table, and `tests/test_contracts.py`.
 4. **Docker image not built or pulled.** The tag `ros:jazzy-ros-base` was
    verified against Docker Hub (HTTP 200) and the Dockerfile was reviewed by
    reading it. Building requires separate approval.
-5. **CI action majors** were checked on 2026-10-30 via the GitHub releases API
-   (`actions/checkout` v7.0.1, `astral-sh/setup-uv` v10.3.3) and pinned by
-   major. The workflow itself has not run yet.
-6. **`docs/MASTER_SPEC.md` is a placeholder** until the user copies the master
-   specification. No spec hash is recorded.
+5. **CI action refs:** `actions/checkout@v7` (floating major exists) and
+   `astral-sh/setup-uv@v10.3.3`. `setup-uv` publishes version tags but **no
+   floating `v10` tag**, which caused the first CI failure; it is now pinned to
+   the exact verified release.
+6. **`docs/MASTER_SPEC.md` is the real specification** copied by the user
+   (717 lines); its SHA-256 is recorded in `CLAUDE.md`.
 7. **License is provisional** (Apache-2.0 in `pyproject.toml` and all
    `package.xml` files).
 8. **ROS build verified locally**, not in CI: `colcon build --symlink-install`
@@ -198,3 +199,7 @@ core. Any change must update both, this table, and `tests/test_contracts.py`.
 9. **`.venv-ros` includes an editable install of the core package** so the same
    suite can run with ROS available. It installs no dependencies (`--no-deps`),
    preserving the system NumPy.
+10. **CI skips the `ament_python` rosdep key.** `ament_python` is a ROS build
+    type, not a package: `rosdep resolve ament_python` returns "no rosdep rule"
+    locally and in the container. CI passes `--skip-keys ament_python`; all
+    other dependencies resolve normally.
