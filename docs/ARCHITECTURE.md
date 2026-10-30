@@ -19,10 +19,35 @@ components work.
 | Tier | Purpose | Backend | Status |
 | --- | --- | --- | --- |
 | dev/test | CPU-only algorithms, contracts, CI | fake backend (planned Task 2) | scaffolded |
-| high-fidelity | MuJoCo first, Isaac Sim optional | MuJoCo / Isaac Sim | not implemented |
+| high-fidelity | MuJoCo first, Isaac Sim optional | MuJoCo / Isaac Sim | MuJoCo pending Task 2; **Isaac Sim UNAVAILABLE on this machine** (published requirements) |
 | physical | real Franka Panda | ROS 2 + ros2_control | out of scope; no hardware |
 
 The project has no physical robot. Simulator results are not a safety case.
+
+## Hardware reality (2026-10-30)
+
+Official Isaac Sim 6.2.0 requirements:
+<https://docs.isaacsim.omniverse.nvidia.com/6.2.0/installation/requirements.html>
+
+| Resource | Isaac Sim 6.2.0 minimum | This machine | Result |
+| --- | --- | --- | --- |
+| GPU | GeForce RTX 4080 | RTX 4050 Laptop | below |
+| VRAM | 16 GB | 6 GB | below |
+| RAM | 32 GB | 5.8 GiB visible in WSL | below |
+| CPU cores | 4 | 2 vCPU | below |
+| Storage | 50 GB SSD | 930 GB free | meets |
+| Driver | Linux 595.58.03 | 551.76 | below tested version |
+
+Consequences:
+
+- **Isaac Sim high-fidelity tier: UNAVAILABLE on this machine**, based on
+  published requirements rather than a local test. No install is authorized;
+  the guarded adapter and documentation remain.
+- **SmolVLA fine-tuning feasibility: UNKNOWN** until Task 8 measures it. Cloud
+  or Colab-style GPU runs are an alternative, with checkpoints and provenance
+  metadata brought back into the repository.
+- **MuJoCo rendering plus ROS on 5.8 GiB RAM is a risk.** Task 2 must use small
+  camera resolutions and measure process memory.
 
 ## Core library vs ROS adapters
 
@@ -160,8 +185,12 @@ Why the split:
 | 7 | 2026-10-30 | Images stay on disk; `RolloutEpisode` carries metadata/paths only | Message size and replay performance |
 | 8 | 2026-10-30 | Separate `.venv` and `.venv-ros`; never mix | ROS ABI and NumPy version constraints |
 | 9 | 2026-10-30 | `metadata_json` is bounded (64 KiB) and rejects NaN/Infinity | Portable, safe transport |
-| 10 | 2026-10-30 | License is provisionally Apache-2.0 | Common ROS 2 default; confirm before distribution |
-| 11 | 2026-10-30 | Development path is `/home/kunal/Python/sim2real` | User selected the existing empty Linux-FS directory over `~/projects/sim2real` |
+| 10 | 2026-10-30 | License is provisionally Apache-2.0 | Common ROS 2 default; user choice still pending |
+| 11 | 2026-10-30 | Repository root is discovered dynamically (`git rev-parse --show-toplevel`); no fixed path is assumed | Docs and scripts must work from any checkout location; the verified checkout is `/home/kunal/Python/sim2real` |
+| 12 | 2026-10-30 | Core and ROS test baselines use separate status lines | The core suite can skip ROS tests; mixing counts hid the core result (the old line recorded 113, a ROS count) |
+| 13 | 2026-10-30 | Isaac Sim 6.2.0 tier marked UNAVAILABLE on this machine | Published minimums (16 GB VRAM, 32 GB RAM, 4 cores, RTX 4080) exceed measured hardware; not tested |
+| 14 | 2026-10-30 | SmolVLA fine-tuning feasibility deferred to Task 8 | 6 GB VRAM may be insufficient; must be measured, with cloud GPU as a fallback |
+| 15 | 2026-10-30 | Remove `<buildtool_depend>ament_python</buildtool_depend>`; rely on `<export><build_type>ament_python</build_type>` | The official Jazzy template does not declare that buildtool dependency, and rosdep has no rule for it |
 
 ## Interface changelog
 
@@ -175,32 +204,38 @@ core. Any change must update both, this table, and `tests/test_contracts.py`.
 
 ## Deviations from the Task 1 request
 
-1. **Repository path.** The user chose `/home/kunal/Python/sim2real` instead of
-   `~/projects/sim2real`. It is on the Linux filesystem (not `/mnt/c`), so the
-   performance/permission rationale is satisfied; the documented path differs.
+1. **Repository path is not assumed.** Scripts resolve their own root, and
+   readers should use `git rev-parse --show-toplevel`. The Task 1 checkout was
+   `/home/kunal/Python/sim2real` on the Linux filesystem (not `/mnt/c`); that is
+   a verified fact, not a required location.
 2. **`uv` installed during Task 1** from the official installer into
    `~/.local/bin` (approved by the user). No sudo was used.
-3. **`src/sim2real/status.py` added.** Required so `CLAUDE.md` status lines can
-   be parsed by later tasks; this is the baseline parser requested in Task 1.
+3. **`src/sim2real/status.py` added and extended.** It parses the mandatory
+   core status line and the optional ROS status line; the core line format is
+   unchanged.
 4. **Docker image not built or pulled.** The tag `ros:jazzy-ros-base` was
    verified against Docker Hub (HTTP 200) and the Dockerfile was reviewed by
-   reading it. Building requires separate approval.
+   reading it. Building requires separate approval and Docker Desktop WSL
+   integration.
 5. **CI action refs:** `actions/checkout@v7` (floating major exists) and
    `astral-sh/setup-uv@v10.3.3`. `setup-uv` publishes version tags but **no
    floating `v10` tag**, which caused the first CI failure; it is now pinned to
-   the exact verified release.
+   the exact verified release. Commit-SHA pinning is an open decision.
 6. **`docs/MASTER_SPEC.md` is the real specification** copied by the user
-   (717 lines); its SHA-256 is recorded in `CLAUDE.md`.
+   (717 lines, LF-only). Its committed-copy SHA-256 is recorded in `CLAUDE.md`;
+   comparison with the original Windows file is pending.
 7. **License is provisional** (Apache-2.0 in `pyproject.toml` and all
-   `package.xml` files).
+   `package.xml` files). No `LICENSE` file exists; user choice is pending.
 8. **ROS build verified locally and in CI**: `colcon build --symlink-install`
-   and `colcon test` passed on 2026-10-30 with ROS Jazzy. CI run `41052752256`
-   reports both the core and ROS jobs as `success` via the GitHub API; the user
-   still needs to confirm the Actions tab.
+   and `colcon test` passed on 2026-10-30 with ROS Jazzy. CI run `41053040940`
+   reports both jobs `success` via the GitHub API; the close-out commit still
+   needs user confirmation in the Actions tab.
 9. **`.venv-ros` includes an editable install of the core package** so the same
    suite can run with ROS available. It installs no dependencies (`--no-deps`),
    preserving the system NumPy.
-10. **CI skips the `ament_python` rosdep key.** `ament_python` is a ROS build
-    type, not a package: `rosdep resolve ament_python` returns "no rosdep rule"
-    locally and in the container. CI passes `--skip-keys ament_python`; all
-    other dependencies resolve normally.
+10. **`ament_python` buildtool dependency removed.** The official
+    `ros2 pkg create --build-type ament_python` template declares only
+    `<export><build_type>ament_python</build_type>`. Removing our extra
+    `<buildtool_depend>` let `rosdep install --from-paths ros2_ws/src
+    --ignore-src --simulate` succeed **without** `--skip-keys`; `colcon build`
+    and `colcon test` still pass.

@@ -17,6 +17,10 @@ rclpy = pytest.importorskip(
     "rclpy",
     reason="rclpy is not importable; source /opt/ros/jazzy/setup.bash and build ros2_ws",
 )
+pytest.importorskip(
+    "sim2real_msgs.msg",
+    reason="sim2real_msgs is not importable; build and source ros2_ws before running",
+)
 
 from builtin_interfaces.msg import Time  # noqa: E402
 from geometry_msgs.msg import Pose  # noqa: E402

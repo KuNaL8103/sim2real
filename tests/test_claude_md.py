@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from sim2real.status import StatusParseError, parse_last_verified, parse_task1_status
+from sim2real.status import (
+    StatusParseError,
+    parse_last_verified,
+    parse_last_verified_ros,
+    parse_task1_status,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_MD = ROOT / "CLAUDE.md"
@@ -24,6 +29,21 @@ def test_last_verified_line_is_parseable():
     assert status.errors >= 0
     assert len(status.date) == 10
     assert status.base_commit == "none" or 7 <= len(status.base_commit) <= 40
+
+
+def test_ros_verified_line_is_parseable():
+    status = parse_last_verified_ros(claude_text())
+    assert status is not None
+    assert status.passed >= 0
+    assert status.failed >= 0
+    assert status.skipped >= 0
+    assert status.errors >= 0
+    assert len(status.date) == 10
+    assert status.base_commit == "none" or 7 <= len(status.base_commit) <= 40
+
+
+def test_ros_verified_line_is_optional():
+    assert parse_last_verified_ros("no ROS status here") is None
 
 
 def test_task1_status_line_is_parseable():

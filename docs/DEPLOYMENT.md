@@ -11,7 +11,7 @@ repository is a CPU-only development image and has **not** been built or pulled.
 | Tier | Target | Status |
 | --- | --- | --- |
 | dev/test | CPU-only, fake backend | scaffolded; fake backend is Task 2 |
-| high-fidelity | MuJoCo, optional Isaac Sim | not implemented |
+| high-fidelity | MuJoCo, optional Isaac Sim | MuJoCo pending Task 2; Isaac Sim **unavailable on this machine** per published requirements (see `ARCHITECTURE.md`) |
 | physical | Franka Panda via ROS 2 / ros2_control | out of scope |
 
 ## Container image
@@ -23,6 +23,16 @@ repository is a CPU-only development image and has **not** been built or pulled.
 - Installs `colcon`, `rosdep`, `curl`, `git`, and a pinned `uv` (0.13.6).
 - No GPU runtime, no CUDA, no datasets, no model weights.
 - Build approval is required; image size is a large download.
+
+### Host constraints for Docker
+
+- Docker Desktop's WSL integration for **Ubuntu-24.04 is currently disabled**.
+  Enabling it is required before `docker` can run in this distro.
+- The WSL VM is configured with `memory=6GB` (5.8 GiB visible), 2 processors,
+  and 8 GB swap. Building or running images competes with ROS 2, RViz, and
+  MuJoCo for that RAM.
+- Do not build or pull the image without explicit approval; no build has been
+  attempted in this project.
 
 ## Environment setup
 

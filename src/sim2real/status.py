@@ -1,7 +1,8 @@
 """Machine-readable parsing of the status lines in ``CLAUDE.md``.
 
 Later tasks read the verified test counts from here instead of re-parsing
-prose. Keep the two line formats in ``CLAUDE.md`` exactly as documented.
+prose. The *core* line is mandatory; the *ROS* line is optional. Keep the line
+formats in ``CLAUDE.md`` exactly as documented.
 """
 
 from __future__ import annotations
@@ -11,6 +12,13 @@ from dataclasses import dataclass
 
 LAST_VERIFIED_RE = re.compile(
     r"^- Last verified test run: passed=(?P<passed>\d+) failed=(?P<failed>\d+) "
+    r"skipped=(?P<skipped>\d+) errors=(?P<errors>\d+) \| date=(?P<date>\d{4}-\d{2}-\d{2}) "
+    r"\| base_commit=(?P<base_commit>[0-9a-fA-F]{7,40}|none)$",
+    re.MULTILINE,
+)
+
+LAST_VERIFIED_ROS_RE = re.compile(
+    r"^- Last verified ROS test run: passed=(?P<passed>\d+) failed=(?P<failed>\d+) "
     r"skipped=(?P<skipped>\d+) errors=(?P<errors>\d+) \| date=(?P<date>\d{4}-\d{2}-\d{2}) "
     r"\| base_commit=(?P<base_commit>[0-9a-fA-F]{7,40}|none)$",
     re.MULTILINE,
@@ -42,11 +50,7 @@ class TaskStatus:
     pending: tuple[str, ...]
 
 
-def parse_last_verified(text: str) -> TestRunStatus:
-    """Parse the ``Last verified test run`` line from CLAUDE.md text."""
-    match = LAST_VERIFIED_RE.search(text)
-    if match is None:
-        raise StatusParseError("CLAUDE.md is missing a parseable 'Last verified test run' line")
+def _status_from_match(match: re.Match[str]) -> TestRunStatus:
     return TestRunStatus(
         passed=int(match.group("passed")),
         failed=int(match.group("failed")),
@@ -55,6 +59,26 @@ def parse_last_verified(text: str) -> TestRunStatus:
         date=match.group("date"),
         base_commit=match.group("base_commit"),
     )
+
+
+def parse_last_verified(text: str) -> TestRunStatus:
+    """Parse the mandatory ``Last verified test run`` (core) line."""
+    match = LAST_VERIFIED_RE.search(text)
+    if match is None:
+        raise StatusParseError("CLAUDE.md is missing a parseable 'Last verified test run' line")
+    return _status_from_match(match)
+
+
+def parse_last_verified_ros(text: str) -> TestRunStatus | None:
+    """Parse the optional ``Last verified ROS test run`` line.
+
+    Returns ``None`` when the line is absent, because ROS may not be installed
+    on every machine. The line is never fabricated when ROS tests did not run.
+    """
+    match = LAST_VERIFIED_ROS_RE.search(text)
+    if match is None:
+        return None
+    return _status_from_match(match)
 
 
 def parse_task1_status(text: str) -> TaskStatus:
