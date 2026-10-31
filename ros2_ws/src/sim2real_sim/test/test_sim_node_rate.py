@@ -19,7 +19,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 try:
     import rclpy
-    from rclpy.executors import MultiThreadedExecutor
+    from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
+    from rclpy.node import Node
     from sensor_msgs.msg import JointState as JointStateMsg
     from sim2real_sim.sim_node import SimNode
 
@@ -43,15 +44,22 @@ class TestSimNodeRate(unittest.TestCase):
         node = SimNode(injected_backend=backend)
         executor = MultiThreadedExecutor(num_threads=2)
         executor.add_node(node)
+        # Measure from a separate node/executor: sharing the sim node's executor
+        # makes the probe compete with timers and can drop callbacks on CI.
+        probe = Node("rate_probe")
+        probe_executor = SingleThreadedExecutor()
+        probe_executor.add_node(probe)
         counter = {"joint": 0}
-        node.create_subscription(
+        probe.create_subscription(
             JointStateMsg,
             contracts.JOINT_STATES_TOPIC,
             lambda _message: counter.__setitem__("joint", counter["joint"] + 1),
             10,
         )
         thread = threading.Thread(target=executor.spin, daemon=True)
+        probe_thread = threading.Thread(target=probe_executor.spin, daemon=True)
         try:
+            probe_thread.start()
             thread.start()
             # Wait until DDS discovery is complete and the subscription is
             # actually receiving; otherwise a CI startup delay is counted as a
@@ -85,6 +93,9 @@ class TestSimNodeRate(unittest.TestCase):
             )
             self.assertLessEqual(stats["published"], 10)
         finally:
+            probe_executor.shutdown()
+            probe_thread.join(timeout=2.0)
+            probe.destroy_node()
             executor.shutdown()
             thread.join(timeout=2.0)
             node.destroy_node()
