@@ -80,8 +80,8 @@ Therefore:
   with checkpoints and provenance metadata brought back into the repo.
 - **Task 2b measured MuJoCo limits (8 vCPU / 9.7 GiB):** with images off,
   `/joint_states` and `/tf` run at **~20 Hz**. With images on and software
-  rendering, `/joint_states` and `/tf` still run at **19.97 Hz**, while the
-  overhead image is **2.67 Hz**; ROS-node peak RSS **912,564 KiB**. The camera
+  rendering, `/joint_states` and `/tf` run at **20.00/20.01 Hz**, while the
+  overhead image is **3.86 Hz**; ROS-node peak RSS **646,152 KiB**. The camera
   request remains 10 Hz but software GL cannot sustain it.
 - **Renderer benchmark (3 frames/camera):** default llvmpipe
   **178.0/137.3 ms**, `GALLIUM_DRIVER=d3d12` AMD iGPU **71.2/66.2 ms**,
@@ -95,7 +95,7 @@ Therefore:
 - MuJoCo with `publish_images:=false`: `/joint_states` **19.99 Hz**, `/tf`
   **20.00 Hz**, peak RSS 340,604 KiB.
 - Before the fix, MuJoCo with images on was **3.28 Hz** `/joint_states` in this
-  session (1.87 Hz in Task 2). After the fix it is **19.97 Hz**.
+  session (1.87 Hz in Task 2). After the async fix it is **20.00 Hz**.
 - EGL contexts are thread-bound; all rendering now runs on one dedicated worker
   thread to avoid `EGL_BAD_ACCESS`.
 - Camera topics remain reliable keep-last 5. A best-effort `ros2 topic echo`
@@ -227,13 +227,13 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=835c522
-- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=835c522
+- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=51fc817
+- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=51fc817
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Tests ran at `835c522`.
+second line records the ROS-enabled suite separately. Tests ran at `51fc817`.
 
 Run breakdown (2026-10-31, Task 2b):
 
@@ -247,8 +247,8 @@ Run breakdown (2026-10-31, Task 2b):
 - `ruff check` and `ruff format --check`: clean.
 - Runtime matrix (after fix): fake/on **20.00 Hz** joint, **19.99 Hz** TF,
   **10.0 Hz** images, peak 113,100 KiB; mujoco/off **19.99/20.00 Hz**, peak
-  340,604 KiB; mujoco/on **19.97/19.97 Hz** joint/TF, **2.67 Hz** images,
-  peak 912,564 KiB.
+  340,604 KiB; mujoco/on **20.00/20.01 Hz** joint/TF, **3.86 Hz** images,
+  peak 646,152 KiB.
 - Before fix, mujoco/on was **3.28 Hz** joint and **1.89 Hz** TF in this session
   (1.87 Hz joint in Task 2). Rendering no longer starves the state path.
 - Renderer benchmark: llvmpipe **178.0/137.3 ms**; `d3d12` AMD iGPU
@@ -262,7 +262,7 @@ Run breakdown (2026-10-31, Task 2b):
   Apache-2.0 LICENSE before copying. Meshes remain git-ignored.
 - `scripts/setup_envs.sh`: now installs MuJoCo 3.17.0 + rendering deps into
   `.venv-ros` with `--no-deps`; reproduced in a scratch `/tmp` venv, then deleted.
-- CI for this push: **pending user confirmation** (no run id invented).
+- The first Task 2b CI run failed the rate test on the smaller runner (**6.5 Hz**); the camera path was then made fully asynchronous. The new run is **pending user confirmation** (no run id invented).
 - License and spec provenance remain as recorded for Task 2.
 
 ## Known limitations
@@ -274,7 +274,7 @@ Run breakdown (2026-10-31, Task 2b):
   driver 551.76. Not tested; no install authorized. WSL2 simulator support is
   **NOT ESTABLISHED** (docs show WSL2 only for external ROS nodes, deprecated).
 - **Camera images are slower than requested under software GL.** State/TF now
-  run at ~20 Hz, but overhead images are **2.67 Hz** against a 10 Hz request.
+  run at ~20 Hz, but overhead images are **3.86 Hz** against a 10 Hz request.
   llvmpipe render time is 178/137 ms per camera (colour+depth). Lower
   resolution, a lower camera rate, or the opt-in D3D12 path are the options.
 - **MuJoCo EGL contexts are thread-bound.** All rendering must stay on the

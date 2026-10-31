@@ -275,10 +275,11 @@ Design (smallest change that meets the requirements):
    only for `step()` + `capture_snapshot()`. `MuJoCoBackend.capture_snapshot()`
    copies `MjData` with `mj_copyData`; the fake backend copies its observation
    and object poses. The lock is released before publishing or rendering.
-3. **One render thread.** `RenderCoordinator` owns a single worker thread because
-   MuJoCo's EGL context is thread-bound. A camera callback submits a snapshot and
-   waits for that render; if a render is already in flight it returns
-   immediately and increments `skipped_busy`. There is no queue.
+3. **One render thread, asynchronous submit.** `RenderCoordinator` owns a single
+   worker thread because MuJoCo's EGL context is thread-bound. A camera callback
+   submits a snapshot and returns immediately; the worker renders and publishes.
+   If a render is already in flight the submission is rejected and counted as
+   `skipped_busy`. There is no queue.
 4. **Stamp/TF ordering.** The control tick publishes `/joint_states` and dynamic
    `/tf`, then exposes the snapshot to the camera group. A camera frame uses the
    snapshot's stamp, and the colour/depth/`CameraInfo` triplet shares it. A tf2
@@ -291,7 +292,9 @@ Design (smallest change that meets the requirements):
    whose three publishers have no subscribers and counts the skip.
 7. **Counters at shutdown:** `published`, `skipped_busy`, `skipped_reset`,
    `failed`, `skipped_unsubscribed` are printed directly (not via rosout, which
-   may already be invalid on SIGINT).
+   may already be invalid on SIGINT). The async submit was added after CI showed
+   that a blocking camera callback could still starve control on a smaller
+   runner; it is the only path used by the ROS timer.
 8. **GIL caveat.** MuJoCo's C renderer releases the GIL, but Python callbacks and
    message construction still contend for it. This design improves control
    latency; it is not a hard real-time guarantee.
@@ -330,11 +333,11 @@ MuJoCo **3.17.0**, NumPy 2.5.4 in `.venv` and system NumPy 1.26.4 in
 | --- | --- | --- | --- | --- | --- |
 | fake / on | 20.1 Hz (Task 2) | 20.00 Hz | 19.99 Hz | 10.0 Hz | 113,100 KiB |
 | mujoco / off | 20.0 Hz (this session) | 19.99 Hz | 20.00 Hz | n/a | 340,604 KiB |
-| mujoco / on | **3.28 Hz** (this session; 1.87 Hz in Task 2) | **19.97 Hz** | **19.97 Hz** | **2.67 Hz** | **912,564 KiB** |
+| mujoco / on | **3.28 Hz** (this session; 1.87 Hz in Task 2) | **20.00 Hz** | **20.01 Hz** | **3.86 Hz** | **646,152 KiB** |
 
 Before-fix `/tf` for mujoco/on was 1.89 Hz in this session. The pre-fix image rate
 was 1.66 Hz in Task 2; the exact pre-fix image average was not captured after
-the WSL limits changed, so it is not restated as 2.67's baseline. The important
+the WSL limits changed, so it is not restated as 3.86's baseline. The important
 result is that control/TF now run at the requested 20 Hz while rendering stays
 slower under llvmpipe.
 
@@ -430,6 +433,7 @@ Apache-2.0 LICENSE before copying.
 | 24 | 2026-10-31 | At most one render in flight; busy ticks are skipped and counted | No unbounded queue, bounded latency, observable counters at shutdown |
 | 25 | 2026-10-31 | Reset quiesces rendering before mutating the scene | Task 3 will change model parameters; overlap with rendering is unsafe |
 | 26 | 2026-10-31 | D3D12 renderer paths are opt-in benchmark settings only | They name hardware adapters but are not the default and are never used in CI |
+| 27 | 2026-10-31 | Camera callbacks submit renders asynchronously; the worker publishes | CI showed a blocking camera callback could still starve control on a smaller runner |
 
 ## Interface changelog
 
