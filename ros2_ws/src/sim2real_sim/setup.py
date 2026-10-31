@@ -10,6 +10,11 @@ repo_sim_configs = os.path.join(here, "..", "..", "..", "configs", "sim")
 sim_configs = [
     os.path.relpath(path, here) for path in sorted(glob(os.path.join(repo_sim_configs, "*.yaml")))
 ]
+repo_randomization_configs = os.path.join(here, "..", "..", "..", "configs", "randomization")
+randomization_configs = [
+    os.path.relpath(path, here)
+    for path in sorted(glob(os.path.join(repo_randomization_configs, "*.yaml")))
+]
 
 setup(
     name=package_name,
@@ -24,6 +29,10 @@ setup(
         (
             os.path.join("share", package_name, "config"),
             sim_configs,
+        ),
+        (
+            os.path.join("share", package_name, "randomization"),
+            randomization_configs,
         ),
     ],
     install_requires=["setuptools"],

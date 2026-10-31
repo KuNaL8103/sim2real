@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -29,11 +30,15 @@ from sim2real.sim.backend import (
 )
 from sim2real.sim.camera import (
     MUJOCO_TO_OPTICAL,
+    euler_xyz_to_matrix,
     intrinsics_from_fovy,
     make_pose,
     pose_from_pos_quat,
 )
 from sim2real.sim.config import SimConfigs, load_sim_configs
+
+if TYPE_CHECKING:
+    from sim2real.randomization.sampler import RandomizationSample
 
 
 def _rotation_z(angle: float) -> np.ndarray:
@@ -53,6 +58,7 @@ class FakeBackend(SimBackend):
 
     def __init__(self, config_dir: str | Path) -> None:
         self.configs: SimConfigs = load_sim_configs(config_dir)
+        self.config_dir = Path(config_dir).expanduser().resolve()
         self.control_rate_hz = float(self.configs.scene.control_rate_hz)
         self.joint_names = tuple(self.configs.panda.joint_names)
         self.joint_limits = np.asarray(self.configs.panda.joint_limits, dtype=np.float64)
@@ -64,6 +70,9 @@ class FakeBackend(SimBackend):
         self._gripper = float(self.configs.panda.home_gripper)
         self._sim_time_ns = 0
         self._object_poses: dict[str, np.ndarray] = {}
+        self._cube_colors: dict[str, np.ndarray] = {}
+        self._camera_jitter: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self.applied_randomization: dict[str, object] = {}
         self._last_collision = CollisionInfo(0, ())
         self._closed = False
         # Test hooks: simulate a slow renderer without touching MuJoCo timing.
@@ -84,33 +93,39 @@ class FakeBackend(SimBackend):
             physics_friction=False,
             joint_damping=False,
             distractors=False,
+            object_pose=True,
+            texture=True,
             reasons={
                 "rgbd": "analytic ray-cast depth and colour, metres",
                 "lighting": "unlit constant shading; no light model",
-                "materials": "flat RGBA colours only",
+                "materials": "flat RGBA colours only; no texture assets",
                 "camera_extrinsics": "configured poses plus simple analytic FK",
                 "physics_mass": "kinematic backend has no mass or contact dynamics",
                 "physics_friction": "kinematic backend has no friction",
                 "joint_damping": "targets are applied instantly",
-                "distractors": "not implemented; Task 3 domain randomization",
+                "distractors": "no pooled distractors in the kinematic backend",
+                "object_pose": "cube poses are stored in the observation and rendered",
+                "texture": "flat RGBA colour jitter; material_pool is approximated",
             },
         )
 
     def reset(self, seed: int, config: ResetConfig | None = None) -> Observation:
-        del config  # nominal reset only in Task 2
+        del config  # reset is always nominal; Task 3 randomization is applied after
         if seed < 0:
             raise ValueError("seed must be non-negative")
         self._arm = np.asarray(self.configs.panda.home_arm, dtype=np.float64).copy()
         self._gripper = float(self.configs.panda.home_gripper)
         self._sim_time_ns = 0
-        rng = np.random.default_rng(int(seed))
-        poses: dict[str, np.ndarray] = {}
-        for name, cube in self.configs.scene.cubes.items():
-            jitter = rng.uniform(-0.03, 0.03, size=2)
-            position = np.array(cube.position, dtype=np.float64)
-            position[:2] += jitter
-            poses[name] = make_pose(position, np.eye(3))
-        self._object_poses = poses
+        self._object_poses = {
+            name: make_pose(np.asarray(cube.position, dtype=np.float64), np.eye(3))
+            for name, cube in self.configs.scene.cubes.items()
+        }
+        self._cube_colors = {
+            name: np.asarray(cube.color, dtype=np.float64).copy()
+            for name, cube in self.configs.scene.cubes.items()
+        }
+        self._camera_jitter = {}
+        self.applied_randomization = {}
         self._last_collision = CollisionInfo(0, ())
         return self.get_observation()
 
@@ -229,7 +244,7 @@ class FakeBackend(SimBackend):
             cube_depth = t_near * optical_z
             closer = hit_cube & (cube_depth < depth)
             depth[closer] = cube_depth[closer]
-            rgb[closer] = np.asarray(cube.color)
+            rgb[closer] = self._cube_colors.get(name, np.asarray(cube.color))[:3]
 
         rgb8 = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
         return CameraFrame(
@@ -238,6 +253,76 @@ class FakeBackend(SimBackend):
             stamp_ns=stamp_ns,
             frame_id=config.frame_id,
         )
+
+    def apply_randomization(self, sample: RandomizationSample) -> dict[str, object]:
+        """Apply the groups this kinematic backend supports.
+
+        Honours: object pose, flat-RGBA colour jitter, and camera local-pose
+        jitter. Lighting, physics, and distractors are unsupported and are
+        reported as SKIPPED by the applier. Applied values are recorded in
+        ``self.applied_randomization`` for tests.
+        """
+        from sim2real.randomization.applier import APPLIED, PARTIAL, GroupStatus
+        from sim2real.randomization.color import MATERIAL_POOL
+
+        capabilities = self.capabilities()
+        results: dict[str, object] = {}
+        recorded: dict[str, object] = dict(self.applied_randomization)
+
+        if (
+            capabilities.object_pose
+            and sample.group_enabled("object_pose")
+            and sample.object_pose.poses
+        ):
+            self._object_poses = {
+                name: pose.copy() for name, pose in sample.object_pose.poses.items()
+            }
+            recorded["object_pose"] = {
+                name: pose[:3, 3].tolist() for name, pose in self._object_poses.items()
+            }
+            results["object_pose"] = GroupStatus(APPLIED, "cube poses stored")
+
+        if capabilities.texture and sample.group_enabled("texture"):
+            if sample.texture.mode == "color_jitter" and sample.texture.rgba:
+                self._cube_colors = {
+                    name: np.asarray(rgba, dtype=np.float64)
+                    for name, rgba in sample.texture.rgba.items()
+                }
+                recorded["texture"] = {
+                    name: color.tolist() for name, color in self._cube_colors.items()
+                }
+                results["texture"] = GroupStatus(APPLIED, "flat RGBA colour jitter")
+            elif sample.texture.mode == "material_pool" and sample.texture.pool:
+                self._cube_colors = {
+                    name: np.asarray(MATERIAL_POOL[pool_name], dtype=np.float64)
+                    for name, pool_name in sample.texture.pool.items()
+                }
+                recorded["texture"] = {
+                    name: color.tolist() for name, color in self._cube_colors.items()
+                }
+                results["texture"] = GroupStatus(
+                    PARTIAL,
+                    "material_pool approximated as flat RGBA; no texture image swap",
+                )
+
+        if capabilities.camera_extrinsics and sample.group_enabled("camera"):
+            for camera, translation in sample.camera.translation_jitter.items():
+                rotation = sample.camera.rotation_jitter.get(camera, np.zeros(3, dtype=np.float64))
+                self._camera_jitter[camera] = (
+                    np.asarray(translation, dtype=np.float64).copy(),
+                    euler_xyz_to_matrix(rotation),
+                )
+            recorded["camera"] = {
+                camera: {
+                    "translation": self._camera_jitter[camera][0].tolist(),
+                    "rotation": sample.camera.rotation_jitter[camera].tolist(),
+                }
+                for camera in self._camera_jitter
+            }
+            results["camera"] = GroupStatus(APPLIED, "camera local pose jitter")
+
+        self.applied_randomization = recorded
+        return results
 
     def get_camera_info(self, camera: str) -> CameraIntrinsics:
         if camera not in self._intrinsics:
@@ -250,6 +335,10 @@ class FakeBackend(SimBackend):
     def _camera_pose_for(self, camera: str, ee_pose: np.ndarray) -> np.ndarray:
         config = self.configs.camera(camera)
         local = pose_from_pos_quat(config.position, config.quat_wxyz)
+        jitter = self._camera_jitter.get(camera)
+        if jitter is not None:
+            translation, rotation = jitter
+            local = local @ make_pose(translation, rotation)
         if config.parent_frame == contracts.WORLD_FRAME:
             parent = np.eye(4)
         elif config.parent_frame == contracts.PANDA_HAND_FRAME:

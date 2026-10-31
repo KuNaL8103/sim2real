@@ -1,0 +1,32 @@
+# Domain-randomization profile: light.
+# Small pose, colour, lighting, camera, and physics variation for smoke tests.
+schema_version: 1
+randomization:
+  enabled: true
+  seed: 42
+  object_pose:
+    translation_bounds_m: [[0.38, 0.52], [-0.15, 0.15]]
+    yaw_range_rad: [-0.20, 0.20]
+    min_separation_m: 0.07
+  texture:
+    mode: color_jitter
+    rgba_range: [[0.30, 0.90], [0.30, 0.90], [0.30, 0.90], [0.70, 1.0]]
+  lighting:
+    intensity_range: [0.85, 1.15]
+    direction_jitter_rad: 0.08
+    color_temperature_range_k: [5500.0, 7000.0]
+  camera:
+    translation_jitter_m: [0.005, 0.005, 0.002]
+    rotation_jitter_rad: [0.01, 0.01, 0.01]
+    apply_to: [overhead, wrist]
+  physics:
+    object_mass_kg: [0.055, 0.075]
+    friction:
+      sliding: [0.8, 1.2]
+      torsional: [0.003, 0.007]
+      rolling: [0.00005, 0.0002]
+    joint_damping_scale: [0.95, 1.05]
+  distractors:
+    enabled: false
+    count_range: [0, 0]
+    pool: []

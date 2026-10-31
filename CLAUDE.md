@@ -214,7 +214,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 - [x] Task 1 — preflight, scaffold, docs, CI, ROS workspace, `sim2real_msgs`, contracts, first tests
 - [x] Task 2 — `SimBackend`, `FakeBackend`, MuJoCo Franka scene, sim ROS node
-- [ ] Task 3 — domain randomization
+- [x] Task 3 — seeded domain randomization, profiles, capability-gated applier, reset integration
 - [ ] Task 4 — scripted expert and rollout generation
 - [ ] Task 5 — trajectory filtering, metrics, `curated_v1`
 - [ ] Task 6 — LeRobot export and Open-X dataset mixing
@@ -227,13 +227,39 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=0a121d7
-- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=0a121d7
+- Last verified test run: passed=184 failed=0 skipped=4 errors=0 | date=2026-10-31 | base_commit=79ef391
+- Last verified ROS test run: passed=193 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=79ef391
+- Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), opencode.json permission fix (proposal only), Isaac randomization unverified
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Tests ran at `0a121d7`.
+second line records the ROS-enabled suite separately. Task 3 tests ran on the
+working tree based on `79ef391`.
+
+Run breakdown (2026-10-31, Task 3):
+
+- Core-only: **184 passed, 0 failed, 4 skipped, 0 errors**. Skips are the msgs
+  round-trip and the three ros-marked `sim_node` modules (no `rclpy`).
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **193 passed, 0 failed, 0 skipped, 0 errors**.
+- `colcon test` / `colcon test-result --verbose`: **7 entries, 0 failures, 0
+  errors**; the four `sim2real_sim` unittest cases (including the new
+  reset-service randomization test) pass in the console but are not counted in
+  the xunit total.
+- `ruff check` and `ruff format --check`: clean.
+- Task 3 runtime, `backend:=fake`: seed 7 twice -> byte-identical
+  `applied_config_json`; seed 8 differs; unknown profile -> `success=false`;
+  `/tf_static` overhead translation changed from **(0.4645, -0.0132, 1.0951)**
+  to **(0.4374, 0.0143, 1.1041)**; `/joint_states` **19.90 Hz** across a reset.
+- Task 3 runtime, `backend:=mujoco` headless: same determinism and unknown-profile
+  results; report `object_pose/texture/lighting/camera/physics = APPLIED`,
+  `distractors = SKIPPED`; `/joint_states` **19.70 Hz** across a reset.
+- Task 3 visual check: `log/task3_preview/` (git-ignored) contains overhead PNGs
+  for nominal and seeds 1-4. Mean RGB and cube positions vary per seed; this is
+  an approximate visual check, not a perception test.
+
+Task 2b breakdown retained below for history.
 
 Run breakdown (2026-10-31, Task 2b):
 
@@ -288,9 +314,28 @@ Run breakdown (2026-10-31, Task 2b):
   faster, but it is not a default and is never used in CI.
 - **No joint-command subscription.** The node holds its target; command intake
   and safety filtering are Task 11.
-- **Reset is nominal only.** `randomization_enabled` and object-pose overrides
-  are recorded as ignored; Task 3 implements them and must use the render
-  quiesce path.
+- **Randomization is reset-scoped, not continuous.** Task 3 samples once per
+  reset inside the render-quiesce path. There is no per-step randomization.
+- **`material_pool` is PARTIAL in MuJoCo.** `geom_rgba` is a flat colour
+  approximation; runtime texture-image swaps are not supported. The fake backend
+  also approximates the pool with flat colours.
+- **Distractors are SKIPPED.** The scene has no pooled parked bodies, and Task 3
+  does not create bodies at runtime.
+- **Isaac randomization is UNVERIFIED.** The guarded adapter cannot be
+  constructed; the applier refuses to claim an application.
+- **The reset service uses `episode_index=0`.** The sampler is a pure function of
+  `(seed, episode_index)`; the request seed overrides the profile's default seed.
+- **Camera jitter is applied in the camera's MuJoCo local frame** (before the
+  optical conversion). The fake and MuJoCo backends use the same convention.
+- **`/tf_static` uses a plain transient-local publisher**, not
+  `tf2_ros.StaticTransformBroadcaster`, because the latter deduplicates by child
+  frame ID and would silently ignore a jittered camera extrinsic.
+- **The ROS rate test uses a 60% CI floor** (12 Hz) and keeps the stricter 80%
+  local floor. Shared CI runners are noisier; the 60% floor still catches the
+  4.98-6.5 Hz starvation regressions that motivated the test.
+- **`opencode.json` uses the V1 `permission.bash` schema**, but the installed
+  runtime is OpenCode v2.2.5, which enforces the `permissions` array. A native
+  v2 rewrite is proposed but **not written** pending user approval.
 - **`render_only_when_subscribed` defaults to false.** When enabled, a camera
   with no subscribers is skipped and counted.
 - **SmolVLA fine-tuning feasibility is UNKNOWN** until Task 8 measures it.
@@ -318,6 +363,13 @@ Run breakdown (2026-10-31, Task 2b):
   by the user 2026-10-31.
 - [ ] Confirm the GitHub Actions tab for the Task 2b push (API evidence only
   until then).
+- [ ] Confirm the GitHub Actions tab for the Task 3 push (user confirms; no run
+  id invented).
+- [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
+  confirm cubes/lighting/camera TF change. Not confirmed; does not block the
+  commit.
+- [ ] Decide and, if approved, apply the native OpenCode v2 `permissions`
+  rewrite of `opencode.json`.
 - [ ] Decide whether CI actions should be pinned to commit SHAs.
 - [ ] Approve and build the Docker image separately; enable Docker Desktop WSL
   integration first.

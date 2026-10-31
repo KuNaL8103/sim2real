@@ -38,7 +38,10 @@ def test_reset_waits_for_inflight_render_and_blocks_new_ones():
         assert after["skipped_reset"] == before["skipped_reset"] + 1
 
         coordinator.end_reset()
-        assert coordinator.render("wrist", snapshot) is not None
+        # A snapshot captured before the reset is stale by design; capture and
+        # tag a fresh one before rendering again.
+        fresh = coordinator.tag(backend.capture_snapshot())
+        assert coordinator.render("wrist", fresh) is not None
         thread.join(timeout=2.0)
         assert finished.is_set()
         assert coordinator.stats()["published"] >= 2

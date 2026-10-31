@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -32,11 +33,17 @@ from sim2real.sim.backend import (  # noqa: E402
     StepResult,
 )
 from sim2real.sim.camera import (  # noqa: E402
+    euler_xyz_to_matrix,
     intrinsics_from_fovy,
+    mat_to_quat,
     optical_pose_from_mujoco,
     pose_from_pos_quat,
+    quat_wxyz_to_matrix,
 )
 from sim2real.sim.config import SimConfigs, load_sim_configs  # noqa: E402
+
+if TYPE_CHECKING:
+    from sim2real.randomization.sampler import RandomizationSample
 
 CAMERA_MODEL_NAMES = {"overhead": "overhead_cam", "wrist": "wrist_cam"}
 
@@ -56,6 +63,7 @@ class MuJoCoBackend(SimBackend):
 
         self._mujoco = mujoco
         self.configs: SimConfigs = load_sim_configs(config_dir)
+        self.config_dir = Path(config_dir).expanduser().resolve()
         self.control_rate_hz = float(self.configs.scene.control_rate_hz)
         self.joint_names = tuple(self.configs.panda.joint_names)
         self.joint_limits = np.asarray(self.configs.panda.joint_limits, dtype=np.float64)
@@ -90,6 +98,33 @@ class MuJoCoBackend(SimBackend):
             name: intrinsics_from_fovy(camera.fovy_deg, camera.width, camera.height)
             for name, camera in self.configs.cameras.items()
         }
+        # Nominal model parameters, captured once so reset can always restore
+        # them. Task 3 only mutates these inside the reset-quiesce window.
+        self._nominal_cube_mass = {
+            name: float(self.model.body_mass[self.model.body(name).id])
+            for name in self.configs.scene.cubes
+        }
+        self._nominal_cube_inertia = {
+            name: self.model.body_inertia[self.model.body(name).id].copy()
+            for name in self.configs.scene.cubes
+        }
+        self._nominal_cube_friction = {
+            name: self.model.geom_friction[self.model.geom(f"{name}_geom").id].copy()
+            for name in self.configs.scene.cubes
+        }
+        self._nominal_cube_rgba = {
+            name: self.model.geom_rgba[self.model.geom(f"{name}_geom").id].copy()
+            for name in self.configs.scene.cubes
+        }
+        self._nominal_arm_damping = self.model.dof_damping[self._arm_dof_adr].copy()
+        self._nominal_light_diffuse = self.model.light_diffuse.copy()
+        self._nominal_light_specular = self.model.light_specular.copy()
+        self._nominal_light_dir = self.model.light_dir.copy()
+        self._nominal_light_dir0 = self.model.light_dir0.copy()
+        self._nominal_light_intensity = self.model.light_intensity.copy()
+        self._nominal_cam_pos = self.model.cam_pos.copy()
+        self._nominal_cam_quat = self.model.cam_quat.copy()
+        self.applied_randomization: dict[str, object] = {}
         self._sim_time_ns = 0
         self._last_collision = CollisionInfo(0, ())
         self._closed = False
@@ -159,21 +194,30 @@ class MuJoCoBackend(SimBackend):
             physics_friction=True,
             joint_damping=True,
             distractors=False,
+            object_pose=True,
+            texture=True,
             reasons={
                 "rgbd": "MuJoCo Renderer with metric depth",
-                "lighting": "two explicit lights in scene_tabletop.xml",
+                "lighting": "three explicit lights in scene_tabletop.xml",
                 "materials": "checker table material and per-cube RGBA",
                 "camera_extrinsics": "camera poses read from the compiled model",
                 "physics_mass": "MJCF body inertials",
                 "physics_friction": "MJCF geom friction",
                 "joint_damping": "Menagerie joints declare damping=1",
-                "distractors": "not implemented; Task 3 domain randomization",
+                "distractors": (
+                    "no pooled parked bodies in the scene; runtime body creation is not used"
+                ),
+                "object_pose": "free-joint qpos for the three cubes",
+                "texture": "geom_rgba colour jitter; material_pool is a flat approximation",
             },
         )
 
     def reset(self, seed: int, config: ResetConfig | None = None) -> Observation:
-        del config  # nominal reset only in Task 2
+        del config  # reset is always nominal; Task 3 randomization is applied after
+        if seed < 0:
+            raise ValueError("seed must be non-negative")
         data = self.data
+        self._restore_nominal_model()
         self._mujoco.mj_resetData(self.model, data)
         data.qpos[self._arm_qpos_adr] = self.configs.panda.home_arm
         data.qpos[self._gripper_qpos_adr] = self.configs.panda.home_gripper
@@ -260,6 +304,152 @@ class MuJoCoBackend(SimBackend):
             frame_id=camera_config.frame_id,
         )
 
+    def apply_randomization(self, sample: RandomizationSample) -> dict[str, object]:
+        """Apply a sample to MuJoCo model parameters and object free joints.
+
+        Mapping:
+
+        * object pose -> free-joint ``qpos`` (position + yaw quaternion);
+        * texture -> ``geom_rgba`` (``material_pool`` is a flat approximation,
+          so it is reported PARTIAL because texture images cannot be swapped);
+        * lighting -> ``light_intensity``, ``light_diffuse``/``light_specular``
+          tint, and a small rotation of ``light_dir``/``light_dir0``;
+        * camera -> ``cam_pos``/``cam_quat`` local jitter (overhead is a world
+          camera, wrist is a hand child camera);
+        * physics -> ``body_mass`` with proportional ``body_inertia``,
+          ``geom_friction``, and ``dof_damping`` for the seven arm joints;
+        * distractors -> SKIPPED: the scene has no pooled parked bodies.
+        """
+        from sim2real.randomization.applier import APPLIED, PARTIAL, SKIPPED, GroupStatus
+        from sim2real.randomization.color import MATERIAL_POOL
+
+        capabilities = self.capabilities()
+        results: dict[str, object] = {}
+        recorded: dict[str, object] = dict(self.applied_randomization)
+        if sample.nominal:
+            return results
+
+        if (
+            capabilities.object_pose
+            and sample.group_enabled("object_pose")
+            and sample.object_pose.poses
+        ):
+            for name, pose in sample.object_pose.poses.items():
+                joint = self.model.joint(f"{name}_joint")
+                address = int(self.model.jnt_qposadr[joint.id])
+                quaternion = mat_to_quat(pose[:3, :3])
+                self.data.qpos[address : address + 7] = [*pose[:3, 3], *quaternion]
+            recorded["object_pose"] = {
+                name: pose[:3, 3].tolist() for name, pose in sample.object_pose.poses.items()
+            }
+            results["object_pose"] = GroupStatus(APPLIED, "free-joint qpos")
+
+        if capabilities.texture and sample.group_enabled("texture"):
+            if sample.texture.mode == "color_jitter" and sample.texture.rgba:
+                for name, rgba in sample.texture.rgba.items():
+                    geom = self.model.geom(f"{name}_geom")
+                    self.model.geom_rgba[geom.id] = rgba
+                recorded["texture"] = {
+                    name: list(rgba) for name, rgba in sample.texture.rgba.items()
+                }
+                results["texture"] = GroupStatus(APPLIED, "geom_rgba colour jitter")
+            elif sample.texture.mode == "material_pool" and sample.texture.pool:
+                for name, pool_name in sample.texture.pool.items():
+                    geom = self.model.geom(f"{name}_geom")
+                    self.model.geom_rgba[geom.id] = MATERIAL_POOL[pool_name]
+                recorded["texture"] = dict(sample.texture.pool)
+                results["texture"] = GroupStatus(
+                    PARTIAL,
+                    "material_pool approximated as flat geom_rgba; runtime texture "
+                    "image swaps are not supported",
+                )
+
+        if capabilities.lighting and sample.group_enabled("lighting"):
+            lighting = sample.lighting
+            tint = np.asarray(lighting.rgb, dtype=np.float64)
+            rotation = euler_xyz_to_matrix(lighting.direction_jitter_rad)
+            for index in range(self.model.nlight):
+                self.model.light_intensity[index] = (
+                    self._nominal_light_intensity[index] * lighting.intensity_scale
+                )
+                self.model.light_diffuse[index] = self._nominal_light_diffuse[index] * tint
+                self.model.light_specular[index] = self._nominal_light_specular[index] * tint
+                direction = rotation @ self._nominal_light_dir[index]
+                self.model.light_dir[index] = direction
+                self.model.light_dir0[index] = direction
+            recorded["lighting"] = {
+                "intensity_scale": float(lighting.intensity_scale),
+                "color_temperature_k": float(lighting.color_temperature_k),
+                "rgb": list(lighting.rgb),
+            }
+            results["lighting"] = GroupStatus(
+                APPLIED, "light intensity, direction, and colour-temperature tint"
+            )
+
+        if capabilities.camera_extrinsics and sample.group_enabled("camera"):
+            for camera, translation in sample.camera.translation_jitter.items():
+                camera_id = self._camera_ids[camera]
+                self.model.cam_pos[camera_id] = self._nominal_cam_pos[camera_id] + np.asarray(
+                    translation
+                )
+                rotation = euler_xyz_to_matrix(sample.camera.rotation_jitter[camera])
+                nominal = quat_wxyz_to_matrix(self._nominal_cam_quat[camera_id])
+                self.model.cam_quat[camera_id] = mat_to_quat(rotation @ nominal)
+            recorded["camera"] = {
+                camera: {
+                    "translation": np.asarray(translation).tolist(),
+                    "rotation": sample.camera.rotation_jitter[camera].tolist(),
+                }
+                for camera, translation in sample.camera.translation_jitter.items()
+            }
+            results["camera"] = GroupStatus(APPLIED, "cam_pos/cam_quat local jitter")
+
+        if capabilities.physics_mass and sample.group_enabled("physics"):
+            physics = sample.physics
+            if physics.object_mass_kg:
+                for name, mass in physics.object_mass_kg.items():
+                    body = self.model.body(name)
+                    nominal_mass = self._nominal_cube_mass[name]
+                    self.model.body_mass[body.id] = mass
+                    self.model.body_inertia[body.id] = self._nominal_cube_inertia[name] * (
+                        mass / nominal_mass
+                    )
+            if physics.friction:
+                for name, friction in physics.friction.items():
+                    geom = self.model.geom(f"{name}_geom")
+                    self.model.geom_friction[geom.id] = friction
+            if capabilities.joint_damping:
+                self.model.dof_damping[self._arm_dof_adr] = (
+                    self._nominal_arm_damping * physics.joint_damping_scale
+                )
+            self._mujoco.mj_setConst(self.model, self.data)
+            recorded["physics"] = {
+                "object_mass_kg": (
+                    {name: float(mass) for name, mass in physics.object_mass_kg.items()}
+                    if physics.object_mass_kg
+                    else None
+                ),
+                "friction": (
+                    {name: list(value) for name, value in physics.friction.items()}
+                    if physics.friction
+                    else None
+                ),
+                "joint_damping_scale": float(physics.joint_damping_scale),
+            }
+            results["physics"] = GroupStatus(
+                APPLIED, "body_mass/inertia, geom_friction, dof_damping"
+            )
+
+        if sample.group_enabled("distractors") and sample.distractors.enabled:
+            results["distractors"] = GroupStatus(
+                SKIPPED,
+                "no pooled parked bodies in the scene; runtime body creation is not used",
+            )
+
+        self.applied_randomization = recorded
+        self._mujoco.mj_forward(self.model, self.data)
+        return results
+
     def get_camera_info(self, camera: str) -> CameraIntrinsics:
         if camera not in self._intrinsics:
             raise ConfigError(f"unknown camera {camera!r}")
@@ -296,6 +486,26 @@ class MuJoCoBackend(SimBackend):
         self._closed = True
 
     # -- internals ---------------------------------------------------------
+    def _restore_nominal_model(self) -> None:
+        """Restore every model parameter Task 3 may change."""
+        for name in self.configs.scene.cubes:
+            body = self.model.body(name)
+            geom = self.model.geom(f"{name}_geom")
+            self.model.body_mass[body.id] = self._nominal_cube_mass[name]
+            self.model.body_inertia[body.id] = self._nominal_cube_inertia[name]
+            self.model.geom_friction[geom.id] = self._nominal_cube_friction[name]
+            self.model.geom_rgba[geom.id] = self._nominal_cube_rgba[name]
+        self.model.dof_damping[self._arm_dof_adr] = self._nominal_arm_damping
+        self.model.light_diffuse[:] = self._nominal_light_diffuse
+        self.model.light_specular[:] = self._nominal_light_specular
+        self.model.light_dir[:] = self._nominal_light_dir
+        self.model.light_dir0[:] = self._nominal_light_dir0
+        self.model.light_intensity[:] = self._nominal_light_intensity
+        self.model.cam_pos[:] = self._nominal_cam_pos
+        self.model.cam_quat[:] = self._nominal_cam_quat
+        self.applied_randomization = {}
+        self._mujoco.mj_setConst(self.model, self.data)
+
     def _gripper_ctrl(self, target: float) -> float:
         low, high = self.configs.panda.gripper_limits
         clamped = float(np.clip(target, low, high))

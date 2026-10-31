@@ -69,6 +69,8 @@ class IsaacBackend(SimBackend):
             physics_friction=False,
             joint_damping=False,
             distractors=False,
+            object_pose=False,
+            texture=False,
             reasons={name: "unverified: Isaac Sim is unavailable" for name in _FLAGS},
         )
 
@@ -109,4 +111,6 @@ _FLAGS = (
     "physics_friction",
     "joint_damping",
     "distractors",
+    "object_pose",
+    "texture",
 )

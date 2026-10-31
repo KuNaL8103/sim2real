@@ -1,0 +1,33 @@
+# Domain-randomization profile: heavy.
+# Wide variation, including a flat-colour material pool. MuJoCo cannot swap
+# texture images at runtime, so material_pool is reported PARTIAL.
+schema_version: 1
+randomization:
+  enabled: true
+  seed: 42
+  object_pose:
+    translation_bounds_m: [[0.34, 0.56], [-0.24, 0.24]]
+    yaw_range_rad: [-3.141592653589793, 3.141592653589793]
+    min_separation_m: 0.065
+  texture:
+    mode: material_pool
+    pool: [red, green, blue, yellow, cyan, magenta]
+  lighting:
+    intensity_range: [0.40, 1.80]
+    direction_jitter_rad: 0.30
+    color_temperature_range_k: [3000.0, 9000.0]
+  camera:
+    translation_jitter_m: [0.03, 0.03, 0.01]
+    rotation_jitter_rad: [0.04, 0.04, 0.04]
+    apply_to: [overhead, wrist]
+  physics:
+    object_mass_kg: [0.030, 0.150]
+    friction:
+      sliding: [0.4, 1.6]
+      torsional: [0.001, 0.015]
+      rolling: [0.00001, 0.001]
+    joint_damping_scale: [0.6, 1.4]
+  distractors:
+    enabled: false
+    count_range: [0, 0]
+    pool: []

@@ -59,7 +59,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
 from sensor_msgs.msg import JointState as JointStateMsg
-from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+from tf2_msgs.msg import TFMessage
+from tf2_ros import TransformBroadcaster
 
 from sim2real import contracts
 from sim2real.ros_utils.image_conversion import camera_info_fields, image_fields
@@ -145,6 +146,7 @@ class SimNode(Node):
         super().__init__("sim_node")
         self.declare_parameter("backend", "fake")
         self.declare_parameter("config_dir", "")
+        self.declare_parameter("randomization_dir", "")
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("camera_rate_hz", 10.0)
         self.declare_parameter("publish_images", True)
@@ -157,6 +159,13 @@ class SimNode(Node):
             from ament_index_python.packages import get_package_share_directory
 
             config_dir = os.path.join(get_package_share_directory("sim2real_sim"), "config")
+
+        randomization_dir = str(self.get_parameter("randomization_dir").value)
+        if not randomization_dir:
+            # Repo: configs/sim -> configs/randomization. Installed:
+            # share/sim2real_sim/config -> share/sim2real_sim/randomization.
+            randomization_dir = os.path.join(os.path.dirname(config_dir), "randomization")
+        self._randomization_dir = randomization_dir
 
         tf_source = str(self.get_parameter("tf_source").value)
         if tf_source != "backend_fk":
@@ -183,7 +192,8 @@ class SimNode(Node):
         self.get_logger().info(
             f"backend {self.backend.name} ready; control={self._control_rate} Hz "
             f"cameras={self._camera_rate} Hz images={self._publish_images} "
-            f"render_only_when_subscribed={self._render_only_when_subscribed}"
+            f"render_only_when_subscribed={self._render_only_when_subscribed} "
+            f"randomization_dir={self._randomization_dir}"
         )
         self._target = np.asarray(self.backend.configs.panda.home_arm, dtype=np.float64)
         self._gripper_target = float(self.backend.configs.panda.home_gripper)
@@ -197,7 +207,12 @@ class SimNode(Node):
             JointStateMsg, contracts.JOINT_STATES_TOPIC, JOINT_STATE_QOS
         )
         self._tf_broadcaster = TransformBroadcaster(self, qos=TF_QOS)
-        self._static_tf_broadcaster = StaticTransformBroadcaster(self, qos=STATIC_TF_QOS)
+        # tf2_ros.StaticTransformBroadcaster deduplicates by child frame ID, so
+        # it silently ignores a changed camera extrinsic. Use a plain
+        # transient-local publisher so Task 3 can republish jittered camera TF.
+        self._static_tf_publisher = self.create_publisher(
+            TFMessage, contracts.TF_STATIC_TOPIC, STATIC_TF_QOS
+        )
         self._image_publishers: dict[str, dict[str, Any]] = {}
         for camera in contracts.CAMERAS:
             color_topic, depth_topic, info_topic = camera_topics(camera)
@@ -253,7 +268,7 @@ class SimNode(Node):
                 stamp_ns,
             )
         )
-        self._static_tf_broadcaster.sendTransform(transforms)
+        self._static_tf_publisher.publish(TFMessage(transforms=transforms))
 
     def _control_tick(self) -> None:
         if not rclpy.ok():
@@ -262,7 +277,9 @@ class SimNode(Node):
             result = self.backend.step(self._target, self._gripper_target)
             observation = result.observation
             poses = self.backend.link_poses()
-            snapshot = self.backend.capture_snapshot()
+            # Tag inside the backend lock so a reset cannot change the
+            # generation between capture and tagging.
+            snapshot = self._render_coordinator.tag(self.backend.capture_snapshot())
         self._publish_joint_state(observation)
         self._publish_dynamic_transforms(observation, poses)
         # Publish TF before exposing the snapshot, so a lookup at the image
@@ -375,25 +392,35 @@ class SimNode(Node):
                     [pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z]
                 ),
             )
-        # Quiesce: wait for an in-flight render, then block new ones until the
-        # scene reset (and future model-parameter changes in Task 3) completes.
-        self._render_coordinator.begin_reset()
-        try:
-            with self._backend_lock, self._snapshot_lock:
-                self._latest_snapshot = None
-                outcome = reset_environment(
-                    self.backend,
-                    int(request.seed),
-                    randomization_enabled=bool(request.randomization_enabled),
-                    randomization_profile=str(request.randomization_profile),
-                    task_instruction=str(request.task_instruction),
-                    object_pose_override=override,
-                )
-                if outcome.success:
-                    self._target = np.asarray(self.backend.configs.panda.home_arm, dtype=np.float64)
-                    self._gripper_target = float(self.backend.configs.panda.home_gripper)
-        finally:
-            self._render_coordinator.end_reset()
+        # Quiesce: hold the backend lock so no control tick can capture a
+        # pre-reset snapshot while the generation changes. begin_reset() waits
+        # for the in-flight render and invalidates every older snapshot.
+        with self._backend_lock:
+            self._render_coordinator.begin_reset()
+            try:
+                with self._snapshot_lock:
+                    self._latest_snapshot = None
+                    outcome = reset_environment(
+                        self.backend,
+                        int(request.seed),
+                        randomization_enabled=bool(request.randomization_enabled),
+                        randomization_profile=str(request.randomization_profile),
+                        task_instruction=str(request.task_instruction),
+                        object_pose_override=override,
+                        randomization_dir=self._randomization_dir,
+                    )
+                    if outcome.success:
+                        self._target = np.asarray(
+                            self.backend.configs.panda.home_arm, dtype=np.float64
+                        )
+                        self._gripper_target = float(self.backend.configs.panda.home_gripper)
+                        # Camera jitter changes the static extrinsics. Republish
+                        # them (transient-local) before releasing the quiesce so
+                        # TF matches the rendered images and late joiners get the
+                        # latest transform.
+                        self._publish_static_transforms()
+            finally:
+                self._render_coordinator.end_reset()
         response.success = outcome.success
         response.message = outcome.message
         response.applied_seed = outcome.applied_seed
@@ -411,8 +438,8 @@ class SimNode(Node):
         print(
             "render stats: "
             f"published={stats['published']} skipped_busy={stats['skipped_busy']} "
-            f"skipped_reset={stats['skipped_reset']} failed={stats['failed']} "
-            f"skipped_unsubscribed={self._skipped_unsubscribed}",
+            f"skipped_reset={stats['skipped_reset']} skipped_stale={stats['skipped_stale']} "
+            f"failed={stats['failed']} skipped_unsubscribed={self._skipped_unsubscribed}",
             flush=True,
         )
         try:

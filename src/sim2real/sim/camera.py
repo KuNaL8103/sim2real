@@ -46,6 +46,18 @@ def make_pose(position: np.ndarray, rotation: np.ndarray) -> np.ndarray:
     return pose
 
 
+def euler_xyz_to_matrix(angles: np.ndarray | tuple[float, float, float]) -> np.ndarray:
+    """Return ``Rz(yaw) @ Ry(pitch) @ Rx(roll)`` for ``(roll, pitch, yaw)`` radians."""
+    roll, pitch, yaw = (float(value) for value in angles)
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    rotate_x = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]])
+    rotate_y = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+    rotate_z = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]])
+    return rotate_z @ rotate_y @ rotate_x
+
+
 def pose_from_pos_quat(position: np.ndarray, quat_wxyz: np.ndarray) -> np.ndarray:
     return make_pose(np.asarray(position, dtype=np.float64), quat_wxyz_to_matrix(quat_wxyz))
 

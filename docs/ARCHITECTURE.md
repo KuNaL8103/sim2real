@@ -1,11 +1,27 @@
 # Architecture
 
-Status: **Task 2b hardening.** Simulator backends, `sim_node`, and the nominal
-reset service are implemented. Task 2b decouples `/joint_states`/TF publication
-from camera rendering, adds snapshot-based rendering and reset quiesce, measures
-opt-in renderer paths, and hardens environment reproduction. Randomization,
-datasets, training, mapping, inference, and safety remain unimplemented. Isaac
-Sim is **UNAVAILABLE on this machine** (requirements-based, not tested).
+Status: **Task 3.** Simulator backends, `sim_node`, the nominal reset service,
+and seeded domain randomization are implemented. Task 2b decouples
+`/joint_states`/TF publication from camera rendering, adds snapshot-based
+rendering and reset quiesce, measures opt-in renderer paths, and hardens
+environment reproduction. Task 3 adds validated randomization profiles, a pure
+`(seed, episode_index)` sampler, a capability-gated applier, and reset-service
+integration through the same quiesce path. Datasets, training, mapping,
+inference, and safety remain unimplemented. Isaac Sim is **UNAVAILABLE on this
+machine** (requirements-based, not tested).
+
+## Scope of Task 3
+
+- `src/sim2real/randomization/`: validated YAML config, deterministic sampler,
+  backend-aware applier, approximate colour-temperature helper.
+- Profiles: `configs/randomization/{none,light,default,heavy}.yaml`.
+- Per-group `BackendCapabilities` flags for object pose and texture.
+- `SimBackend.apply_randomization` with `APPLIED` / `PARTIAL` / `SKIPPED`
+  reporting; Isaac refuses.
+- `/sim2real/reset_env` applies a profile inside `begin_reset()` /
+  `end_reset()`, republishes jittered static camera TF, and rejects stale
+  snapshots.
+- Hardware-free tests plus one ros-marked service round-trip test.
 
 ## Scope of Task 2b
 
@@ -167,7 +183,7 @@ left as `TBD` where no decision has been made.
 | `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | TBD (task 11) | TBD (task 11) | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. |
 | `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | latched, depth TBD (task 11) | Latched stop. Recovery requires `/estop_reset` (Task 11); no automatic clearing. |
 | `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | TBD (task 11) | Defined in Task 11. Must only clear the latch after an explicit operator action. |
-| `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 2 applies a nominal reset only and reports randomization fields as ignored. |
+| `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling | expert/sim adapter | TBD (task 4) | TBD (task 4) | Bounded batch sizes; failures are reported, not silently retried forever. |
 
 QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
@@ -204,13 +220,17 @@ Additional rules:
 `src/sim2real/sim/backend.py` is the single contract:
 
 - Dataclasses: `RobotState`, `CameraIntrinsics`, `CameraFrame`, `Observation`,
-  `StepResult`, `CollisionInfo`, `BackendCapabilities`, `ResetConfig`.
+  `StepResult`, `CollisionInfo`, `BackendCapabilities`, `ResetConfig`,
+  `RenderSnapshot` (with a `generation` field for stale-snapshot rejection).
 - Abstract `SimBackend`: `reset(seed, config)`, `step(joint_target,
   gripper_target)`, `get_observation()`, `render(camera)`,
   `get_camera_info(camera)`, `camera_pose_world(camera)`,
   `collision_report()`, `capabilities()`, `close()`.
-- Only **absolute joint-position targets** are accepted in Task 2. There is no
-  torque, velocity, or delta interface.
+- Non-abstract `SimBackend.apply_randomization(sample)` defaults to returning no
+  executed groups, which the applier reports as `SKIPPED`. Backends that support
+  randomization override it and return per-group `GroupStatus` values.
+- Only **absolute joint-position targets** are accepted. There is no torque,
+  velocity, or delta interface.
 - `control_rate_hz`, `joint_names`, and `joint_limits` are attributes.
 - `CameraFrame.depth` is float32 **metres**; `NaN` or `0` is invalid. Rendering
   uses the ROS optical convention (x right, y down, z forward), converted from
@@ -235,13 +255,15 @@ the model's `joint1..joint7` / `link0..hand` names are not renamed.
 | Capability | fake | mujoco | isaac |
 | --- | --- | --- | --- |
 | RGB-D | yes (analytic) | yes (`mujoco.Renderer`) | **unverified** |
-| lighting | no | yes (two lights) | **unverified** |
+| lighting | no | yes (three lights) | **unverified** |
 | materials | flat colours | yes | **unverified** |
 | camera extrinsics | yes (config + simple FK) | yes (compiled model) | **unverified** |
 | physics mass | no | yes | **unverified** |
 | physics friction | no | yes | **unverified** |
 | joint damping | no (instant targets) | yes | **unverified** |
-| distractors | no (Task 3) | no (Task 3) | **unverified** |
+| distractors | no (Task 3: SKIPPED) | no (Task 3: SKIPPED) | **unverified** |
+| object pose | yes (stored observation) | yes (free-joint qpos) | **unverified** |
+| texture / colour | yes (flat RGBA) | yes (`geom_rgba`; `material_pool` PARTIAL) | **unverified** |
 
 Every flag carries an explicit reason string in `BackendCapabilities.reasons`.
 "Unverified" is not a claim that Isaac works; the adapter cannot be constructed.
@@ -286,8 +308,9 @@ Design (smallest change that meets the requirements):
    lookup at that stamp finds a published sample; tf2 interpolates between
    samples and would fail on extrapolation into the future.
 5. **Reset quiesce.** The reset service calls `begin_reset()`, which blocks new
-   renders and waits for the in-flight render, then resets under the backend
-   lock. Task 3 must make model-parameter changes inside this same quiesce path.
+   renders, invalidates older snapshot generations, and waits for the in-flight
+   render. Task 3 applies model parameters and object poses inside this same
+   window, then republishes static camera TF before `end_reset()`.
 6. **Optional `render_only_when_subscribed`** (default `false`) skips a camera
    whose three publishers have no subscribers and counts the skip.
 7. **Counters at shutdown:** `published`, `skipped_busy`, `skipped_reset`,
@@ -306,6 +329,167 @@ Design (smallest change that meets the requirements):
 
 `publish_images:=false` does not create the camera timer. The control path still
 captures a snapshot (cheap) so the node's structure stays identical.
+
+## Domain randomization (Task 3)
+
+### Module layout
+
+```
+src/sim2real/randomization/
+  config.py      validated YAML schema, scene-derived defaults, profile loading
+  sampler.py     pure (seed, episode_index) sampler and sample dataclasses
+  applier.py     capability gating and APPLIED / PARTIAL / SKIPPED report
+  color.py       approximate kelvin_to_rgb and the flat material pool
+  __init__.py    public surface
+configs/randomization/{none,light,default,heavy}.yaml
+```
+
+The package has no `rclpy` dependency. The ROS node calls it only inside the
+reset-quiesce window.
+
+### Config schema and validation
+
+A profile is a YAML mapping with `schema_version: 1` and a top-level
+`randomization` mapping. Every group has an optional `enabled` flag (default
+`true`):
+
+| group | fields |
+| --- | --- |
+| `object_pose` | `translation_bounds_m` (x and y ranges), `yaw_range_rad`, `min_separation_m` |
+| `texture` | `mode` (`color_jitter` or `material_pool`), `rgba_range` or `pool` |
+| `lighting` | `intensity_range`, `direction_jitter_rad`, `color_temperature_range_k` |
+| `camera` | `translation_jitter_m` (3), `rotation_jitter_rad` (3), `apply_to` |
+| `physics` | `object_mass_kg`, `friction.{sliding,torsional,rolling}`, `joint_damping_scale` |
+| `distractors` | `enabled`, `count_range`, `pool` |
+
+Validation is strict and path-qualified, for example
+`randomization.physics.object_mass_kg: expected [lo,hi] with 0 < lo <= hi`.
+It rejects unknown keys at every level, non-finite values, wrong types,
+`lo > hi`, non-positive mass/friction/damping, object bounds outside the
+`scene.yaml` workspace, unknown camera or material names, and jitter magnitudes
+above the documented ceilings (`MAX_CAMERA_TRANSLATION_JITTER_M = 0.10`,
+`MAX_CAMERA_ROTATION_JITTER_RAD = 0.35`,
+`MAX_LIGHT_DIRECTION_JITTER_RAD = 0.50`). Colour-temperature ranges must lie in
+the `kelvin_to_rgb` domain `[1000, 40000] K`. Profile names are restricted to
+`[A-Za-z0-9_-]+`, so a request cannot escape the profile directory.
+
+Object height is not sampled: it is derived as
+`table_top + cube.size / 2` from `scene.yaml`. `enabled: false` (or the `none`
+profile) returns a nominal sample whose poses and colours equal the scene
+defaults and whose jitter/physics changes are identity.
+
+### Determinism rules
+
+`sample(config, episode_index)` is a **pure function**. It never reads or
+writes global NumPy or Python RNG state. The base seed is `config.seed`:
+
+```python
+SeedSequence([config.seed, episode_index]).spawn(6)
+# fixed order: object_pose, texture, lighting, camera, physics, distractors
+```
+
+Each group draws only from its own child stream. Disabling or adding a group
+therefore never changes another group's values, and a sample does not depend on
+call order or on how many samples were drawn earlier. A disabled group consumes
+nothing from its stream. Tests cover same-input identity, different-seed
+difference, order independence, global-RNG isolation, and stream independence
+(disabling lighting leaves the object poses unchanged).
+
+The reset service uses **`episode_index=0`**; the request `seed` overrides the
+profile's default seed. A per-node counter is deliberately not used, so the same
+seed and profile produce byte-identical `applied_config_json` regardless of
+earlier resets. Later tasks can pass an explicit episode index to the sampler.
+
+### Profiles
+
+| profile | enabled | intent |
+| --- | --- | --- |
+| `none` | no | nominal template; all groups identity |
+| `light` | yes | small pose/colour/lighting/camera/physics variation |
+| `default` | yes | reset-service default; wide but bounded variation |
+| `heavy` | yes | wide ranges plus a flat `material_pool` |
+
+### Backend mapping and capability matrix
+
+| group | fake | mujoco | isaac |
+| --- | --- | --- | --- |
+| object pose | **APPLIED** (stored observation) | **APPLIED** (free-joint `qpos`) | **UNVERIFIED** |
+| texture / colour | **APPLIED** (flat RGBA); `material_pool` **PARTIAL** (flat approximation) | **APPLIED** (`geom_rgba` colour jitter); `material_pool` **PARTIAL** (no texture-image swap) | **UNVERIFIED** |
+| lighting | **SKIPPED** (unlit) | **APPLIED** (`light_intensity`, `light_diffuse`/`light_specular`, `light_dir`/`light_dir0`) | **UNVERIFIED** |
+| camera | **APPLIED** (local pose jitter) | **APPLIED** (`cam_pos`/`cam_quat` local jitter) | **UNVERIFIED** |
+| physics | **SKIPPED** (kinematic) | **APPLIED** (`body_mass` + proportional `body_inertia`, `geom_friction`, `dof_damping`; `mj_setConst`) | **UNVERIFIED** |
+| distractors | **SKIPPED** (no pool) | **SKIPPED** (no pooled parked bodies) | **UNVERIFIED** |
+
+The applier gates each group on `BackendCapabilities` **before** merging the
+backend result. A group is reported `APPLIED` only when the backend method
+actually executed and returned `APPLIED`; a backend that returns nothing is
+`SKIPPED`, and a capability gap is `PARTIAL`/`SKIPPED` with the capability
+reason. `FakeBackend` records applied values in `applied_randomization` so tests
+can verify them. `IsaacBackend` cannot be constructed; the applier raises a
+clear refusal rather than pretending.
+
+`material_pool` is intentionally **PARTIAL**: MuJoCo can change a geom's RGBA
+at runtime but cannot swap texture images, so the applier applies a flat colour
+from the fixed palette and says so. Distractors are **SKIPPED** because the
+scene has no pooled parked bodies and Task 3 does not create bodies at runtime.
+
+### Reset integration and quiesce
+
+`sim2real.sim.reset_handler.reset_environment` is pure and does the following:
+
+1. validate the seed, profile, and optional object-pose override **before**
+   touching the backend, so a bad request cannot half-apply a scene;
+2. load the profile and build the sample for `(seed, 0)`;
+3. `backend.reset(seed, config)` restores nominal state and model parameters;
+4. `apply_randomization(backend, sample)` applies the sample and returns the
+   report;
+5. an explicit override is validated against the workspace and applied as an
+   object-pose-only step (to the first configured cube, `cube_red`);
+6. on any application error, reset to nominal again and report the rollback.
+
+The node calls this only inside the existing quiesce path, now holding the
+backend lock across the whole window:
+
+```
+begin_reset()  -> wait for in-flight render, generation += 1
+reset state    -> nominal
+apply sample   -> model parameters + object poses
+publish static TF (jittered cameras)
+end_reset()
+```
+
+`begin_reset()` increments a scene generation. `RenderSnapshot` carries that
+generation; the coordinator rejects a snapshot from an older generation and
+counts `skipped_stale`. The node also clears `_latest_snapshot` during reset, so
+the first camera frame after a reset comes from the new scene. This closes the
+race where a camera callback read a pre-reset snapshot just before the reset and
+submitted it afterwards.
+
+Camera jitter changes static extrinsics, so the node republishes `/tf_static`
+before releasing the quiesce. It uses a plain transient-local `TFMessage`
+publisher rather than `tf2_ros.StaticTransformBroadcaster`, because the latter
+deduplicates by child frame ID and silently ignores a changed transform. Late
+joining subscribers receive the latest transient-local message.
+
+The response keeps the existing wire fields (`success`, `message`,
+`applied_seed`, `applied_config_json`). `applied_config_json` contains the
+sample, the per-group report, the profile name, and the profile config hash, and
+is validated by `metadata.validate_metadata_json` under the 64 KiB cap. Unknown
+profiles and invalid overrides return `success=false` with a clear message and
+no scene mutation.
+
+### Known limitations (randomization)
+
+- Reset-scoped, not continuous; there is no per-step randomization.
+- `material_pool` is PARTIAL in MuJoCo and approximated in the fake backend.
+- Distractors are SKIPPED; no runtime body creation.
+- Isaac randomization is UNVERIFIED and refused by the applier.
+- Camera jitter is applied in the camera's MuJoCo local frame, before the
+  optical conversion; fake and MuJoCo use the same convention.
+- The service always uses `episode_index=0`; explicit indices are available to
+  the sampler for later tasks.
+- The static-TF publisher is a plain transient-local publisher, not tf2's
+  static broadcaster, for the reason above.
 
 ## TF ownership and URDF
 
@@ -327,7 +511,7 @@ No joint-command topic is subscribed in Task 2. The node holds its current
 target and steps the backend. Command intake, safety filtering, and e-stop are
 Task 11; publishing raw VLA output directly to a controller remains forbidden.
 
-## Measured runtime (2026-10-31 Task 2b, 8 vCPU / 9.7 GiB WSL2)
+## Measured runtime (2026-10-31 Task 2b/3, 8 vCPU / 9.7 GiB WSL2)
 
 MuJoCo **3.17.0**, NumPy 2.5.4 in `.venv` and system NumPy 1.26.4 in
 `.venv-ros`.
@@ -345,6 +529,19 @@ was 1.66 Hz in Task 2; the exact pre-fix image average was not captured after
 the WSL limits changed, so it is not restated as 3.86's baseline. The important
 result is that control/TF now run at the requested 20 Hz while rendering stays
 slower under llvmpipe.
+
+### Task 3 runtime (2026-10-31)
+
+| Backend | seed 7 twice | seed 8 | unknown profile | report | `/joint_states` across reset |
+| --- | --- | --- | --- | --- | --- |
+| fake | identical JSON | differs | `success=false` | object_pose/texture/camera APPLIED; lighting/physics/distractors SKIPPED | **19.90 Hz** |
+| mujoco headless | identical JSON | differs | `success=false` | object_pose/texture/lighting/camera/physics APPLIED; distractors SKIPPED | **19.70 Hz** |
+
+Camera jitter changed the republished `/tf_static` overhead translation from
+`(0.4645, -0.0132, 1.0951)` to `(0.4374, 0.0143, 1.1041)` on both backends.
+The visual check wrote overhead PNGs for nominal and seeds 1-4 to
+`log/task3_preview/` (git-ignored); mean RGB and cube positions varied per
+seed. This is a visual sanity check, not a perception metric.
 
 ### Renderer benchmark (`scripts/bench_render.py`, 3 frames/camera)
 
@@ -439,6 +636,13 @@ Apache-2.0 LICENSE before copying.
 | 25 | 2026-10-31 | Reset quiesces rendering before mutating the scene | Task 3 will change model parameters; overlap with rendering is unsafe |
 | 26 | 2026-10-31 | D3D12 renderer paths are opt-in benchmark settings only | They name hardware adapters but are not the default and are never used in CI |
 | 27 | 2026-10-31 | Camera callbacks submit renders asynchronously; the worker publishes | CI showed a blocking camera callback could still starve control on a smaller runner |
+| 28 | 2026-10-31 | Randomization samples use `SeedSequence([seed, episode_index])` with one child stream per group | Pure, order-independent, and disabling one group cannot perturb another |
+| 29 | 2026-10-31 | The reset service uses `episode_index=0` and the request seed overrides the profile seed | Same seed/profile must be byte-identical regardless of earlier resets |
+| 30 | 2026-10-31 | Randomization is applied only inside the existing reset quiesce | Model parameters are shared with the render worker; overlap is unsafe |
+| 31 | 2026-10-31 | Snapshot generations reject pre-reset snapshots | A stale snapshot must never be rendered with the new model |
+| 32 | 2026-10-31 | `/tf_static` uses a plain transient-local publisher, not `StaticTransformBroadcaster` | tf2's static broadcaster deduplicates by child frame ID and ignores a changed camera extrinsic |
+| 33 | 2026-10-31 | `material_pool` is reported PARTIAL in MuJoCo; distractors are SKIPPED | Runtime texture-image swaps and runtime body creation are not supported by the scene |
+| 34 | 2026-10-31 | The ROS rate test uses a 60% CI floor and keeps the 80% local floor | Shared CI runners are noisier; 60% still catches the 4.98-6.5 Hz starvation regressions |
 
 ## Interface changelog
 

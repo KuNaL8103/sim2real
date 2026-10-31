@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 
 from sim2real.sim.backend import CameraFrame, RenderSnapshot, SimBackend
 
@@ -29,9 +30,11 @@ class RenderCoordinator:
         self._busy = False
         self._reset_in_progress = False
         self._stop = False
+        self._generation = 0
         self.published = 0
         self.skipped_busy = 0
         self.skipped_reset = 0
+        self.skipped_stale = 0
         self.failed = 0
         self._thread = threading.Thread(target=self._worker, name="sim2real-render", daemon=True)
         self._thread.start()
@@ -46,20 +49,35 @@ class RenderCoordinator:
         with self._condition:
             return self._reset_in_progress
 
+    @property
+    def generation(self) -> int:
+        """Scene generation; incremented by every ``begin_reset``."""
+        with self._condition:
+            return self._generation
+
+    def tag(self, snapshot: RenderSnapshot) -> RenderSnapshot:
+        """Stamp a freshly captured snapshot with the current generation."""
+        with self._condition:
+            return replace(snapshot, generation=self._generation)
+
     def stats(self) -> dict[str, int]:
         with self._condition:
             return {
                 "published": self.published,
                 "skipped_busy": self.skipped_busy,
                 "skipped_reset": self.skipped_reset,
+                "skipped_stale": self.skipped_stale,
                 "failed": self.failed,
             }
 
     def submit(self, camera: str, snapshot: RenderSnapshot, on_frame: FrameCallback) -> bool:
-        """Queue one render without blocking; return False if busy/resetting."""
+        """Queue one render without blocking; return False if busy/resetting/stale."""
         with self._condition:
             if self._reset_in_progress:
                 self.skipped_reset += 1
+                return False
+            if snapshot.generation != self._generation:
+                self.skipped_stale += 1
                 return False
             if self._busy:
                 self.skipped_busy += 1
@@ -76,6 +94,9 @@ class RenderCoordinator:
         with self._condition:
             if self._reset_in_progress:
                 self.skipped_reset += 1
+                return None
+            if snapshot.generation != self._generation:
+                self.skipped_stale += 1
                 return None
             if self._busy:
                 self.skipped_busy += 1
@@ -125,6 +146,10 @@ class RenderCoordinator:
 
             if callback is None:
                 with self._condition:
+                    # Clear the request before waking the blocking caller;
+                    # otherwise the worker loop sees it still set and renders
+                    # the same snapshot a second time.
+                    self._request = None
                     self._result = frame
                     self._condition.notify_all()
                 continue
@@ -144,8 +169,9 @@ class RenderCoordinator:
                     self._condition.notify_all()
 
     def begin_reset(self) -> None:
-        """Block new submissions and wait for any in-flight render to finish."""
+        """Block new submissions, invalidate old snapshots, wait for a render."""
         with self._condition:
+            self._generation += 1
             self._reset_in_progress = True
             while self._busy:
                 self._condition.wait()

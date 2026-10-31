@@ -1,0 +1,33 @@
+# Domain-randomization profile: none.
+# Randomization is disabled; every group is nominal and the sampler consumes no
+# stream. Bounds are still validated so this file is a usable template.
+schema_version: 1
+randomization:
+  enabled: false
+  seed: 42
+  object_pose:
+    translation_bounds_m: [[0.36, 0.54], [-0.18, 0.18]]
+    yaw_range_rad: [0.0, 0.0]
+    min_separation_m: 0.07
+  texture:
+    mode: color_jitter
+    rgba_range: [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0], [0.6, 1.0]]
+  lighting:
+    intensity_range: [1.0, 1.0]
+    direction_jitter_rad: 0.0
+    color_temperature_range_k: [6500.0, 6500.0]
+  camera:
+    translation_jitter_m: [0.0, 0.0, 0.0]
+    rotation_jitter_rad: [0.0, 0.0, 0.0]
+    apply_to: [overhead, wrist]
+  physics:
+    object_mass_kg: [0.064, 0.064]
+    friction:
+      sliding: [1.0, 1.0]
+      torsional: [0.005, 0.005]
+      rolling: [0.0001, 0.0001]
+    joint_damping_scale: [1.0, 1.0]
+  distractors:
+    enabled: false
+    count_range: [0, 0]
+    pool: []

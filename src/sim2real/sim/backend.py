@@ -12,6 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -122,6 +123,7 @@ class RenderSnapshot:
     stamp_ns: int
     observation: Observation
     payload: Any = None
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,8 @@ class BackendCapabilities:
     physics_friction: bool
     joint_damping: bool
     distractors: bool
+    object_pose: bool
+    texture: bool
     reasons: Mapping[str, str] = field(default_factory=dict)
 
     FLAG_NAMES: Sequence[str] = (
@@ -147,6 +151,8 @@ class BackendCapabilities:
         "physics_friction",
         "joint_damping",
         "distractors",
+        "object_pose",
+        "texture",
     )
 
     def __post_init__(self) -> None:
@@ -160,7 +166,13 @@ class BackendCapabilities:
 
 @dataclass(frozen=True)
 class ResetConfig:
-    """Nominal reset request. Randomization fields are recorded, not applied."""
+    """Reset request passed to ``SimBackend.reset``.
+
+    ``reset`` itself always restores nominal model parameters and state. Task 3
+    randomization is applied afterwards by
+    :func:`sim2real.randomization.applier.apply_randomization`, inside the same
+    render-quiesce window.
+    """
 
     seed: int = 0
     randomization_enabled: bool = False
@@ -172,11 +184,10 @@ class ResetConfig:
         return {
             "schema_version": 1,
             "seed": int(self.seed),
-            "randomization": "ignored_task_3",
             "randomization_enabled": bool(self.randomization_enabled),
             "randomization_profile": self.randomization_profile or "nominal",
             "task_instruction": self.task_instruction,
-            "object_pose_override_ignored": self.object_pose_override is not None,
+            "object_pose_override_requested": self.object_pose_override is not None,
         }
 
 
@@ -187,6 +198,9 @@ class SimBackend(ABC):
     control_rate_hz: float = 20.0
     joint_names: tuple[str, ...] = ()
     joint_limits: np.ndarray = np.empty((0, 2))
+    # Directory the backend loaded its configs from; used to locate the
+    # sibling ``randomization/`` profile directory. None means "unknown".
+    config_dir: Path | None = None
 
     @abstractmethod
     def capabilities(self) -> BackendCapabilities:
@@ -242,6 +256,20 @@ class SimBackend(ABC):
         """
         del snapshot
         return self.render(camera)
+
+    def apply_randomization(self, sample: Any) -> Mapping[str, Any]:
+        """Apply a randomization sample to model parameters.
+
+        Backends that support randomization override this and return a mapping
+        of parameter group -> ``GroupStatus``. The default returns an empty
+        mapping, which the applier reports as ``SKIPPED``: a backend must never
+        claim an application it did not perform.
+
+        Model-parameter changes are only safe inside the reset-quiesce path; the
+        ROS node guarantees that no render is in flight when this is called.
+        """
+        del sample
+        return {}
 
     def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
         """Return ``frame -> (parent_frame, world_pose)`` for the TF chain.

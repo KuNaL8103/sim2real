@@ -33,15 +33,14 @@ def test_same_seed_produces_identical_observations(backend):
         np.testing.assert_array_equal(frames_first[camera].depth, frames_second[camera].depth)
 
 
-def test_different_seed_changes_object_poses(backend):
+def test_reset_is_nominal_and_deterministic(backend):
     first = backend.reset(seed=1)
     second = backend.reset(seed=2)
-    changed = [
-        name
-        for name in first.object_poses
-        if not np.array_equal(first.object_poses[name], second.object_poses[name])
-    ]
-    assert changed, "different seeds must move at least one cube"
+    # Task 3 moved seed-driven pose variation into the sampler; reset itself is
+    # always nominal so the applier can start from a known scene.
+    for name, cube in backend.configs.scene.cubes.items():
+        np.testing.assert_allclose(first.object_poses[name][:3, 3], cube.position)
+        np.testing.assert_array_equal(first.object_poses[name], second.object_poses[name])
 
 
 def test_observation_shapes_and_dtypes(backend):
