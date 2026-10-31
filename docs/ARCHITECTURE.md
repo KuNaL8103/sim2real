@@ -86,8 +86,9 @@ Consequences:
 - **SmolVLA fine-tuning feasibility: UNKNOWN** until Task 8 measures it. Cloud
   or Colab-style GPU runs are an alternative, with checkpoints and provenance
   metadata brought back into the repository.
-- **MuJoCo rendering plus ROS on 5.8 GiB RAM is constrained.** Task 2 uses
-  256x256 at 10 Hz, one colcon worker, and measured peak RSS; see below.
+- **MuJoCo rendering plus ROS is still constrained by software GL.** Task 2b
+  uses 256x256 cameras, two colcon workers with the active 9.7 GiB / 8 vCPU
+  limits, and measured peak RSS; state/TF reach 20 Hz, images 2.67 Hz. See below.
 
 ## Core library vs ROS adapters
 
@@ -419,7 +420,7 @@ Apache-2.0 LICENSE before copying.
 | 14 | 2026-10-30 | SmolVLA fine-tuning feasibility deferred to Task 8 | 6 GB VRAM may be insufficient; must be measured, with cloud GPU as a fallback |
 | 15 | 2026-10-30 | Remove `<buildtool_depend>ament_python</buildtool_depend>`; rely on `<export><build_type>ament_python</build_type>` | The official Jazzy template does not declare that buildtool dependency, and rosdep has no rule for it |
 | 16 | 2026-10-31 | `FakeBackend` is the default CI backend; MuJoCo is optional via the `sim` group | CI must stay CPU-only and deterministic; physics tests run with `uv sync --group sim` |
-| 17 | 2026-10-31 | Cameras are 256x256 at 10 Hz; control is 20 Hz with 2 ms physics | WSL2 has 5.8 GiB RAM and software OpenGL; larger frames risk memory and latency |
+| 17 | 2026-10-31 | Cameras are 256x256 at 10 Hz; control is 20 Hz with 2 ms physics | Software OpenGL and bounded WSL resources; Task 2b measured state 20 Hz, images 2.67 Hz |
 | 18 | 2026-10-31 | Sim clock starts at zero and `/clock` is not published; camera triplets share one stamp | Deterministic recording; downstream uses ApproximateTimeSynchronizer (queue 10, slop 0.05 s) |
 | 19 | 2026-10-31 | Menagerie meshes are git-ignored and restored by `scripts/fetch_assets.sh` | The pinned folder is 36.6 MB; only small XML, license, and attribution are committed |
 | 20 | 2026-10-31 | Joint-command subscription deferred to Task 11 | Safety filtering and e-stop must exist before external commands reach the backend |
