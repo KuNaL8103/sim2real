@@ -227,13 +227,13 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=0b0c89a
-- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=0b0c89a
+- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=0a121d7
+- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=0a121d7
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Tests ran at `0b0c89a`.
+second line records the ROS-enabled suite separately. Tests ran at `0a121d7`.
 
 Run breakdown (2026-10-31, Task 2b):
 
@@ -262,7 +262,7 @@ Run breakdown (2026-10-31, Task 2b):
   Apache-2.0 LICENSE before copying. Meshes remain git-ignored.
 - `scripts/setup_envs.sh`: now installs MuJoCo 3.17.0 + rendering deps into
   `.venv-ros` with `--no-deps`; reproduced in a scratch `/tmp` venv, then deleted.
-- Three Task 2b CI attempts failed the rate test: **6.5 Hz** with blocking render, **15.0 Hz** when startup/discovery was counted, and **4.98 Hz** when the fake slow renderer still did a CPU-heavy raycast after its sleep. Rendering is fully asynchronous; the test waits for a live subscription, measures a 3 s window, and uses a delay-only fake renderer so scheduling is measured without NumPy CPU contention (local 1-2 CPU: 18.25-20.33 Hz). The new run is **pending user confirmation** (no run id invented).
+- Four Task 2b CI attempts failed the rate test: **6.5 Hz** with blocking render, **15.0 Hz** when startup/discovery was counted, **4.98 Hz** when the fake renderer still did a CPU-heavy raycast, and **14.998 Hz** when the probe subscription shared the sim node's executor. Rendering is fully asynchronous; the test waits for a live subscription, measures a 3 s window, uses a delay-only fake renderer, and measures from an independent probe node/executor. Local 1-2 CPU and colcon runs: **20.00 Hz**. The new run is **pending user confirmation** (no run id invented).
 - License and spec provenance remain as recorded for Task 2.
 
 ## Known limitations

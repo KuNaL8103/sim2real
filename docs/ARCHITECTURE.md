@@ -297,7 +297,9 @@ Design (smallest change that meets the requirements):
    runner; it is the only path used by the ROS timer. The rate test waits for a
    live subscription and measures a 3 s window, excluding discovery startup. It
    uses `FakeBackend.render_delay_only` so the injected delay is a pure sleep,
-   not a CPU-heavy raycast that would compete with the control thread.
+   not a CPU-heavy raycast that would compete with the control thread. The rate
+   probe runs on its own node/executor so it does not compete with the sim
+   node's timers for callback threads.
 8. **GIL caveat.** MuJoCo's C renderer releases the GIL, but Python callbacks and
    message construction still contend for it. This design improves control
    latency; it is not a hard real-time guarantee.
