@@ -1,0 +1,38 @@
+# Tabletop scene description. Dimensions are metres; the table top is at
+# table.position.z + table.size.z / 2.
+schema_version: 1
+
+control_rate_hz: 20.0
+physics_dt: 0.002
+
+table:
+  size: [0.70, 0.70, 0.04]
+  position: [0.45, 0.0, 0.40]
+
+cubes:
+  cube_red:
+    size: 0.04
+    position: [0.45, -0.12, 0.44]
+    color: [0.80, 0.10, 0.10]
+  cube_green:
+    size: 0.04
+    position: [0.45, 0.00, 0.44]
+    color: [0.10, 0.70, 0.15]
+  cube_blue:
+    size: 0.04
+    position: [0.45, 0.12, 0.44]
+    color: [0.10, 0.20, 0.85]
+
+zones:
+  zone_left:
+    position: [0.38, -0.22, 0.421]
+    radius: 0.055
+    color: [0.95, 0.85, 0.10]
+  zone_right:
+    position: [0.38, 0.22, 0.421]
+    radius: 0.055
+    color: [0.10, 0.85, 0.85]
+
+workspace:
+  min: [0.25, -0.30, 0.42]
+  max: [0.65, 0.30, 0.75]

@@ -1,2 +1,8 @@
-# Simulator backend configuration. Filled by Task 2 (SimBackend, MuJoCo scene).
+# Simulator configuration entry point.
+#
+# Task 2 splits the settings into three validated files:
+#   scene.yaml   world, table, cubes, zones, control/physics rates
+#   panda.yaml   MJCF path, joint/frame names, limits, home pose, TCP offset
+#   cameras.yaml resolution, rate, fovy, extrinsics
+# Load them together with `sim2real.sim.config.load_sim_configs("configs/sim")`.
 schema_version: 1

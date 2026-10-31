@@ -10,8 +10,8 @@ repository is a CPU-only development image and has **not** been built or pulled.
 
 | Tier | Target | Status |
 | --- | --- | --- |
-| dev/test | CPU-only, fake backend | scaffolded; fake backend is Task 2 |
-| high-fidelity | MuJoCo, optional Isaac Sim | MuJoCo pending Task 2; Isaac Sim **unavailable on this machine** per published requirements (see `ARCHITECTURE.md`) |
+| dev/test | CPU-only, fake backend | **available**; deterministic `FakeBackend` is the CI default |
+| high-fidelity | MuJoCo, optional Isaac Sim | **MuJoCo headless available**; Isaac Sim **unavailable on this machine** per published requirements (see `ARCHITECTURE.md`) |
 | physical | Franka Panda via ROS 2 / ros2_control | out of scope |
 
 ## Container image

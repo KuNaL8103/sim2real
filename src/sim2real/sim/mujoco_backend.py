@@ -1,0 +1,335 @@
+"""Headless MuJoCo backend for the Franka Panda tabletop scene.
+
+MuJoCo 3.x is imported lazily and only when this backend is requested, so the
+core library and the fake backend stay dependency-free. Rendering uses EGL by
+default; on this WSL2 machine EGL resolves to Mesa llvmpipe (software), which is
+slow but correct.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import numpy as np
+
+# Must be set before importing mujoco. Callers can override it explicitly.
+os.environ.setdefault("MUJOCO_GL", "egl")
+
+from sim2real import contracts  # noqa: E402
+from sim2real.sim.backend import (  # noqa: E402
+    BackendCapabilities,
+    BackendUnavailableError,
+    CameraFrame,
+    CameraIntrinsics,
+    CollisionInfo,
+    ConfigError,
+    Observation,
+    ResetConfig,
+    RobotState,
+    SimBackend,
+    StepResult,
+)
+from sim2real.sim.camera import (  # noqa: E402
+    intrinsics_from_fovy,
+    optical_pose_from_mujoco,
+    pose_from_pos_quat,
+)
+from sim2real.sim.config import SimConfigs, load_sim_configs  # noqa: E402
+
+CAMERA_MODEL_NAMES = {"overhead": "overhead_cam", "wrist": "wrist_cam"}
+
+
+class MuJoCoBackend(SimBackend):
+    """Absolute joint-position control of a Panda with an RGB-D tabletop."""
+
+    name = "mujoco"
+
+    def __init__(self, config_dir: str | Path) -> None:
+        try:
+            import mujoco
+        except ImportError as exc:  # pragma: no cover - exercised by skip logic
+            raise BackendUnavailableError(
+                "mujoco is not installed; run `uv sync --group sim`"
+            ) from exc
+
+        self._mujoco = mujoco
+        self.configs: SimConfigs = load_sim_configs(config_dir)
+        self.control_rate_hz = float(self.configs.scene.control_rate_hz)
+        self.joint_names = tuple(self.configs.panda.joint_names)
+        self.joint_limits = np.asarray(self.configs.panda.joint_limits, dtype=np.float64)
+
+        model_path = Path(self.configs.panda.model)
+        if not model_path.is_file():
+            raise ConfigError(
+                f"MuJoCo model not found at {model_path}; run scripts/fetch_assets.sh"
+            )
+
+        spec = mujoco.MjSpec.from_file(str(model_path))
+        self._configure_cameras(spec)
+        self.model = spec.compile()
+        self.model.opt.timestep = float(self.configs.scene.physics_dt)
+        self.data = mujoco.MjData(self.model)
+
+        self._arm_qpos_adr = self._addresses(self.configs.panda.mujoco_joint_names)
+        self._arm_dof_adr = self._dof_addresses(self.configs.panda.mujoco_joint_names)
+        self._gripper_qpos_adr = int(
+            self.model.jnt_qposadr[self._joint_id(self.configs.panda.mujoco_gripper_joint)]
+        )
+        self._actuator_ids = self._resolve_actuators()
+        self._camera_ids = {
+            name: self.model.camera(CAMERA_MODEL_NAMES[name]).id for name in contracts.CAMERAS
+        }
+        self._robot_bodies = {mujoco_name for _, mujoco_name in self.configs.panda.body_frames}
+        self._robot_bodies.update({"left_finger", "right_finger"})
+        self._cube_bodies = set(self.configs.scene.cubes)
+        self._color_renderers: dict[str, object] = {}
+        self._depth_renderers: dict[str, object] = {}
+        self._intrinsics = {
+            name: intrinsics_from_fovy(camera.fovy_deg, camera.width, camera.height)
+            for name, camera in self.configs.cameras.items()
+        }
+        self._sim_time_ns = 0
+        self._last_collision = CollisionInfo(0, ())
+        self._closed = False
+        self.reset(seed=0)
+
+    # -- setup helpers -----------------------------------------------------
+    def _configure_cameras(self, spec: object) -> None:
+        mujoco = self._mujoco
+        overhead = self.configs.camera("overhead")
+        spec_overhead = spec.camera(CAMERA_MODEL_NAMES["overhead"])
+        spec_overhead.pos = overhead.position.tolist()
+        spec_overhead.quat = overhead.quat_wxyz.tolist()
+        spec_overhead.fovy = float(overhead.fovy_deg)
+
+        wrist = self.configs.camera("wrist")
+        hand = spec.body(self.configs.panda.body_frames[-1][1])
+        spec_wrist = hand.add_camera()
+        spec_wrist.name = CAMERA_MODEL_NAMES["wrist"]
+        spec_wrist.pos = wrist.position.tolist()
+        spec_wrist.quat = wrist.quat_wxyz.tolist()
+        spec_wrist.fovy = float(wrist.fovy_deg)
+        # Touch the enum so a MuJoCo API change fails loudly at construction.
+        assert mujoco.mjtObj.mjOBJ_CAMERA is not None
+
+    def _joint_id(self, name: str) -> int:
+        joint = self.model.joint(name)
+        if joint is None:
+            raise ConfigError(f"MuJoCo model has no joint named {name!r}")
+        return int(joint.id)
+
+    def _addresses(self, names: tuple[str, ...]) -> np.ndarray:
+        return np.asarray(
+            [self.model.jnt_qposadr[self._joint_id(name)] for name in names], dtype=np.int64
+        )
+
+    def _dof_addresses(self, names: tuple[str, ...]) -> np.ndarray:
+        return np.asarray(
+            [self.model.jnt_dofadr[self._joint_id(name)] for name in names], dtype=np.int64
+        )
+
+    def _resolve_actuators(self) -> np.ndarray:
+        """Return actuator ids in canonical joint order, then the gripper."""
+        ids: list[int] = []
+        for index, joint_name in enumerate(self.configs.panda.mujoco_joint_names):
+            joint_id = self._joint_id(joint_name)
+            actuator_id = int(np.flatnonzero(self.model.actuator_trnid[:, 0] == joint_id)[0])
+            if index < 7 and actuator_id != index:
+                raise ConfigError(
+                    f"actuator order mismatch: {joint_name} maps to actuator {actuator_id}"
+                )
+            ids.append(actuator_id)
+        # The Menagerie gripper actuator drives a tendon, so match it by name.
+        gripper = self.model.actuator("actuator8")
+        if gripper is None:
+            raise ConfigError("MuJoCo model has no gripper actuator named 'actuator8'")
+        ids.append(int(gripper.id))
+        return np.asarray(ids, dtype=np.int64)
+
+    # -- backend API -------------------------------------------------------
+    def capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities(
+            rgbd=True,
+            lighting=True,
+            materials=True,
+            camera_extrinsics=True,
+            physics_mass=True,
+            physics_friction=True,
+            joint_damping=True,
+            distractors=False,
+            reasons={
+                "rgbd": "MuJoCo Renderer with metric depth",
+                "lighting": "two explicit lights in scene_tabletop.xml",
+                "materials": "checker table material and per-cube RGBA",
+                "camera_extrinsics": "camera poses read from the compiled model",
+                "physics_mass": "MJCF body inertials",
+                "physics_friction": "MJCF geom friction",
+                "joint_damping": "Menagerie joints declare damping=1",
+                "distractors": "not implemented; Task 3 domain randomization",
+            },
+        )
+
+    def reset(self, seed: int, config: ResetConfig | None = None) -> Observation:
+        del config  # nominal reset only in Task 2
+        data = self.data
+        self._mujoco.mj_resetData(self.model, data)
+        data.qpos[self._arm_qpos_adr] = self.configs.panda.home_arm
+        data.qpos[self._gripper_qpos_adr] = self.configs.panda.home_gripper
+        for name, cube in self.configs.scene.cubes.items():
+            joint = self.model.joint(f"{name}_joint")
+            address = int(self.model.jnt_qposadr[joint.id])
+            data.qpos[address : address + 7] = [*cube.position, 1.0, 0.0, 0.0, 0.0]
+        data.qvel[:] = 0.0
+        data.ctrl[:] = 0.0
+        data.ctrl[self._actuator_ids[:7]] = self.configs.panda.home_arm
+        data.ctrl[self._actuator_ids[7]] = self._gripper_ctrl(self.configs.panda.home_gripper)
+        self._sim_time_ns = 0
+        self._mujoco.mj_forward(self.model, data)
+        self._last_collision = self._contacts()
+        return self._observation()
+
+    def step(self, joint_target: np.ndarray, gripper_target: float) -> StepResult:
+        target = np.asarray(joint_target, dtype=np.float64)
+        if target.shape != (7,):
+            raise ValueError(f"joint_target must have 7 elements, got {target.shape}")
+        target = np.clip(target, self.joint_limits[:, 0], self.joint_limits[:, 1])
+        self.data.ctrl[self._actuator_ids[:7]] = target
+        self.data.ctrl[self._actuator_ids[7]] = self._gripper_ctrl(gripper_target)
+
+        substeps = max(1, round(1.0 / (self.control_rate_hz * self.model.opt.timestep)))
+        for _ in range(substeps):
+            self._mujoco.mj_step(self.model, self.data)
+        self._sim_time_ns += int(round(1e9 / self.control_rate_hz))
+        self._last_collision = self._contacts()
+        return StepResult(
+            observation=self._observation(),
+            collision=self._last_collision,
+            done=False,
+            info={"substeps": substeps},
+        )
+
+    def get_observation(self) -> Observation:
+        return self._observation()
+
+    def render(self, camera: str) -> CameraFrame:
+        if camera not in self._camera_ids:
+            raise ConfigError(f"unknown camera {camera!r}")
+        camera_config = self.configs.camera(camera)
+        mujoco_name = CAMERA_MODEL_NAMES[camera]
+
+        color_renderer = self._color_renderers.get(camera)
+        if color_renderer is None:
+            color_renderer = self._mujoco.Renderer(
+                self.model, camera_config.height, camera_config.width
+            )
+            self._color_renderers[camera] = color_renderer
+        color_renderer.update_scene(self.data, camera=mujoco_name)
+        rgb = np.asarray(color_renderer.render(), dtype=np.uint8)
+
+        depth_renderer = self._depth_renderers.get(camera)
+        if depth_renderer is None:
+            depth_renderer = self._mujoco.Renderer(
+                self.model, camera_config.height, camera_config.width
+            )
+            depth_renderer.enable_depth_rendering()
+            self._depth_renderers[camera] = depth_renderer
+        depth_renderer.update_scene(self.data, camera=mujoco_name)
+        depth = np.asarray(depth_renderer.render(), dtype=np.float32)
+        depth[~np.isfinite(depth)] = np.nan
+        # MuJoCo reports the scene extent (tens of metres here) for sky pixels;
+        # treat those as invalid rather than as a real measurement.
+        depth[depth > 20.0] = np.nan
+
+        return CameraFrame(
+            rgb=rgb,
+            depth=depth,
+            stamp_ns=self._sim_time_ns,
+            frame_id=camera_config.frame_id,
+        )
+
+    def get_camera_info(self, camera: str) -> CameraIntrinsics:
+        if camera not in self._intrinsics:
+            raise ConfigError(f"unknown camera {camera!r}")
+        return self._intrinsics[camera]
+
+    def camera_pose_world(self, camera: str) -> np.ndarray:
+        if camera not in self._camera_ids:
+            raise ConfigError(f"unknown camera {camera!r}")
+        camera_id = self._camera_ids[camera]
+        return optical_pose_from_mujoco(
+            self.data.cam_xpos[camera_id], self.data.cam_xmat[camera_id].reshape(3, 3)
+        )
+
+    def collision_report(self) -> CollisionInfo:
+        return self._last_collision
+
+    def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
+        poses: dict[str, tuple[str | None, np.ndarray]] = {}
+        previous: str | None = None
+        for ros_name, mujoco_name in self.configs.panda.body_frames:
+            body = self.model.body(mujoco_name)
+            pose = pose_from_pos_quat(self.data.xpos[body.id], self._mat_to_quat(body.id))
+            poses[ros_name] = (previous, pose)
+            previous = ros_name
+        return poses
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for renderer in (*self._color_renderers.values(), *self._depth_renderers.values()):
+            renderer.close()
+        self._color_renderers.clear()
+        self._depth_renderers.clear()
+        self._closed = True
+
+    # -- internals ---------------------------------------------------------
+    def _gripper_ctrl(self, target: float) -> float:
+        low, high = self.configs.panda.gripper_limits
+        clamped = float(np.clip(target, low, high))
+        # Menagerie remaps 0..0.04 m to 0..255.
+        return (clamped - low) / (high - low) * 255.0
+
+    def _mat_to_quat(self, body_id: int) -> np.ndarray:
+        from sim2real.sim.camera import mat_to_quat
+
+        return mat_to_quat(self.data.xmat[body_id].reshape(3, 3))
+
+    def _observation(self) -> Observation:
+        state = RobotState(
+            joint_positions=np.array(self.data.qpos[self._arm_qpos_adr], dtype=np.float64),
+            joint_velocities=np.array(self.data.qvel[self._arm_dof_adr], dtype=np.float64),
+            gripper_position=float(self.data.qpos[self._gripper_qpos_adr]),
+            ee_pose=pose_from_pos_quat(
+                self.data.xpos[self.model.body("hand").id],
+                self._mat_to_quat(self.model.body("hand").id),
+            ),
+            stamp_ns=self._sim_time_ns,
+        )
+        object_poses = {}
+        for name in self.configs.scene.cubes:
+            body = self.model.body(name)
+            object_poses[name] = pose_from_pos_quat(
+                self.data.xpos[body.id], self._mat_to_quat(body.id)
+            )
+        return Observation(robot_state=state, object_poses=object_poses)
+
+    def _contacts(self) -> CollisionInfo:
+        details: list[str] = []
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            body1 = self._body_name(int(self.model.geom_bodyid[contact.geom1]))
+            body2 = self._body_name(int(self.model.geom_bodyid[contact.geom2]))
+            if body1 in self._robot_bodies and body2 in self._robot_bodies:
+                continue
+            if body1 == "world" or body2 == "world":
+                continue
+            if body1 == "table" or body2 == "table":
+                continue
+            if body1 in self._cube_bodies or body2 in self._cube_bodies:
+                details.append(f"{body1}<->{body2}")
+        return CollisionInfo(num_unintended_contacts=len(details), details=tuple(details))
+
+    def _body_name(self, body_id: int) -> str:
+        name = self._mujoco.mj_id2name(self.model, self._mujoco.mjtObj.mjOBJ_BODY, body_id)
+        return name or f"body{body_id}"

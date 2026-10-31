@@ -23,12 +23,17 @@ jobs:
           version: "0.13.6"
           enable-cache: true
       - name: Sync dev environment
-        run: uv sync
+        run: uv sync --group sim
+      - name: Fetch Menagerie Panda assets
+        run: ./scripts/fetch_assets.sh
       - name: Lint
         run: uv run ruff check .
       - name: Format check
         run: uv run ruff format --check .
       - name: Test
+        env:
+          # The hosted runner has no GPU/display; physics tests still run.
+          SIM2REAL_SKIP_RENDER: "1"
         run: uv run pytest -ra
 
   ros:

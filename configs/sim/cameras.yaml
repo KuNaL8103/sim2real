@@ -1,0 +1,29 @@
+# Camera definitions. 256x256 at 10 Hz is deliberate: this machine has 5.8 GiB
+# RAM and software OpenGL (Mesa llvmpipe) in WSL2.
+#
+# `quat_wxyz` is the camera orientation in its parent frame using the MuJoCo
+# camera convention (looks along -Z, +Y up). The backend converts it to a ROS
+# optical pose (x right, y down, z forward).
+schema_version: 1
+
+cameras:
+  overhead:
+    resolution: [256, 256]
+    rate_hz: 10.0
+    fovy_deg: 55.0
+    frame_id: camera_overhead_optical_frame
+    parent_frame: world
+    position: [0.45, 0.0, 1.10]
+    # Identity: MuJoCo cameras look along -Z, i.e. straight down here.
+    quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+  wrist:
+    resolution: [256, 256]
+    rate_hz: 10.0
+    fovy_deg: 70.0
+    frame_id: camera_wrist_optical_frame
+    parent_frame: panda_hand
+    # Slightly in front of the hand origin, along the approach direction.
+    position: [0.0, 0.0, 0.02]
+    # Look along the hand +z (towards the fingers).
+    quat_wxyz: [0.0, 1.0, 0.0, 0.0]

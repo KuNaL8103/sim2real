@@ -1,4 +1,5 @@
-"""ROS 2 node adapters for simulator backends (fake and MuJoCo first; Isaac Sim optional).
+"""ROS 2 node adapters for simulator backends.
 
-No node logic is implemented in Task 1.
+The executable is ``sim_node``. All simulation and algorithm code lives in the
+pure-Python ``sim2real`` package; this package only publishes ROS messages.
 """

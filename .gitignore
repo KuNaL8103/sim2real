@@ -21,6 +21,11 @@ log/
 data/**
 !data/.gitkeep
 
+# Fetched simulator assets: meshes are large and restored by scripts/fetch_assets.sh.
+# The MJCF XML, upstream LICENSE, and ATTRIBUTION.md are committed.
+assets/mujoco/franka_emika_panda/assets/
+assets/mujoco/franka_emika_panda/panda.png
+
 # Model weights and checkpoints
 *.pt
 *.pth

@@ -17,7 +17,10 @@ source /opt/ros/jazzy/setup.bash
 set -u
 
 cd "$ROOT/ros2_ws"
-colcon build --symlink-install
+# Bound parallelism: this WSL2 session has 2 vCPU and 5.8 GiB RAM until the
+# .wslconfig limits are actually applied. Override with COLCON_WORKERS=2..3 only
+# after `nproc` reports the larger CPU count.
+colcon build --symlink-install --parallel-workers "${COLCON_WORKERS:-1}"
 colcon test
 colcon test-result --verbose
 

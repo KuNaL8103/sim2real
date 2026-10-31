@@ -30,7 +30,9 @@ dev = [
 ]
 # Declared but intentionally empty. Populated only when the matching
 # environment is approved; these are NOT installed by `uv sync`.
-sim = []
+sim = [
+    "mujoco>=3.17.0",
+]
 ml = []
 
 [tool.hatch.build.targets.wheel]
@@ -44,6 +46,10 @@ exclude = [".venv", ".venv-ros", ".venv-ml", "build", "install", "log", "data"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# sim_node bootstraps src/ and .venv-ros before importing sim2real/mujoco.
+"ros2_ws/src/sim2real_sim/sim2real_sim/sim_node.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
