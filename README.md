@@ -57,4 +57,4 @@ success is not a safety case. See `docs/SAFETY.md`.
 
 ## License
 
-Apache-2.0 (provisional; confirm before distribution).
+Apache-2.0. See [`LICENSE`](LICENSE).
