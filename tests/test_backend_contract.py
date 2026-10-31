@@ -18,13 +18,13 @@ ASSETS = REPO_ROOT / "assets" / "mujoco" / "franka_emika_panda"
 def _make(name: str):
     if name == "mujoco":
         pytest.importorskip("mujoco")
-        if not (ASSETS / "panda.xml").is_file():
+        if not (ASSETS / "panda.xml").is_file() or not (ASSETS / "assets").is_dir():
             pytest.skip("Menagerie assets missing; run scripts/fetch_assets.sh")
     backend = create_backend(name, CONFIG_DIR)
     return backend
 
 
-@pytest.mark.parametrize("name", ["fake", "mujoco"])
+@pytest.mark.parametrize("name", ["fake", pytest.param("mujoco", marks=pytest.mark.sim)])
 def test_backend_contract(name):
     backend = _make(name)
     try:
@@ -70,7 +70,7 @@ def test_backend_contract(name):
 
 def test_mujoco_limits_match_loaded_model():
     pytest.importorskip("mujoco")
-    if not (ASSETS / "panda.xml").is_file():
+    if not (ASSETS / "panda.xml").is_file() or not (ASSETS / "assets").is_dir():
         pytest.skip("Menagerie assets missing; run scripts/fetch_assets.sh")
     import mujoco
 

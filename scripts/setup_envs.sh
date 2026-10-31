@@ -18,7 +18,7 @@ if [ ! -f /opt/ros/jazzy/setup.bash ]; then
 fi
 
 echo "==> Core environment (.venv)"
-uv sync
+uv sync --group sim
 
 echo "==> ROS environment (.venv-ros)"
 # ROS setup scripts reference optional unset variables; relax nounset while
@@ -42,12 +42,27 @@ uv pip install --python .venv-ros/bin/python "pytest>=8,<9" "pyyaml>=6,<7" "ruff
 # Editable core package so .venv-ros can run the same test suite. No deps.
 uv pip install --python .venv-ros/bin/python --no-deps -e .
 
+# MuJoCo and its rendering dependencies, without NumPy: system NumPy 1.26.4
+# must remain the visible version. These versions are the approved Task 2 set.
+uv pip install --python .venv-ros/bin/python --no-deps \
+  "mujoco==3.17.0" \
+  "glfw==2.11.0" \
+  "pyopengl==3.1.10" \
+  "absl-py==2.5.1" \
+  "etils==1.14.0" \
+  "fsspec==2026.9.0" \
+  "typing-extensions==4.16.0" \
+  "websockets==17.4" \
+  "zipp==4.1.2"
+
 .venv-ros/bin/python -c "import rclpy; print('rclpy OK:', rclpy.__file__)"
+.venv-ros/bin/python -c "import mujoco, numpy; print('mujoco', mujoco.__version__, 'numpy', numpy.__version__, 'Renderer', hasattr(mujoco, 'Renderer'))"
 
 cat <<'EOF'
 
 ==> Environment summary
-.venv       core/CI, no ROS, managed by uv.
-.venv-ros   system Python 3.12 + ROS Jazzy via --system-site-packages.
+.venv       core/CI, no ROS, managed by uv (includes the sim group).
+.venv-ros   system Python 3.12 + ROS Jazzy via --system-site-packages,
+            editable core, MuJoCo 3.17.0 and rendering deps (no NumPy).
 .venv-ml    NOT created. Planned for torch/LeRobot/PEFT (Task 8).
 EOF

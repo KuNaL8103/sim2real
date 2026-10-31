@@ -1,10 +1,21 @@
 # Architecture
 
-Status: **Task 2 simulator backends.** The core library, fake backend, headless
-MuJoCo Franka tabletop backend, guarded Isaac adapter, and ROS 2 `sim_node` are
-implemented and tested. Randomization, datasets, training, mapping, inference,
-and safety are **not** implemented. Isaac Sim is **UNAVAILABLE on this machine**
-(requirements-based, not tested).
+Status: **Task 2b hardening.** Simulator backends, `sim_node`, and the nominal
+reset service are implemented. Task 2b decouples `/joint_states`/TF publication
+from camera rendering, adds snapshot-based rendering and reset quiesce, measures
+opt-in renderer paths, and hardens environment reproduction. Randomization,
+datasets, training, mapping, inference, and safety remain unimplemented. Isaac
+Sim is **UNAVAILABLE on this machine** (requirements-based, not tested).
+
+## Scope of Task 2b
+
+- Publish state/TF at the control rate independently of rendering.
+- Render from a private snapshot; one render in flight; skip and count busy ticks.
+- Reset waits for the in-flight render and blocks new renders.
+- Optional `render_only_when_subscribed`.
+- Opt-in renderer benchmarks; no default changes.
+- Verification/hardening of `setup_envs.sh`, CI asset options, QoS, asset fetch,
+  and `opencode.json`.
 
 ## Scope of Task 2
 
@@ -46,16 +57,15 @@ Official Isaac Sim 6.2.0 requirements:
 | --- | --- | --- | --- |
 | GPU | GeForce RTX 4080 | RTX 4050 Laptop | below |
 | VRAM | 16 GB | 6141 MiB (6 GB) | below |
-| RAM | 32 GB | 5.8 GiB visible in WSL (host: 15.3 GB) | below |
-| CPU cores | 4 | 2 vCPU in WSL (host: 8 cores / 16 logical) | below in the current WSL config |
+| RAM | 32 GB | 9.7 GiB visible in WSL (host: 15.3 GB) | below |
+| CPU cores | 4 | 8 vCPU in WSL (host: 8 cores / 16 logical) | meets |
 | Storage | 50 GB SSD | about 930 GB free | meets |
 | Driver | Linux 595.58.03 | 551.76 | below tested version |
 
-WSL limits requested in `%UserProfile%\.wslconfig` (`memory=10GB`, `swap=4GB`,
-`processors=8`) were **not active** on 2026-10-31: `free -h` still showed
-5.8 GiB/8.0 GiB swap and `nproc` reported 2, and the file on disk still
-contained the old `memory=6GB`, `swap=8GB`, `processors=2`. Task 2 therefore ran
-with **one colcon worker**, 256x256 cameras, and no simultaneous heavy jobs.
+WSL limits `memory=10GB`, `swap=4GB`, `processors=8` are **active as of
+2026-10-31 Task 2b**: `free -h` reports 9.7 GiB RAM / 4.0 GiB swap and `nproc`
+reports 8. Task 2b used **2 colcon workers**; Task 2 measurements were taken with
+the older 5.8 GiB / 2 vCPU limits.
 
 Graphics:
 
@@ -63,8 +73,10 @@ Graphics:
 - `MUJOCO_GL=egl` (default in the backend): initialises successfully and selects
   **Mesa llvmpipe**, i.e. software rendering.
 - One read-only experiment with `GALLIUM_DRIVER=d3d12` reported
-  `D3D12 (AMD Radeon(TM) Graphics)` (host integrated GPU through WSL), **not** the
-  RTX 4050. This is recorded as an experiment, not a supported default.
+  `D3D12 (AMD Radeon(TM) Graphics)` (host integrated GPU through WSL). Adding
+  `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` reported
+  `D3D12 (NVIDIA GeForce RTX 4050 Laptop GPU)`. Both are **opt-in** benchmark
+  settings, not defaults, and are never used by CI.
 
 Consequences:
 
@@ -157,6 +169,15 @@ left as `TBD` where no decision has been made.
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 2 applies a nominal reset only and reports randomization fields as ignored. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling | expert/sim adapter | TBD (task 4) | TBD (task 4) | Bounded batch sizes; failures are reported, not silently retried forever. |
 
+QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
+that parses this table. `/tf` uses depth 10 (tf2_ros defaults to 100). Camera
+topics remain **reliable keep-last 5**: `ros2 topic echo
+--qos-reliability best_effort --once` receives them because a reliable publisher
+serves best-effort subscribers, but reverting to best-effort would reintroduce
+the RViz Camera-display reliability mismatch observed in Task 2. The RViz Image
+and Camera displays are already configured Best Effort; that alone was not
+sufficient.
+
 ## Frames and conventions
 
 | frame | parent | convention | notes |
@@ -238,6 +259,45 @@ Every flag carries an explicit reason string in `BackendCapabilities.reasons`.
   exact synchronizer also works; the slop only matters for recorded/replayed
   data.
 
+## Publishing/rendering decoupling (Task 2b)
+
+Problem measured in Task 2: with `publish_images:=true`, MuJoCo's render callback
+ran on the same single-threaded executor and starved the control timer
+(`/joint_states` 1.87–3.28 Hz). With images off, it already reached 20 Hz.
+
+Design (smallest change that meets the requirements):
+
+1. **Two timer callback groups.** The control timer is in a
+   `MutuallyExclusiveCallbackGroup`; the camera timer is in a
+   `ReentrantCallbackGroup`. `main()` uses `MultiThreadedExecutor(num_threads=2)`.
+2. **Snapshot under a short lock.** The control callback holds a backend lock
+   only for `step()` + `capture_snapshot()`. `MuJoCoBackend.capture_snapshot()`
+   copies `MjData` with `mj_copyData`; the fake backend copies its observation
+   and object poses. The lock is released before publishing or rendering.
+3. **One render thread.** `RenderCoordinator` owns a single worker thread because
+   MuJoCo's EGL context is thread-bound. A camera callback submits a snapshot and
+   waits for that render; if a render is already in flight it returns
+   immediately and increments `skipped_busy`. There is no queue.
+4. **Stamp/TF ordering.** The control tick publishes `/joint_states` and dynamic
+   `/tf`, then exposes the snapshot to the camera group. A camera frame uses the
+   snapshot's stamp, and the colour/depth/`CameraInfo` triplet shares it. A tf2
+   lookup at that stamp finds a published sample; tf2 interpolates between
+   samples and would fail on extrapolation into the future.
+5. **Reset quiesce.** The reset service calls `begin_reset()`, which blocks new
+   renders and waits for the in-flight render, then resets under the backend
+   lock. Task 3 must make model-parameter changes inside this same quiesce path.
+6. **Optional `render_only_when_subscribed`** (default `false`) skips a camera
+   whose three publishers have no subscribers and counts the skip.
+7. **Counters at shutdown:** `published`, `skipped_busy`, `skipped_reset`,
+   `failed`, `skipped_unsubscribed` are printed directly (not via rosout, which
+   may already be invalid on SIGINT).
+8. **GIL caveat.** MuJoCo's C renderer releases the GIL, but Python callbacks and
+   message construction still contend for it. This design improves control
+   latency; it is not a hard real-time guarantee.
+
+`publish_images:=false` does not create the camera timer. The control path still
+captures a snapshot (cheap) so the node's structure stays identical.
+
 ## TF ownership and URDF
 
 - The sim node is the single `/joint_states` owner while it runs. Never run the
@@ -258,33 +318,43 @@ No joint-command topic is subscribed in Task 2. The node holds its current
 target and steps the backend. Command intake, safety filtering, and e-stop are
 Task 11; publishing raw VLA output directly to a controller remains forbidden.
 
-## Measured runtime (2026-10-31, 2 vCPU / 5.8 GiB WSL2)
+## Measured runtime (2026-10-31 Task 2b, 8 vCPU / 9.7 GiB WSL2)
 
 MuJoCo **3.17.0**, NumPy 2.5.4 in `.venv` and system NumPy 1.26.4 in
 `.venv-ros`.
 
-| Measurement | Result |
-| --- | --- |
-| MuJoCo backend construction | 0.70 s |
-| Physics step (20 steps) | 0.9 ms/step |
-| `render("overhead")`, 256x256 color+depth, llvmpipe | 283.6 ms |
-| `render("wrist")`, 256x256 color+depth, llvmpipe | 212.2 ms |
-| Python smoke peak RSS (`ru_maxrss`) | 846.9 MiB |
-| MuJoCo ROS node peak RSS (`/usr/bin/time -v`) | 915,260 KiB (~894 MiB) |
-| Fake ROS node `/joint_states` | 20.1 Hz |
-| MuJoCo ROS node `/joint_states` | **1.87 Hz** |
-| MuJoCo ROS node overhead image | **1.66 Hz** |
-| Optional `GALLIUM_DRIVER=d3d12` render | 90.1 ms overhead / 76.4 ms wrist |
-| EGL renderer actually selected | Mesa **llvmpipe**; D3D12 experiment selected AMD Radeon (iGPU), not the RTX 4050 |
+### Before/after publishing decoupling
 
-The configured 20 Hz control / 10 Hz camera rates are **not achieved with
-software OpenGL**: a single-threaded executor spends most of its time in
-`mujoco.Renderer`, so the control timer is starved. This is a measured
-limitation, not a claim that the rates are met. The fake backend sustains the
-configured 20 Hz because it has no GL rendering. Options for Task 3+ are a
-smaller resolution, a lower camera rate, or a rendering thread/snapshot; none
-is implemented yet. The `sim` marker keeps physics tests independent of GL; the
-`render` marker keeps offscreen rendering out of CI.
+| Backend / images | `/joint_states` before | `/joint_states` after | `/tf` after | overhead image after | peak RSS after |
+| --- | --- | --- | --- | --- | --- |
+| fake / on | 20.1 Hz (Task 2) | 20.00 Hz | 19.99 Hz | 10.0 Hz | 113,100 KiB |
+| mujoco / off | 20.0 Hz (this session) | 19.99 Hz | 20.00 Hz | n/a | 340,604 KiB |
+| mujoco / on | **3.28 Hz** (this session; 1.87 Hz in Task 2) | **19.97 Hz** | **19.97 Hz** | **2.67 Hz** | **912,564 KiB** |
+
+Before-fix `/tf` for mujoco/on was 1.89 Hz in this session. The pre-fix image rate
+was 1.66 Hz in Task 2; the exact pre-fix image average was not captured after
+the WSL limits changed, so it is not restated as 2.67's baseline. The important
+result is that control/TF now run at the requested 20 Hz while rendering stays
+slower under llvmpipe.
+
+### Renderer benchmark (`scripts/bench_render.py`, 3 frames/camera)
+
+| Configuration | Renderer string | overhead ms | wrist ms | peak RSS |
+| --- | --- | --- | --- | --- |
+| default `MUJOCO_GL=egl` | `llvmpipe (LLVM 20.1.2, 256 bits)` | 178.0 | 137.3 | 866,736 KiB |
+| `GALLIUM_DRIVER=d3d12` | `D3D12 (AMD Radeon(TM) Graphics)` | 71.2 | 66.2 | 473,684 KiB |
+| `GALLIUM_DRIVER=d3d12` + `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` | `D3D12 (NVIDIA GeForce RTX 4050 Laptop GPU)` | 83.0 | 80.4 | 442,376 KiB |
+
+The Mesa variable is documented at
+<https://docs.mesa3d.org/drivers/d3d12.html> as a case-insensitive substring
+match. Both D3D12 paths name a hardware adapter; the NVIDIA path names the
+RTX 4050 explicitly. Cross-renderer comparison against the llvmpipe frame of the
+same seed: RGB mean absolute difference **0.08** (AMD) / **0.12** (NVIDIA) out of
+255, depth MAD **1.16 mm**, with 415 of 65,536 validity-mask pixels differing
+(mostly sky/edge pixels).
+
+These are **OPT-IN** settings only: no default changed, CI never uses them, and
+software rendering remains the documented baseline.
 
 
 ## Environment separation
@@ -292,7 +362,7 @@ is implemented yet. The `sim` marker keeps physics tests independent of GL; the
 | Environment | Created by | Contains | Must not contain |
 | --- | --- | --- | --- |
 | `.venv` | `uv sync` | core library + dev tools | ROS, torch, LeRobot |
-| `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff | numpy/torch installs that shadow system packages |
+| `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff, MuJoCo 3.17.0 + rendering deps installed `--no-deps` | numpy/torch installs that shadow system packages |
 | `.venv-ml` | documented only, Task 8 | torch, LeRobot, PEFT | ROS |
 
 Why the split:
@@ -310,6 +380,24 @@ Why the split:
   `pyproject.toml` with `-p no:...`; they are not needed for these tests.
 - Never run ROS nodes with `.venv/bin/python`. Never run core-only tests with
   `.venv-ml` if it changes NumPy semantics.
+
+## CI and fetched assets
+
+The core job runs `uv sync --group sim`, then `./scripts/fetch_assets.sh`, then
+`pytest` with `SIM2REAL_SKIP_RENDER=1`. The ROS job does not install MuJoCo and
+does not fetch assets.
+
+Options if the Panda meshes are absent:
+
+1. **Current CI:** fetch them (about 33 MB per run), so MuJoCo physics tests run.
+2. **No fetch:** the conftest skips every `sim`/`render` test with an explicit
+   reason; fake-backend tests still pass. This is verified by temporarily hiding
+   the mesh directory.
+3. **Prebuilt cache:** cache the mesh directory between runs. Not implemented.
+
+No additional asset-fetch step was added in Task 2b. The existing Task 2 step was
+kept; `scripts/fetch_assets.sh` now verifies the checked-out SHA and the
+Apache-2.0 LICENSE before copying.
 
 ## Decision log
 
@@ -336,6 +424,11 @@ Why the split:
 | 19 | 2026-10-31 | Menagerie meshes are git-ignored and restored by `scripts/fetch_assets.sh` | The pinned folder is 36.6 MB; only small XML, license, and attribution are committed |
 | 20 | 2026-10-31 | Joint-command subscription deferred to Task 11 | Safety filtering and e-stop must exist before external commands reach the backend |
 | 21 | 2026-10-31 | Camera topics use reliable keep-last 5, not best-effort sensor-data QoS | RViz Camera displays request reliable; a reliable publisher still serves best-effort consumers |
+| 22 | 2026-10-31 | State/TF publication is decoupled from rendering with snapshots and a render worker | MuJoCo rendering on the control executor starved `/joint_states` to 1.87–3.28 Hz |
+| 23 | 2026-10-31 | All MuJoCo rendering runs on one dedicated thread | EGL contexts are thread-bound; crossing executor threads caused `EGL_BAD_ACCESS` |
+| 24 | 2026-10-31 | At most one render in flight; busy ticks are skipped and counted | No unbounded queue, bounded latency, observable counters at shutdown |
+| 25 | 2026-10-31 | Reset quiesces rendering before mutating the scene | Task 3 will change model parameters; overlap with rendering is unsafe |
+| 26 | 2026-10-31 | D3D12 renderer paths are opt-in benchmark settings only | They name hardware adapters but are not the default and are never used in CI |
 
 ## Interface changelog
 

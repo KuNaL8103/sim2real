@@ -8,6 +8,7 @@ seeds and inputs produce byte-identical observations.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ from sim2real.sim.backend import (
     CollisionInfo,
     ConfigError,
     Observation,
+    RenderSnapshot,
     ResetConfig,
     RobotState,
     SimBackend,
@@ -64,6 +66,8 @@ class FakeBackend(SimBackend):
         self._object_poses: dict[str, np.ndarray] = {}
         self._last_collision = CollisionInfo(0, ())
         self._closed = False
+        # Test hook: simulate a slow renderer without touching MuJoCo timing.
+        self.render_delay_s = 0.0
         self.reset(seed=0)
 
     # -- backend API -------------------------------------------------------
@@ -139,9 +143,20 @@ class FakeBackend(SimBackend):
         )
 
     def render(self, camera: str) -> CameraFrame:
+        return self.render_from_snapshot(camera, self.capture_snapshot())
+
+    def capture_snapshot(self) -> RenderSnapshot:
+        observation = self.get_observation()
+        return RenderSnapshot(stamp_ns=observation.stamp_ns, observation=observation)
+
+    def render_from_snapshot(self, camera: str, snapshot: RenderSnapshot) -> CameraFrame:
+        if self.render_delay_s > 0.0:
+            time.sleep(self.render_delay_s)
         config = self.configs.camera(camera)
         intrinsics = self._intrinsics[camera]
-        pose = self.camera_pose_world(camera)
+        pose = self._camera_pose_for(camera, snapshot.observation.robot_state.ee_pose)
+        object_poses = snapshot.observation.object_poses
+        stamp_ns = snapshot.stamp_ns
         height, width = config.height, config.width
 
         us = np.arange(width, dtype=np.float64) + 0.5
@@ -190,7 +205,7 @@ class FakeBackend(SimBackend):
             in_zone = hit_plane & (dx * dx + dy * dy <= zone.radius**2)
             rgb[in_zone] = 0.55 * rgb[in_zone] + 0.45 * np.asarray(zone.color)
 
-        for name, pose in self._object_poses.items():
+        for name, pose in object_poses.items():
             cube = table.cubes[name]
             half = np.full(3, cube.size / 2.0)
             lower = pose[:3, 3] - half
@@ -210,7 +225,7 @@ class FakeBackend(SimBackend):
         return CameraFrame(
             rgb=rgb8,
             depth=depth.astype(np.float32),
-            stamp_ns=self._sim_time_ns,
+            stamp_ns=stamp_ns,
             frame_id=config.frame_id,
         )
 
@@ -220,12 +235,15 @@ class FakeBackend(SimBackend):
         return self._intrinsics[camera]
 
     def camera_pose_world(self, camera: str) -> np.ndarray:
+        return self._camera_pose_for(camera, self._ee_pose())
+
+    def _camera_pose_for(self, camera: str, ee_pose: np.ndarray) -> np.ndarray:
         config = self.configs.camera(camera)
         local = pose_from_pos_quat(config.position, config.quat_wxyz)
         if config.parent_frame == contracts.WORLD_FRAME:
             parent = np.eye(4)
         elif config.parent_frame == contracts.PANDA_HAND_FRAME:
-            parent = self._ee_pose()
+            parent = ee_pose
         else:
             raise ConfigError(
                 f"camera {camera!r} has unsupported parent_frame {config.parent_frame!r}"

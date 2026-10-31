@@ -112,6 +112,19 @@ class StepResult:
 
 
 @dataclass(frozen=True)
+class RenderSnapshot:
+    """Immutable-by-convention state used to render without blocking stepping.
+
+    ``payload`` is backend-private (for MuJoCo, a private ``MjData`` copy). It
+    must not be mutated after capture.
+    """
+
+    stamp_ns: int
+    observation: Observation
+    payload: Any = None
+
+
+@dataclass(frozen=True)
 class BackendCapabilities:
     """Feature flags with an explicit reason for every flag."""
 
@@ -210,6 +223,25 @@ class SimBackend(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release renderers and other resources."""
+
+    def capture_snapshot(self) -> RenderSnapshot:
+        """Copy the state needed to render later, without holding the step lock.
+
+        Backends with mutable simulator state (MuJoCo) override this to make a
+        private copy. The default implementation is safe for immutable
+        observations such as the fake backend's.
+        """
+        observation = self.get_observation()
+        return RenderSnapshot(stamp_ns=observation.stamp_ns, observation=observation)
+
+    def render_from_snapshot(self, camera: str, snapshot: RenderSnapshot) -> CameraFrame:
+        """Render from a previously captured snapshot.
+
+        Backends that do not override this still work, but may render current
+        state rather than the snapshot.
+        """
+        del snapshot
+        return self.render(camera)
 
     def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
         """Return ``frame -> (parent_frame, world_pose)`` for the TF chain.

@@ -25,6 +25,7 @@ from sim2real.sim.backend import (  # noqa: E402
     CollisionInfo,
     ConfigError,
     Observation,
+    RenderSnapshot,
     ResetConfig,
     RobotState,
     SimBackend,
@@ -213,10 +214,21 @@ class MuJoCoBackend(SimBackend):
         return self._observation()
 
     def render(self, camera: str) -> CameraFrame:
+        return self.render_from_snapshot(camera, self.capture_snapshot())
+
+    def capture_snapshot(self) -> RenderSnapshot:
+        """Copy MjData so rendering never touches the stepping data."""
+        data = self._mujoco.MjData(self.model)
+        self._mujoco.mj_copyData(data, self.model, self.data)
+        observation = self._observation()
+        return RenderSnapshot(stamp_ns=observation.stamp_ns, observation=observation, payload=data)
+
+    def render_from_snapshot(self, camera: str, snapshot: RenderSnapshot) -> CameraFrame:
         if camera not in self._camera_ids:
             raise ConfigError(f"unknown camera {camera!r}")
         camera_config = self.configs.camera(camera)
         mujoco_name = CAMERA_MODEL_NAMES[camera]
+        data = snapshot.payload if snapshot.payload is not None else self.data
 
         color_renderer = self._color_renderers.get(camera)
         if color_renderer is None:
@@ -224,7 +236,7 @@ class MuJoCoBackend(SimBackend):
                 self.model, camera_config.height, camera_config.width
             )
             self._color_renderers[camera] = color_renderer
-        color_renderer.update_scene(self.data, camera=mujoco_name)
+        color_renderer.update_scene(data, camera=mujoco_name)
         rgb = np.asarray(color_renderer.render(), dtype=np.uint8)
 
         depth_renderer = self._depth_renderers.get(camera)
@@ -234,7 +246,7 @@ class MuJoCoBackend(SimBackend):
             )
             depth_renderer.enable_depth_rendering()
             self._depth_renderers[camera] = depth_renderer
-        depth_renderer.update_scene(self.data, camera=mujoco_name)
+        depth_renderer.update_scene(data, camera=mujoco_name)
         depth = np.asarray(depth_renderer.render(), dtype=np.float32)
         depth[~np.isfinite(depth)] = np.nan
         # MuJoCo reports the scene extent (tens of metres here) for sky pixels;
@@ -244,7 +256,7 @@ class MuJoCoBackend(SimBackend):
         return CameraFrame(
             rgb=rgb,
             depth=depth,
-            stamp_ns=self._sim_time_ns,
+            stamp_ns=snapshot.stamp_ns,
             frame_id=camera_config.frame_id,
         )
 

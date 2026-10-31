@@ -1,0 +1,23 @@
+"""QoS decisions shared by the ROS adapter and the documentation test.
+
+The strings here are compared against the QoS cells in
+``docs/ARCHITECTURE.md``; change both together.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class QosSpec:
+    reliability: str
+    durability: str
+    depth: int
+    history: str = "keep_last"
+
+
+JOINT_STATES_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+TF_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+TF_STATIC_QOS = QosSpec(reliability="reliable", durability="transient_local", depth=1)
+CAMERA_QOS = QosSpec(reliability="reliable", durability="volatile", depth=5)

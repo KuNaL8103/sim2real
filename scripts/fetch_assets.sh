@@ -15,8 +15,9 @@ SHA="71f066ad0be9cd271f7ed58c030243ef157af9f4"
 DEST="$ROOT/assets/mujoco/franka_emika_panda"
 REPO_URL="https://github.com/google-deepmind/mujoco_menagerie.git"
 
-if [ -f "$DEST/panda.xml" ] && [ -d "$DEST/assets" ]; then
-  echo "Franka assets already present at $DEST"
+if [ -f "$DEST/panda.xml" ] && [ -d "$DEST/assets" ] && [ -f "$DEST/LICENSE" ] \
+  && grep -q "Apache License" "$DEST/LICENSE"; then
+  echo "Franka assets already present at $DEST (Apache-2.0 LICENSE verified)"
   exit 0
 fi
 
@@ -33,6 +34,15 @@ git clone --filter=blob:none --no-checkout --quiet "$REPO_URL" "$TMP/menagerie"
 git -C "$TMP/menagerie" sparse-checkout init --cone
 git -C "$TMP/menagerie" sparse-checkout set franka_emika_panda
 git -C "$TMP/menagerie" checkout --quiet "$SHA"
+ACTUAL_SHA="$(git -C "$TMP/menagerie" rev-parse HEAD)"
+if [ "$ACTUAL_SHA" != "$SHA" ]; then
+  echo "ERROR: checked out $ACTUAL_SHA, expected pinned $SHA" >&2
+  exit 3
+fi
+if ! grep -q "Apache License" "$TMP/menagerie/franka_emika_panda/LICENSE"; then
+  echo "ERROR: expected Apache-2.0 LICENSE in franka_emika_panda/; refusing to copy" >&2
+  exit 4
+fi
 
 mkdir -p "$DEST"
 cp -r "$TMP/menagerie/franka_emika_panda/." "$DEST/"
