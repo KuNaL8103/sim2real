@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "sudo": "ask",
+      "sudo *": "ask",
+      "apt": "ask",
+      "apt *": "ask",
+      "apt-get *": "ask",
+      "dpkg *": "ask",
+      "pip install*": "ask",
+      "pip3 install*": "ask",
+      "*pip install *": "ask",
+      "uv add*": "ask",
+      "uv pip install*": "ask",
+      "docker*": "ask",
+      "git push*": "ask"
+    }
+  }
+}
