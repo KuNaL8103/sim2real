@@ -66,8 +66,11 @@ class FakeBackend(SimBackend):
         self._object_poses: dict[str, np.ndarray] = {}
         self._last_collision = CollisionInfo(0, ())
         self._closed = False
-        # Test hook: simulate a slow renderer without touching MuJoCo timing.
+        # Test hooks: simulate a slow renderer without touching MuJoCo timing.
+        # delay_only skips the raycast so the test measures scheduling, not
+        # NumPy CPU contention.
         self.render_delay_s = 0.0
+        self.render_delay_only = False
         self.reset(seed=0)
 
     # -- backend API -------------------------------------------------------
@@ -153,6 +156,13 @@ class FakeBackend(SimBackend):
         if self.render_delay_s > 0.0:
             time.sleep(self.render_delay_s)
         config = self.configs.camera(camera)
+        if self.render_delay_only:
+            return CameraFrame(
+                rgb=np.zeros((config.height, config.width, 3), dtype=np.uint8),
+                depth=np.full((config.height, config.width), np.nan, dtype=np.float32),
+                stamp_ns=snapshot.stamp_ns,
+                frame_id=config.frame_id,
+            )
         intrinsics = self._intrinsics[camera]
         pose = self._camera_pose_for(camera, snapshot.observation.robot_state.ee_pose)
         object_poses = snapshot.observation.object_poses

@@ -38,6 +38,7 @@ class TestSimNodeRate(unittest.TestCase):
     def test_joint_state_rate_survives_slow_rendering(self) -> None:
         backend = create_backend("fake", str(REPO_ROOT / "configs" / "sim"))
         backend.render_delay_s = 0.3
+        backend.render_delay_only = True
         rclpy.init()
         node = SimNode(injected_backend=backend)
         executor = MultiThreadedExecutor(num_threads=2)
@@ -58,9 +59,7 @@ class TestSimNodeRate(unittest.TestCase):
             deadline = time.monotonic() + 10.0
             while counter["joint"] < 5 and time.monotonic() < deadline:
                 time.sleep(0.05)
-            self.assertGreaterEqual(
-                counter["joint"], 5, "no /joint_states messages during warmup"
-            )
+            self.assertGreaterEqual(counter["joint"], 5, "no /joint_states messages during warmup")
             counter["joint"] = 0
             window_s = 3.0
             start = time.monotonic()
