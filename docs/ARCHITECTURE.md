@@ -294,7 +294,8 @@ Design (smallest change that meets the requirements):
    `failed`, `skipped_unsubscribed` are printed directly (not via rosout, which
    may already be invalid on SIGINT). The async submit was added after CI showed
    that a blocking camera callback could still starve control on a smaller
-   runner; it is the only path used by the ROS timer.
+   runner; it is the only path used by the ROS timer. The rate test waits for a
+   live subscription and measures a 3 s window, excluding discovery startup.
 8. **GIL caveat.** MuJoCo's C renderer releases the GIL, but Python callbacks and
    message construction still contend for it. This design improves control
    latency; it is not a hard real-time guarantee.
