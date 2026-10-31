@@ -52,11 +52,21 @@ class TestSimNodeRate(unittest.TestCase):
         thread = threading.Thread(target=executor.spin, daemon=True)
         try:
             thread.start()
-            time.sleep(0.5)
+            # Wait until DDS discovery is complete and the subscription is
+            # actually receiving; otherwise a CI startup delay is counted as a
+            # control-rate deficit.
+            deadline = time.monotonic() + 10.0
+            while counter["joint"] < 5 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertGreaterEqual(
+                counter["joint"], 5, "no /joint_states messages during warmup"
+            )
             counter["joint"] = 0
-            window_s = 2.0
+            window_s = 3.0
+            start = time.monotonic()
             time.sleep(window_s)
-            rate = counter["joint"] / window_s
+            elapsed = time.monotonic() - start
+            rate = counter["joint"] / elapsed
 
             self.assertGreaterEqual(
                 rate,
@@ -65,8 +75,8 @@ class TestSimNodeRate(unittest.TestCase):
             )
             stats = node._render_coordinator.stats()
             print(
-                f"joint_rate_hz={rate:.2f} published={stats['published']} "
-                f"skipped_busy={stats['skipped_busy']}",
+                f"joint_rate_hz={rate:.2f} elapsed_s={elapsed:.2f} "
+                f"published={stats['published']} skipped_busy={stats['skipped_busy']}",
                 flush=True,
             )
             self.assertGreater(
