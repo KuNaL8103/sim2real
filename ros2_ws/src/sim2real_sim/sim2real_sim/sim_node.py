@@ -309,10 +309,11 @@ class SimNode(Node):
             if self._render_only_when_subscribed and not self._camera_has_subscribers(camera):
                 self._skipped_unsubscribed += 1
                 continue
-            frame = self._render_coordinator.render(camera, snapshot)
-            if frame is None:
-                continue
-            self._publish_camera(camera, frame)
+            self._render_coordinator.submit(
+                camera,
+                snapshot,
+                lambda frame, cam=camera: self._publish_camera(cam, frame),
+            )
 
     def _publish_camera(self, camera: str, frame: Any) -> None:
         info = self.backend.get_camera_info(camera)

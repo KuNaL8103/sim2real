@@ -1,26 +1,29 @@
 """Thread-safe rendering gate for the ROS node.
 
 MuJoCo's EGL context is thread-bound, so all rendering runs on one dedicated
-worker thread. The camera callback submits a snapshot and waits for that render;
-if a render is already in flight, the call returns immediately and is counted as
-skipped. There is no queue: at most one snapshot is ever pending.
+worker thread. Camera callbacks submit a snapshot and return immediately; if a
+render is already in flight the submission is rejected and counted as skipped.
+There is no queue: at most one snapshot is ever pending.
 
-``begin_reset`` blocks new renders and waits for the worker to finish before a
-reset mutates the scene.
+``begin_reset`` blocks new submissions and waits for the worker to finish before
+a reset mutates the scene.
 """
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 from sim2real.sim.backend import CameraFrame, RenderSnapshot, SimBackend
+
+FrameCallback = Callable[[CameraFrame], None]
 
 
 class RenderCoordinator:
     def __init__(self, backend: SimBackend) -> None:
         self._backend = backend
         self._condition = threading.Condition()
-        self._request: tuple[str, RenderSnapshot] | None = None
+        self._request: tuple[str, RenderSnapshot, FrameCallback | None] | None = None
         self._result: CameraFrame | None = None
         self._error: BaseException | None = None
         self._busy = False
@@ -52,8 +55,24 @@ class RenderCoordinator:
                 "failed": self.failed,
             }
 
+    def submit(self, camera: str, snapshot: RenderSnapshot, on_frame: FrameCallback) -> bool:
+        """Queue one render without blocking; return False if busy/resetting."""
+        with self._condition:
+            if self._reset_in_progress:
+                self.skipped_reset += 1
+                return False
+            if self._busy:
+                self.skipped_busy += 1
+                return False
+            self._busy = True
+            self._request = (camera, snapshot, on_frame)
+            self._result = None
+            self._error = None
+            self._condition.notify_all()
+            return True
+
     def render(self, camera: str, snapshot: RenderSnapshot) -> CameraFrame | None:
-        """Render on the worker thread, or return ``None`` if busy/resetting."""
+        """Blocking render for tests and direct callers (not the ROS timer)."""
         with self._condition:
             if self._reset_in_progress:
                 self.skipped_reset += 1
@@ -62,7 +81,7 @@ class RenderCoordinator:
                 self.skipped_busy += 1
                 return None
             self._busy = True
-            self._request = (camera, snapshot)
+            self._request = (camera, snapshot, None)
             self._result = None
             self._error = None
             self._condition.notify_all()
@@ -90,20 +109,42 @@ class RenderCoordinator:
                     self._condition.wait()
                 if self._stop:
                     return
-                camera, snapshot = self._request
+                camera, snapshot, callback = self._request
             try:
                 frame = self._backend.render_from_snapshot(camera, snapshot)
-            except BaseException as exc:  # propagate to the waiting caller
+            except BaseException as exc:  # callback path has no caller to raise to
                 with self._condition:
                     self._error = exc
+                    self._request = None
+                    self._busy = False
+                    if callback is not None:
+                        self.failed += 1
+                        self._error = None
                     self._condition.notify_all()
-            else:
+                continue
+
+            if callback is None:
                 with self._condition:
                     self._result = frame
                     self._condition.notify_all()
+                continue
+
+            try:
+                callback(frame)
+            except BaseException:
+                with self._condition:
+                    self.failed += 1
+            else:
+                with self._condition:
+                    self.published += 1
+            finally:
+                with self._condition:
+                    self._request = None
+                    self._busy = False
+                    self._condition.notify_all()
 
     def begin_reset(self) -> None:
-        """Block new renders and wait for any in-flight render to finish."""
+        """Block new submissions and wait for any in-flight render to finish."""
         with self._condition:
             self._reset_in_progress = True
             while self._busy:
