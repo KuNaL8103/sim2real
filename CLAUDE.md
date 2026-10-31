@@ -227,13 +227,13 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=1a5d9d6
-- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=1a5d9d6
+- Last verified test run: passed=159 failed=0 skipped=3 errors=0 | date=2026-10-31 | base_commit=0b0c89a
+- Last verified ROS test run: passed=167 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=0b0c89a
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Tests ran at `1a5d9d6`.
+second line records the ROS-enabled suite separately. Tests ran at `0b0c89a`.
 
 Run breakdown (2026-10-31, Task 2b):
 
@@ -262,7 +262,7 @@ Run breakdown (2026-10-31, Task 2b):
   Apache-2.0 LICENSE before copying. Meshes remain git-ignored.
 - `scripts/setup_envs.sh`: now installs MuJoCo 3.17.0 + rendering deps into
   `.venv-ros` with `--no-deps`; reproduced in a scratch `/tmp` venv, then deleted.
-- Two Task 2b CI attempts failed the rate test: **6.5 Hz** with blocking render, then **15.0 Hz** when startup/discovery time was counted in a 2 s window. Rendering is now fully asynchronous, and the test waits for a live subscription before measuring a 3 s window (local 1-2 CPU: 19.3-20.0 Hz). The new run is **pending user confirmation** (no run id invented).
+- Three Task 2b CI attempts failed the rate test: **6.5 Hz** with blocking render, **15.0 Hz** when startup/discovery was counted, and **4.98 Hz** when the fake slow renderer still did a CPU-heavy raycast after its sleep. Rendering is fully asynchronous; the test waits for a live subscription, measures a 3 s window, and uses a delay-only fake renderer so scheduling is measured without NumPy CPU contention (local 1-2 CPU: 18.25-20.33 Hz). The new run is **pending user confirmation** (no run id invented).
 - License and spec provenance remain as recorded for Task 2.
 
 ## Known limitations
