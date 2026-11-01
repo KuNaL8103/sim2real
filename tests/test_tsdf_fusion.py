@@ -7,6 +7,7 @@ import pytest
 
 pytest.importorskip("open3d")
 
+from sim2real.mapping import TSDFMap  # noqa: E402
 from tests.fixtures.mapping import make_config  # noqa: E402
 from tests.fixtures.synthetic_rgbd import (  # noqa: E402
     SyntheticScene,
@@ -15,8 +16,6 @@ from tests.fixtures.synthetic_rgbd import (  # noqa: E402
     render,
     unproject,
 )
-
-from sim2real.mapping import TSDFMap  # noqa: E402
 
 pytestmark = pytest.mark.o3d
 

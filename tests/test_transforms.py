@@ -6,7 +6,6 @@ import math
 from dataclasses import replace
 
 import numpy as np
-from tests.fixtures.mapping import make_config
 
 from sim2real.mapping import (
     StaticTransformProvider,
@@ -16,6 +15,7 @@ from sim2real.mapping import (
     transform_delta,
 )
 from sim2real.mapping.tsdf_fusion import IntegrationResult
+from tests.fixtures.mapping import make_config
 
 OVERHEAD = "camera_overhead_optical_frame"
 WRIST = "camera_wrist_optical_frame"

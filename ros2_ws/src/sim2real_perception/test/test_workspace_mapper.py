@@ -6,6 +6,7 @@ the core mapping logic is covered by hardware-free tests under ``tests/``.
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import sys
 import time
@@ -22,14 +23,6 @@ for _path in (REPO_ROOT / "src", REPO_ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from tests.fixtures.mapping import write_config  # noqa: E402
-from tests.fixtures.synthetic_rgbd import (  # noqa: E402
-    SyntheticIntrinsics,
-    SyntheticScene,
-    overhead_camera,
-    render,
-)
-
 pytestmark = pytest.mark.ros
 
 ROS_AVAILABLE = False
@@ -40,9 +33,22 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+
+    # These import sim2real.mapping (and scipy). Keep them guarded so the ROS
+    # job can import this module without a system scipy and skip the test.
     from sim2real_perception.workspace_mapper_node import WorkspaceMapperNode
     from std_srvs.srv import Trigger
+    from tests.fixtures.mapping import write_config
+    from tests.fixtures.synthetic_rgbd import (
+        SyntheticIntrinsics,
+        SyntheticScene,
+        overhead_camera,
+        render,
+    )
     from tf2_ros import StaticTransformBroadcaster
+
+    if importlib.util.find_spec("open3d") is None:
+        raise ImportError("open3d is not available")
 
     ROS_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised by the core suite
@@ -79,7 +85,10 @@ def matrix_to_quaternion(rotation: np.ndarray) -> tuple[float, float, float, flo
     return x, y, z, w
 
 
-@pytest.mark.skipif(not ROS_AVAILABLE, reason="rclpy / sim2real_msgs not available")
+@pytest.mark.skipif(
+    not ROS_AVAILABLE,
+    reason="rclpy / sim2real_msgs / scipy / open3d not available",
+)
 def test_mapper_publishes_pointcloud_and_resets(tmp_path: Path) -> None:
     config_path = write_config(
         tmp_path,

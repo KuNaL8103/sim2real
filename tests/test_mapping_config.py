@@ -5,13 +5,13 @@ from __future__ import annotations
 import math
 
 import pytest
-from tests.fixtures.mapping import make_config, write_config
 
 from sim2real.mapping.config import (
     ConfigError,
     estimate_memory_mb,
     load_mapping_config,
 )
+from tests.fixtures.mapping import make_config, write_config
 
 
 def test_default_config_loads_and_matches_scene_workspace():

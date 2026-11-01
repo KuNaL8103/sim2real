@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
-from tests.fixtures.synthetic_rgbd import SyntheticScene, box_surface_points
 
 from sim2real.mapping import MapStatus, ObstacleQuery
 from sim2real.mapping.config import WorkspaceBounds
+from tests.fixtures.synthetic_rgbd import SyntheticScene, box_surface_points
 
 BOUNDS = WorkspaceBounds((-0.2, -0.2, -0.1), (0.2, 0.2, 0.2))
 RESOLUTION = 0.02
