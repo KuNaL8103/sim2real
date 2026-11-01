@@ -14,9 +14,10 @@ End-to-end sim2real robotics data pipeline and VLA fine-tuning framework:
 - Pure-Python core algorithms, thin ROS 2 adapters, CPU-testable CI.
 - No physical robot.
 
-Task 1 created scaffolding, interfaces, documentation, CI, and hardware-free
-tests. No simulator, dataset, training, mapping, inference, or safety logic is
-implemented.
+Tasks 1-4 implement scaffolding, contracts, fake and MuJoCo simulator backends,
+seeded domain randomization, and a language-conditioned scripted pick-and-place
+expert with atomic rollout staging. Filtering, datasets, training, mapping,
+inference, and safety logic are not implemented.
 
 ## Verified environment
 
@@ -215,7 +216,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 1 — preflight, scaffold, docs, CI, ROS workspace, `sim2real_msgs`, contracts, first tests
 - [x] Task 2 — `SimBackend`, `FakeBackend`, MuJoCo Franka scene, sim ROS node
 - [x] Task 3 — seeded domain randomization, profiles, capability-gated applier, reset integration
-- [ ] Task 4 — scripted expert and rollout generation
+- [x] Task 4 — scripted expert, FK/IK/planner, perturbations, staging, rollout collector
 - [ ] Task 5 — trajectory filtering, metrics, `curated_v1`
 - [ ] Task 6 — LeRobot export and Open-X dataset mixing
 - [ ] Task 7 — RGB-D mapping, point cloud, TSDF
@@ -227,15 +228,53 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=184 failed=0 skipped=4 errors=0 | date=2026-10-31 | base_commit=79ef391
-- Last verified ROS test run: passed=193 failed=0 skipped=0 errors=0 | date=2026-10-31 | base_commit=79ef391
-- Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), opencode.json permission fix (proposal only), Isaac randomization unverified
+- Last verified test run: passed=232 failed=0 skipped=5 errors=0 | date=2026-11-01 | base_commit=3493463
+- Last verified ROS test run: passed=242 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=3493463
+- Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; CI pending user confirmation; opencode.json v2 migration is the final separate commit and its prompt test must be reported
+- Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), Isaac randomization unverified. A Task 3 MuJoCo bug was found and fixed in Task 4: `mj_setConst` reset `MjData` to `qpos0`, so the physics group homed the arm and discarded sampled object poses.
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Task 3 tests ran on the
-working tree based on `79ef391`.
+second line records the ROS-enabled suite separately. Task 4 tests ran on the
+working tree based on `3493463`.
+
+Run breakdown (2026-11-01, Task 4):
+
+- Core-only: **232 passed, 0 failed, 5 skipped, 0 errors**. Skips are the msgs
+  round-trip and the four ros-marked `sim_node`/collector modules (no `rclpy`).
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **242 passed, 0 failed, 0 skipped, 0 errors**.
+- `colcon test` / `colcon test-result --verbose`: **7 tests, 0 errors, 0
+  failures, 0 skipped**; the five `sim2real_sim` unittest cases (including the
+  new collector service round-trip) pass in the console but are not counted in
+  the xunit total.
+- `ruff check` and `ruff format --check`: clean.
+- Task 4 FK cross-check: **3.45e-8** maximum discrepancy vs MuJoCo at five
+  random configurations (test tolerance `1e-6`).
+- Throughput: fake `step()` **2,578 control steps/s**; MuJoCo `backend.step()`
+  **1,344 control steps/s = 33,611 physics steps/s** (25 substeps/control step);
+  MuJoCo raw `mj_step` **45,927 physics steps/s**; MuJoCo expert pipeline
+  **598 control steps/s / 14,961 physics steps/s**.
+- MuJoCo clean smoke, 10 seeded episodes (`default` profile): **7/10 success**.
+- CLI fake, 20 episodes, 30% perturbed: **18 success / 2 failure** (both intended
+  `bad_grasp`), 1,538 steps in 1.73 s, **0.733 MiB**.
+- CLI MuJoCo, 20 episodes, 30% perturbed: **9 success / 11 failure**; clean 7/13,
+  `bad_grasp` 0/2 (intended), `hesitation` 1/1, `jitter` 1/1, `detour` 0/1,
+  `low_sweep` 0/1; 2.66 s, **0.727 MiB**.
+- Housekeeping (a): after a jittered `reset_env`, a fresh
+  `ros2 topic echo --once /tf_static` received **all three** static transforms
+  (world→panda_link0, world→overhead, hand→wrist). The publisher is reliable,
+  transient-local, depth 1, and republishes one TFMessage with the complete set;
+  no fix was needed.
+- Housekeeping (b): CI detection is `os.environ["CI"] in {1,true,yes}` in
+  `test_sim_node_rate.py`; the 60% floor and its rationale are documented in that
+  test's comments.
+- ROS runtime: 3/3 episodes generated (1 perturbed); `/sim2real/staging_episode`
+  echo received a complete episode. The staging publisher is reliable,
+  transient-local, depth 10.
+
+Task 3 breakdown retained below for history.
 
 Run breakdown (2026-10-31, Task 3):
 
@@ -293,7 +332,38 @@ Run breakdown (2026-10-31, Task 2b):
 
 ## Known limitations
 
-- No dataset, training, mapping, inference, or safety code exists yet.
+- **No filtering, dataset, training, mapping, inference, or safety code exists
+  yet.** Task 4 produces raw staging output only; it is not training data.
+- **MoveIt 2 is not installed and was not exercised.** `MoveItPlanner` is a
+  guarded stub that raises `PlannerUnavailable`; no MoveIt behaviour is claimed.
+- **The scripted MuJoCo expert succeeds 7/10 on the clean seeded smoke and 9/20
+  with 30% perturbation.** The main failure is an off-centre grasp under
+  randomized cube pose (0.06-0.12 m from the zone centre) or a gripper that
+  cannot reopen around a wedged cube. Yaw-aligning the gripper was tried and made
+  the batch worse, so it was reverted. No test asserts a success threshold.
+- **`FakeBackend`'s grasp is a kinematic test double, not physics.** A closed
+  gripper within 5 cm of the TCP attaches the cube; opening above 0.02 m releases
+  it at table height. It has no contact forces.
+- **Perturbations are open-loop command variations.** They are not a learned
+  failure distribution; `FAILURE_TARGETED` returns `success=false` until Task 9.
+- **Images are not captured by the runner.** `estimate_storage()` estimates disk
+  and time, but per-episode image capture is not wired in; images become video in
+  Task 7.
+- **Per-step `unintended_collision` is coarse.** It maps the backend contact
+  report; MuJoCo cube↔finger contacts are treated as intended. Task 5 adds real
+  trajectory and collision metrics.
+- **The collector runs one batch at a time** and rejects a concurrent call.
+- **The collector is not a `/joint_states` publisher.** `sim_node` remains the
+  only `/joint_states` owner when it runs.
+- **Task 3 regression fixed in Task 4:** MuJoCo `mj_setConst` resets `MjData` to
+  `qpos0`; the physics randomization group now saves/restores `qpos`/`qvel`.
+  Before the fix, the `default` profile silently homed the arm and discarded
+  sampled object poses.
+- **`/sim2real/staging_episode` uses transient-local depth 10** so late joiners
+  receive recent completed episodes. Episodes carry no images.
+- **The reset service still uses `episode_index=0`.** The expert runner derives
+  its own randomization seed from `(run seed, episode index)` and does not rely
+  on the service index.
 - **Isaac Sim 6.2.0 high-fidelity tier is UNAVAILABLE on this machine** based
   on published minimums (16 GB VRAM, 32 GB RAM, RTX 4080, 4 cores, driver
   595.58.03) versus the measured RTX 4050 6 GB / 9.7 GiB RAM / 8 vCPU /
@@ -365,6 +435,10 @@ Run breakdown (2026-10-31, Task 2b):
   until then).
 - [ ] Confirm the GitHub Actions tab for the Task 3 push (user confirms; no run
   id invented).
+- [ ] Confirm the GitHub Actions tab for the Task 4 push (user confirms; no run
+  id invented).
+- [ ] Optional Task 4 viewer checkpoint: watch one MuJoCo rollout and confirm
+  approach/grasp/lift/transport/release. **PENDING**; does not block the commit.
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

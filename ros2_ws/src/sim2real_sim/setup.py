@@ -15,6 +15,11 @@ randomization_configs = [
     os.path.relpath(path, here)
     for path in sorted(glob(os.path.join(repo_randomization_configs, "*.yaml")))
 ]
+repo_expert_configs = os.path.join(here, "..", "..", "..", "configs", "expert")
+expert_configs = [
+    os.path.relpath(path, here)
+    for path in sorted(glob(os.path.join(repo_expert_configs, "*.yaml")))
+]
 
 setup(
     name=package_name,
@@ -34,6 +39,10 @@ setup(
             os.path.join("share", package_name, "randomization"),
             randomization_configs,
         ),
+        (
+            os.path.join("share", package_name, "expert"),
+            expert_configs,
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -43,5 +52,10 @@ setup(
         "ROS 2 node adapters for simulator backends (fake and MuJoCo first; Isaac Sim optional)."
     ),
     license="Apache-2.0",
-    entry_points={"console_scripts": ["sim_node = sim2real_sim.sim_node:main"]},
+    entry_points={
+        "console_scripts": [
+            "sim_node = sim2real_sim.sim_node:main",
+            "expert_collector_node = sim2real_sim.expert_collector_node:main",
+        ]
+    },
 )

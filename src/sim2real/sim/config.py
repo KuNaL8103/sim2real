@@ -60,6 +60,8 @@ class PandaConfig:
     home_arm: np.ndarray
     home_gripper: float
     joint_limits: np.ndarray
+    velocity_limits: np.ndarray
+    acceleration_limits: np.ndarray
     tcp_offset: np.ndarray
     body_frames: tuple[tuple[str, str], ...]
 
@@ -230,6 +232,13 @@ def _load_panda(path: Path) -> PandaConfig:
             f"{path}: home_arm is outside joint_limits at indices {np.flatnonzero(outside)}"
         )
 
+    velocity_limits = _vec(_require(data, "velocity_limits", path), 7, path, "velocity_limits")
+    acceleration_limits = _vec(
+        _require(data, "acceleration_limits", path), 7, path, "acceleration_limits"
+    )
+    if np.any(velocity_limits <= 0.0) or np.any(acceleration_limits <= 0.0):
+        raise ConfigError(f"{path}: velocity_limits and acceleration_limits must be positive")
+
     gripper = _vec(_require(data, "gripper_limits", path), 2, path, "gripper_limits")
     if gripper[0] >= gripper[1]:
         raise ConfigError(f"{path}: gripper_limits must have lower < upper")
@@ -253,6 +262,8 @@ def _load_panda(path: Path) -> PandaConfig:
         home_arm=home,
         home_gripper=home_gripper,
         joint_limits=limits,
+        velocity_limits=velocity_limits,
+        acceleration_limits=acceleration_limits,
         tcp_offset=_vec(_require(data, "tcp_offset", path), 3, path, "tcp_offset"),
         body_frames=tuple(body_frames),
     )

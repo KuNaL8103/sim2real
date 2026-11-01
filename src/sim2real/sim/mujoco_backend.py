@@ -422,7 +422,14 @@ class MuJoCoBackend(SimBackend):
                 self.model.dof_damping[self._arm_dof_adr] = (
                     self._nominal_arm_damping * physics.joint_damping_scale
                 )
+            # MuJoCo's mj_setConst uses MjData as scratch and resets qpos to the
+            # model's qpos0. Saving/restoring keeps the arm home and the sampled
+            # object poses; without this the physics group silently undid them.
+            saved_qpos = self.data.qpos.copy()
+            saved_qvel = self.data.qvel.copy()
             self._mujoco.mj_setConst(self.model, self.data)
+            self.data.qpos[:] = saved_qpos
+            self.data.qvel[:] = saved_qvel
             recorded["physics"] = {
                 "object_mass_kg": (
                     {name: float(mass) for name, mass in physics.object_mass_kg.items()}

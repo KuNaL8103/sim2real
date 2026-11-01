@@ -34,6 +34,11 @@ joint_limits:
   - [-0.0175, 3.7525]
   - [-2.8973, 2.8973]
 
+# Franka Emika datasheet limits (rad/s and rad/s^2). The expert planner uses
+# these as the single source for velocity/acceleration bounds.
+velocity_limits: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
+acceleration_limits: [15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0]
+
 # Tool centre point in the hand body frame (metres).
 tcp_offset: [0.0, 0.0, 0.1]
 

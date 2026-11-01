@@ -1,2 +1,68 @@
-# Scripted expert policy settings. Filled by Task 4.
+# Scripted pick-and-place expert parameters.
+# Every motion, IK, success, and staging threshold lives here so it can be
+# reviewed without reading code.
 schema_version: 1
+
+control_rate_hz: 20.0
+default_profile: default
+max_steps: 600
+
+ik:
+  max_iterations: 250
+  position_tolerance_m: 0.002
+  orientation_tolerance_rad: 0.05
+  damping: 0.05
+  max_step_rad: 0.15
+  # Finite-difference step for the numeric TCP Jacobian (radians).
+  jacobian_step_rad: 1.0e-6
+
+planner:
+  # Velocity/acceleration bounds are NOT repeated here: they come from
+  # configs/sim/panda.yaml (velocity_limits / acceleration_limits).
+  control_rate_hz: 20.0
+  min_duration_s: 0.35
+  max_waypoints: 16
+
+motion:
+  pregrasp_height_m: 0.12
+  grasp_depth_m: 0.0
+  lift_height_m: 0.14
+  transit_clearance_m: 0.16
+  place_depth_m: 0.0
+  retreat_height_m: 0.12
+  gripper_closed: 0.0
+  gripper_open: 0.04
+  grasp_hold_steps: 8
+  release_hold_steps: 5
+  # MuJoCo position actuators need a few control ticks to settle after a plan.
+  settle_steps: 6
+  reached_tolerance_m: 0.02
+  grasp_confirm_distance_m: 0.06
+
+success:
+  zone_radius_tolerance_m: 0.005
+  rest_height_tolerance_m: 0.01
+  stable_steps: 5
+  stability_tolerance_m: 0.002
+  require_gripper_open: true
+  success_zone_scale: 1.0
+
+state_timeouts_s:
+  APPROACH_PREGRASP: 8.0
+  DESCEND: 5.0
+  GRASP: 4.0
+  LIFT: 5.0
+  TRANSIT: 8.0
+  PLACE_DESCEND: 5.0
+  RELEASE: 4.0
+  RETREAT: 5.0
+
+staging:
+  capture_images: false
+  image_decimation: 5
+  resolution: [256, 256]
+  # llvmpipe measured 0.18 s (colour) + 0.14 s (depth) per camera in Task 2b.
+  desired_render_seconds_per_frame: 0.25
+
+instructions_file: instructions.yaml
+perturbations_file: perturbations.yaml

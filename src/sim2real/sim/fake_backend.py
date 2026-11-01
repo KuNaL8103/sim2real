@@ -1,9 +1,15 @@
 """Deterministic, NumPy-only kinematic backend used by default in CI.
 
 There is no physics engine here: joint targets are clamped and applied
-instantly, the arm uses a deliberately simple analytic forward kinematics, and
-RGB-D frames are ray-cast against the table, cubes, and target zones. Identical
-seeds and inputs produce byte-identical observations.
+instantly, forward kinematics comes from the shared pure-Panda implementation
+(``sim2real.sim.kinematics``), and RGB-D frames are ray-cast against the table,
+cubes, and target zones. Identical seeds and inputs produce byte-identical
+observations.
+
+The grasp model is a **test double, not physics**: when the gripper closes with
+the TCP within ``FAKE_GRASP_RADIUS_M`` of a cube, that cube is attached to the
+TCP and follows it until the gripper opens again. It exists so the expert and
+staging pipeline can be exercised on CPU without MuJoCo.
 """
 
 from __future__ import annotations
@@ -36,19 +42,17 @@ from sim2real.sim.camera import (
     pose_from_pos_quat,
 )
 from sim2real.sim.config import SimConfigs, load_sim_configs
+from sim2real.sim.kinematics import forward_kinematics, hand_pose, tcp_pose
 
 if TYPE_CHECKING:
     from sim2real.randomization.sampler import RandomizationSample
 
 
-def _rotation_z(angle: float) -> np.ndarray:
-    c, s = np.cos(angle), np.sin(angle)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-
-
-def _rotation_y(angle: float) -> np.ndarray:
-    c, s = np.cos(angle), np.sin(angle)
-    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+# Test-double grasp parameters (metres). Documented as kinematic, not physics.
+FAKE_GRASP_RADIUS_M = 0.05
+FAKE_GRASP_CLOSE_BELOW = 0.01
+FAKE_RELEASE_ABOVE = 0.02
+FAKE_TABLE_CONTACT_MARGIN_M = 0.005
 
 
 class FakeBackend(SimBackend):
@@ -74,6 +78,8 @@ class FakeBackend(SimBackend):
         self._camera_jitter: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self.applied_randomization: dict[str, object] = {}
         self._last_collision = CollisionInfo(0, ())
+        self._held_object: str | None = None
+        self._held_offset = np.eye(4)
         self._closed = False
         # Test hooks: simulate a slow renderer without touching MuJoCo timing.
         # delay_only skips the raycast so the test measures scheduling, not
@@ -127,6 +133,8 @@ class FakeBackend(SimBackend):
         self._camera_jitter = {}
         self.applied_randomization = {}
         self._last_collision = CollisionInfo(0, ())
+        self._held_object = None
+        self._held_offset = np.eye(4)
         return self.get_observation()
 
     def step(self, joint_target: np.ndarray, gripper_target: float) -> StepResult:
@@ -139,12 +147,19 @@ class FakeBackend(SimBackend):
         low, high = self.configs.panda.gripper_limits
         self._gripper = float(np.clip(gripper_target, low, high))
         self._sim_time_ns += int(round(1e9 / self.control_rate_hz))
+        self._update_grasp()
+        self._last_collision = self._table_collision()
         return StepResult(
             observation=self.get_observation(),
             collision=self._last_collision,
             done=False,
-            info={},
+            info={"held_object": self._held_object},
         )
+
+    @property
+    def held_object(self) -> str | None:
+        """Name of the cube attached by the kinematic grasp heuristic, if any."""
+        return self._held_object
 
     def get_observation(self) -> Observation:
         ee_pose = self._ee_pose()
@@ -353,34 +368,52 @@ class FakeBackend(SimBackend):
         return self._last_collision
 
     def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
-        ee_pose = self._ee_pose()
-        positions = np.linspace(np.zeros(3), ee_pose[:3, 3], 8)
-        poses: dict[str, tuple[str | None, np.ndarray]] = {}
-        previous: str | None = None
-        # panda_link0 is the fixed base; link1..link7 interpolate to the hand.
-        base = make_pose(np.zeros(3), np.eye(3))
-        poses["panda_link0"] = (None, base)
-        previous = "panda_link0"
-        for index in range(1, 8):
-            pose = make_pose(positions[index], ee_pose[:3, :3])
-            poses[f"panda_link{index}"] = (previous, pose)
-            previous = f"panda_link{index}"
-        poses[contracts.PANDA_HAND_FRAME] = (previous, ee_pose)
-        return poses
+        return forward_kinematics(self._arm, self.configs.panda)
 
     def close(self) -> None:
         self._closed = True
 
+    # -- kinematic grasp test double ---------------------------------------
+    def _tcp(self) -> np.ndarray:
+        return tcp_pose(self._arm, self.configs.panda)
+
+    def _update_grasp(self) -> None:
+        tcp = self._tcp()
+        if self._held_object is not None:
+            pose = tcp @ self._held_offset
+            self._object_poses[self._held_object] = pose
+            if self._gripper > FAKE_RELEASE_ABOVE:
+                self._release_held(pose)
+            return
+        if self._gripper >= FAKE_GRASP_CLOSE_BELOW:
+            return
+        nearest: tuple[float, str] | None = None
+        for name, pose in self._object_poses.items():
+            distance = float(np.linalg.norm(pose[:3, 3] - tcp[:3, 3]))
+            if nearest is None or distance < nearest[0]:
+                nearest = (distance, name)
+        if nearest is not None and nearest[0] <= FAKE_GRASP_RADIUS_M:
+            name = nearest[1]
+            self._held_object = name
+            self._held_offset = np.linalg.inv(tcp) @ self._object_poses[name]
+
+    def _release_held(self, pose: np.ndarray) -> None:
+        name = self._held_object
+        assert name is not None
+        cube = self.configs.scene.cubes[name]
+        table_top = self.configs.scene.table_position[2] + self.configs.scene.table_size[2] / 2.0
+        released = pose.copy()
+        released[:3, 3] = [pose[0, 3], pose[1, 3], table_top + cube.size / 2.0]
+        self._object_poses[name] = released
+        self._held_object = None
+        self._held_offset = np.eye(4)
+
+    def _table_collision(self) -> CollisionInfo:
+        table_top = self.configs.scene.table_position[2] + self.configs.scene.table_size[2] / 2.0
+        if float(self._tcp()[2, 3]) < table_top - FAKE_TABLE_CONTACT_MARGIN_M:
+            return CollisionInfo(1, ("tcp<->table",))
+        return CollisionInfo(0, ())
+
     # -- internals ---------------------------------------------------------
     def _ee_pose(self) -> np.ndarray:
-        q = self._arm
-        position = np.array(
-            [
-                0.35 + 0.12 * np.sin(q[0]) + 0.06 * np.sin(q[1] + q[2]),
-                0.12 * np.sin(q[0]),
-                0.60 + 0.08 * np.cos(q[1]) + 0.04 * np.cos(q[3]),
-            ],
-            dtype=np.float64,
-        )
-        rotation = _rotation_z(q[0]) @ _rotation_y(np.pi + 0.3 * q[1]) @ _rotation_z(0.5 * q[3])
-        return make_pose(position, rotation)
+        return hand_pose(self._arm, self.configs.panda)

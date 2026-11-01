@@ -1,0 +1,44 @@
+# Intentional demonstration perturbations.
+#
+# These are applied by the expert runner, not by domain randomization. The
+# expected_quality label is diagnostic only; the recorded outcome is measured.
+# Selection is a pure function of (seed, episode_index), so a run is repeatable.
+schema_version: 1
+
+perturbed_fraction: 0.25
+
+types:
+  jitter:
+    enabled: true
+    expected_quality: degraded
+    params:
+      amplitude_rad: 0.008
+      frequency_hz: 4.0
+  hesitation:
+    enabled: true
+    expected_quality: degraded
+    params:
+      pause_min_steps: 2
+      pause_max_steps: 5
+  detour:
+    enabled: true
+    expected_quality: degraded
+    params:
+      offset_m: [0.0, 0.08, 0.0]
+  overspeed:
+    enabled: true
+    expected_quality: degraded
+    params:
+      time_scale: 0.55
+  bad_grasp:
+    enabled: true
+    expected_quality: failure
+    params:
+      # Offset in metres; larger than FakeBackend's 0.05 m grasp radius.
+      offset_m: [0.07, 0.0, 0.0]
+  low_sweep:
+    enabled: true
+    expected_quality: degraded
+    params:
+      # Transit TCP height above the grasp height; keeps the path low.
+      clearance_m: 0.03

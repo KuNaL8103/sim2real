@@ -1,0 +1,20 @@
+# Instruction templates for the scripted expert.
+#
+# Only two placeholders are allowed: {colour} and {side}. Parsing is
+# case-insensitive and ignores trailing punctuation. Unknown colours/zones and
+# unmatched text raise UnparseableInstructionError; there is no default.
+schema_version: 1
+
+templates:
+  - "pick up the {colour} cube and place it in the {side} zone"
+  - "pick up the {colour} block and place it in the {side} zone"
+  - "pick up the {colour} cube and put it in the {side} zone"
+  - "pick up the {colour} block and put it in the {side} zone"
+  - "pick the {colour} cube and place it in the {side} zone"
+  - "pick the {colour} block and put it in the {side} zone"
+  - "grab the {colour} cube and place it into the {side} zone"
+  - "grab the {colour} block and put it into the {side} region"
+  - "place the {colour} cube in the {side} zone"
+  - "put the {colour} block in the {side} zone"
+  - "move the {colour} cube to the {side} zone"
+  - "move the {colour} block to the {side} region"

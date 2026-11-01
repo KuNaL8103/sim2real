@@ -1,14 +1,30 @@
 # Architecture
 
-Status: **Task 3.** Simulator backends, `sim_node`, the nominal reset service,
-and seeded domain randomization are implemented. Task 2b decouples
-`/joint_states`/TF publication from camera rendering, adds snapshot-based
-rendering and reset quiesce, measures opt-in renderer paths, and hardens
-environment reproduction. Task 3 adds validated randomization profiles, a pure
-`(seed, episode_index)` sampler, a capability-gated applier, and reset-service
-integration through the same quiesce path. Datasets, training, mapping,
-inference, and safety remain unimplemented. Isaac Sim is **UNAVAILABLE on this
-machine** (requirements-based, not tested).
+Status: **Task 4.** Simulator backends, `sim_node`, seeded domain randomization,
+and a language-conditioned scripted pick-and-place expert with a rollout
+collector are implemented. Task 2b decouples `/joint_states`/TF publication from
+camera rendering; Task 3 adds validated randomization profiles and reset-service
+integration. Task 4 adds a pure-Panda FK single source, bounded IK/planner
+abstractions, an explicit state machine, intentional perturbations, an atomic
+staging buffer, and `expert_collector_node` (`UNIFORM` only). Datasets, training,
+mapping, inference, and safety remain unimplemented. Isaac Sim is **UNAVAILABLE
+on this machine** (requirements-based, not tested); MoveIt 2 is **not installed**
+and its planner adapter is an unexercised guard.
+
+## Scope of Task 4
+
+- `src/sim2real/expert/`: instruction parser, IK, planner, state machine,
+  perturbations, rollout runner, staging, and pure message conversion.
+- One pure-NumPy Panda FK (`src/sim2real/sim/kinematics.py`) shared by the fake
+  backend's TF and the expert; cross-validated against the MuJoCo model.
+- `FakeBackend` kinematic grasp test double (not physics).
+- `configs/expert/{default,instructions,perturbations}.yaml`.
+- `expert_collector_node`, `scripts/collect_rollouts.py`,
+  `scripts/summarize_staging.py`, and `launch/expert_collector.launch.py`.
+- Hardware-free tests plus optional MuJoCo and ROS round-trip tests.
+- Fix: MuJoCo `mj_setConst` resets `MjData` to `qpos0`; the physics
+  randomization group now saves/restores `qpos`/`qvel` so it cannot silently
+  home the arm and discard sampled object poses.
 
 ## Scope of Task 3
 
@@ -173,7 +189,7 @@ left as `TBD` where no decision has been made.
 | `/camera/wrist/depth/image_raw` | `sensor_msgs/msg/Image` | sim node | recorder, perception | 10 Hz | reliable, keep-last 5 | Encoding `32FC1` in metres. |
 | `/camera/wrist/camera_info` | `sensor_msgs/msg/CameraInfo` | sim node | perception | 10 Hz, identical stamp to images | reliable, keep-last 5 | Must match the wrist depth image. |
 | `/task_instruction` | `std_msgs/msg/String` | operator/UI, evaluation harness | VLA adapter | TBD (task 8) | TBD (task 8) | Instruction changes must not race an in-flight action chunk. |
-| `/sim2real/staging_episode` | `sim2real_msgs/msg/RolloutEpisode` | scripted expert / sim adapter | filter, recorder | TBD (task 4) | TBD (task 4) | Unfiltered episodes are not training data. |
+| `/sim2real/staging_episode` | `sim2real_msgs/msg/RolloutEpisode` | expert collector / sim adapter | filter, recorder | per completed episode | reliable, transient-local, depth 10 | Unfiltered episodes are not training data. No images are embedded; late joiners receive recent completed episodes. |
 | `/sim2real/filtered_episode` | `sim2real_msgs/msg/RolloutEpisode` | filter | dataset exporter, recorder | TBD (task 5) | TBD (task 5) | Only accepted episodes may be exported. |
 | `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | TBD (task 5) | TBD (task 5) | Metrics explain a decision; they do not override safety stops. |
 | `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | TBD (task 7) | TBD (task 7) | Frame must be documented in the message header; no implicit frame. |
@@ -184,7 +200,7 @@ left as `TBD` where no decision has been made.
 | `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | latched, depth TBD (task 11) | Latched stop. Recovery requires `/estop_reset` (Task 11); no automatic clearing. |
 | `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | TBD (task 11) | Defined in Task 11. Must only clear the latch after an explicit operator action. |
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
-| `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling | expert/sim adapter | TBD (task 4) | TBD (task 4) | Bounded batch sizes; failures are reported, not silently retried forever. |
+| `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` only (`FAILURE_TARGETED` returns `success=false` until Task 9). A batch runs on one worker thread and a concurrent call is rejected. |
 
 QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
 that parses this table. `/tf` uses depth 10 (tf2_ros defaults to 100). Camera
@@ -505,6 +521,202 @@ no scene mutation.
   display is the exception: it needs a URDF, which this launch file does not
   provide. The TF, Image, and Camera displays work without one.
 
+## Scripted expert and rollout generation (Task 4)
+
+### Module layout
+
+```
+src/sim2real/expert/
+  config.py          strict loading of configs/expert/*.yaml
+  instruction.py     template parser -> TaskSpec(object_id, zone_id)
+  ik.py              DampedLeastSquaresIK and IKResult
+  planner.py         CartesianInterpolationPlanner + guarded MoveItPlanner
+  state_machine.py   explicit states, transition table, guards, timeouts
+  perturbations.py   deterministic intentional perturbations
+  rollout.py         run_episode / run_episodes and EpisodeRecord
+  staging.py         atomic NPZ + JSONL staging
+  conversion.py      pure EpisodeRecord -> RolloutEpisode field dict
+src/sim2real/sim/kinematics.py   the single Panda FK / TCP / numeric Jacobian
+```
+
+Nothing in this package imports `rclpy`, MuJoCo, or a renderer.
+
+### One forward-kinematics source
+
+The sim node publishes dynamic TF from `SimBackend.link_poses()` with
+`tf_source=backend_fk`. Critically, `FakeBackend`'s previous FK was an explicitly
+placeholder sine/cosine approximation. Task 4 replaces it with
+`sim2real.sim.kinematics.forward_kinematics`, a pure-NumPy replication of the
+pinned Menagerie MJCF body tree (`link1..link7`, `hand`). The same function
+object supplies:
+
+- `FakeBackend.link_poses()` (the TF path),
+- `FakeBackend` end-effector and wrist-camera poses,
+- the expert's TCP pose and finite-difference Jacobian.
+
+A test asserts object identity, not just equal values. `MuJoCoBackend` keeps the
+compiled model's own FK as ground truth. At five random configurations inside
+the joint limits the measured maximum discrepancy is **3.45e-8** (position and
+rotation element-wise); the test tolerance is `1e-6`. The residual comes from
+the decimal quaternions in the MJCF versus exact trigonometric constants.
+
+`tcp_pose(q)` is `hand_pose(q) @ tcp_offset` with `tcp_offset=[0,0,0.1]` from
+`configs/sim/panda.yaml`. The Jacobian is central finite differences with
+`step_rad=1e-6` (one-sided at a joint limit), documented in
+`configs/expert/default.yaml`.
+
+### Instruction parsing
+
+`configs/expert/instructions.yaml` is the only source of accepted phrasings. A
+template may contain `{colour}` and `{side}`; matching is case-insensitive,
+collapses whitespace, and ignores trailing `.`, `!`, `?`. A match resolves to
+`cube_<colour>` and `zone_<side>` and is validated against the loaded scene.
+Unknown colours or zones, empty/whitespace text, and unmatched text raise
+`UnparseableInstructionError`. There is intentionally **no default** colour or
+zone.
+
+### IK and planning
+
+`IKSolver.solve(target_pose, q_init, panda)` returns
+`IKResult(q, success, position_error, orientation_error, iterations)`.
+`DampedLeastSquaresIK` clamps to joint limits every iteration, bounds each step
+by `max_step_rad`, and stops at `max_iterations` or the position/orientation
+tolerances. An unreachable target returns `success=False`; it never raises for
+reachability and never loops unbounded.
+
+`CartesianInterpolationPlanner` solves each Cartesian waypoint with IK and
+time-scales each joint-space segment with a quintic (minimum-jerk) profile
+`10u^3 - 15u^4 + 6u^5`. Segment duration is
+`max(1.875*|dq|/v_max, sqrt(5.7735*|dq|/a_max), min_duration)` using the Panda
+velocity/acceleration limits from `configs/sim/panda.yaml`. This yields zero
+endpoint velocity and acceleration by construction.
+
+`MoveItPlanner` is a **guarded, unexercised adapter**. MoveIt 2 is not installed
+on this machine (`ros2 pkg list` and `/opt/ros/jazzy/share` have no MoveIt
+entries). Construction raises `PlannerUnavailable`; even if MoveIt were
+importable, `plan_to_pose` refuses with `PlannerUnavailable` until the adapter is
+implemented and verified. No claim is made that MoveIt integration works.
+
+### State machine
+
+```
+IDLE -> APPROACH_PREGRASP -> DESCEND -> GRASP -> LIFT -> TRANSIT
+     -> PLACE_DESCEND -> RELEASE -> RETREAT -> DONE
+any non-terminal -> FAILED  (guard or planner/IK failure)
+any non-terminal -> TIMEOUT (per-state timeout)
+```
+
+`TRANSITIONS` is an explicit `(state, event) -> (next_state, guard_name)` table.
+Illegal events raise `StateMachineError`. Guards are `pose_reached`,
+`grasp_confirmed`, `gripper_open`, and `success`; a failed guard transitions to
+`FAILED` with a reason. `tick(dt)` enforces per-state timeouts and transitions to
+`TIMEOUT`. Every transition is logged as
+`{from, to, event, reason, time_s}` and stored in the episode metadata. The
+machine is pure deterministic code with no global state.
+
+The motion phases are: pregrasp above the cube, descend to the grasp pose,
+close and hold, lift, transit above the zone, descend to the place pose, open and
+hold, retreat. A short settle loop holds the final joint target until the TCP
+reaches the phase target (MuJoCo position actuators need a few control ticks);
+the fake backend settles on the first hold.
+
+### Success definition
+
+An episode succeeds only when the target cube is within the zone radius in xy
+(+`zone_radius_tolerance_m`), at rest at table height (`table_top + cube_size/2`
+within tolerance), the gripper is open, and the cube position is stable for
+`stable_steps` (range <= `stability_tolerance_m`). All thresholds live in
+`configs/expert/default.yaml`.
+
+### Intentional perturbations
+
+`configs/expert/perturbations.yaml` defines:
+
+| name | effect | expected quality |
+| --- | --- | --- |
+| `jitter` | deterministic high-frequency sinusoid on joint targets | degraded |
+| `hesitation` | deterministic repeated targets (pauses) after motion phases | degraded |
+| `detour` | extra offset waypoint during transit | degraded |
+| `overspeed` | shorter quintic durations (`time_scale`) | degraded |
+| `bad_grasp` | grasp target offset beyond the grasp radius + early open during lift | failure |
+| `low_sweep` | low transit clearance toward the table | degraded |
+
+`expected_quality` is diagnostic only; the recorded outcome is measured. Selection
+is a pure function of `(seed, episode_index, perturbed_fraction)` using
+`SeedSequence`. `perturbed_fraction` is a node/CLI parameter; `include_perturbed:
+false` forces 0.
+
+### FakeBackend grasp heuristic (test double, not physics)
+
+When the gripper command is below `0.01` and the TCP is within `0.05 m` of a
+cube, that cube is attached at its current relative transform and follows the
+TCP. Opening the gripper above `0.02` releases it at table height. A TCP below
+the table top by more than `0.005 m` is reported as a table contact. These
+thresholds are fixed and documented; this model exists so the full pipeline is
+CPU-testable, and it must not be read as contact dynamics.
+
+### Rollout runner
+
+`run_episode(backend, task, seed, ...) -> EpisodeRecord`:
+
+1. derives a per-episode randomization seed from `(run seed, episode index)` with
+   `SeedSequence([seed, episode_index, 0x52414E44])` (it does **not** rely on the
+   reset service's `episode_index=0`);
+2. resets through `sim2real.sim.reset_handler.reset_environment` with the chosen
+   profile, so Task 3's capability gating still governs;
+3. records the post-reset observation, plans and executes each phase, and
+   records every control step;
+4. catches backend/runner exceptions and records `ABORTED`; planner/IK failure
+   records `FAILURE`; per-state and `max_steps` overflow record `TIMEOUT`.
+
+Unsuccessful, timed-out, and aborted episodes are always recorded, never
+dropped. `run_episodes` continues with the next seed. The runner creates no
+`RenderCoordinator`; nothing renders, so no reset/render overlap is possible
+in-process. The ROS node is responsible for not running rendering concurrently
+with its (optional) MuJoCo batch.
+
+`EpisodeRecord` carries the task ids, seed, backend, per-step joint
+positions/velocities, EE pose, action (7 joint targets + gripper), per-step
+`unintended_collision` derived from `backend.collision_report()`,
+state-transition log, perturbation name, outcome, failure reason, and the full
+randomization report. MuJoCo contact details involving the target cube and a
+finger are treated as the intended grasp; any other reported contact is
+`unintended_collision=true`. Task 5 will refine contact metrics.
+
+### Atomic staging and conversion
+
+`StagingBuffer` writes `episode_<id>.npz` (arrays) and `episode_<id>.json`
+(metadata) to temporary files in the run directory, fsyncs, then `os.replace`s
+them into place, and appends `{episode_id, seed, outcome, path, sha256,
+written_at}` to `manifest.jsonl`. A crash before the rename leaves no final file.
+Duplicate episode ids are rejected unless `overwrite=True`; overwrite keeps one
+manifest row. Readers verify sha256, log and skip corrupt/incomplete entries, and
+never abort a batch. Images are off by default. See `docs/DATASETS.md` for the
+layout, size estimates, and limitations.
+
+`episode_to_rollout_fields` is a pure conversion to the `RolloutEpisode` field
+set. It rejects empty episodes, non-monotonic step stamps, invalid outcomes, and
+metadata whose `num_steps` disagrees with the step list; `metadata_json` is
+validated against the 64 KiB/NaN-rejecting metadata contract. Images are never
+embedded.
+
+### ROS adapter
+
+`expert_collector_node` runs the chosen backend **in-process**. Rationale: the
+expert executes at the control rate, and a ROS round-trip per step would add
+scheduler latency and make trajectories depend on the executor rather than the
+seed. The node is not a simulator and does **not** publish `/joint_states`;
+`sim_node` remains the only `/joint_states` publisher when it runs.
+
+It serves `/sim2real/generate_rollouts`, validates `num_rollouts` and
+`sampling_mode`, runs the batch on a worker thread while the executor keeps
+spinning, stages each episode, and publishes each completed `RolloutEpisode` on
+`/sim2real/staging_episode` (reliable, transient-local, depth 10). A second
+concurrent call is rejected rather than queued. `result_metadata_json` contains
+`run_id`, seeds, requested/generated/failed counts, per-outcome counts, perturbed
+count, profile, fraction, and the staging path. `FAILURE_TARGETED` returns
+`success=false` with "FAILURE_TARGETED not implemented until Task 9".
+
 ## Deferred: joint-command subscription
 
 No joint-command topic is subscribed in Task 2. The node holds its current
@@ -562,6 +774,52 @@ same seed: RGB mean absolute difference **0.08** (AMD) / **0.12** (NVIDIA) out o
 These are **OPT-IN** settings only: no default changed, CI never uses them, and
 software rendering remains the documented baseline.
 
+
+### Task 4 runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
+
+| measurement | result |
+| --- | --- |
+| Core suite | **232 passed, 0 failed, 5 skipped, 0 errors** |
+| ROS suite (`.venv-ros`) | **242 passed, 0 failed, 0 skipped** |
+| `colcon test-result --verbose` | **7 tests, 0 errors, 0 failures** |
+| FK vs MuJoCo, 5 random configs | max discrepancy **3.45e-8** (tolerance 1e-6) |
+| Fake backend, raw `step()` | **2,578 control steps/s** |
+| MuJoCo `backend.step()` | **1,344 control steps/s = 33,611 physics steps/s** (25 substeps/control step) |
+| MuJoCo raw `mj_step` | **45,927 physics steps/s** |
+| MuJoCo expert, 10 clean seeded episodes | **7/10 success**, 598 control steps/s, **14,961 physics steps/s** |
+| Fake CLI, 20 episodes, 30% perturbed | **18 success / 2 failure** (both intended `bad_grasp`), 1,538 steps in 1.73 s (889 control steps/s end-to-end), 0.733 MiB |
+| MuJoCo CLI, 20 episodes, 30% perturbed | **9 success / 11 failure**; clean 7/13, `bad_grasp` 0/2 (intended), `hesitation` 1/1, `jitter` 1/1, `detour` 0/1, `low_sweep` 0/1; 2.66 s, 0.727 MiB |
+| `/tf_static` late joiner after a jittered reset | one TFMessage with **all 3** transforms (world→panda_link0, world→overhead, hand→wrist); depth 1, transient-local |
+| ROS collector runtime | 3/3 episodes generated (1 perturbed); `/sim2real/staging_episode` echo received a complete episode |
+
+The MuJoCo success rate is **measured, not tuned to a threshold**. The main
+failure mode is an off-centre grasp under randomized cube pose: the cube lands
+0.06-0.12 m from the zone centre, or the fingers cannot fully reopen around a
+wedged cube. Yaw-aligning the gripper was tried and made the batch worse, so it
+was reverted. No test asserts a success rate.
+
+### Known limitations (Task 4)
+
+- **MoveIt 2 is not installed and was not exercised.** `MoveItPlanner` raises
+  `PlannerUnavailable`; no MoveIt behaviour is claimed.
+- **The MuJoCo success rate is 7/10 on the clean seeded smoke and 9/20 with 30%
+  perturbation.** Grasp centring and gripper reopening are the limiting factors.
+  There is no retry or grasp-quality feedback.
+- **`FakeBackend`'s grasp is a kinematic test double, not physics.** It attaches
+  a cube within 5 cm of the TCP and ignores contact forces.
+- **Perturbations are open-loop.** They vary commands; they are not a learned
+  failure distribution (`FAILURE_TARGETED` is Task 9).
+- **Images are not captured by the runner.** The staging API estimates disk and
+  render time, but per-episode image capture is not wired in.
+- **`unintended_collision` is coarse.** It maps the backend's contact report;
+  MuJoCo cube↔finger contacts are treated as intended. Task 5 will add real
+  collision metrics.
+- **The collector runs one batch at a time** and rejects a concurrent call.
+- **The collector is not a `/joint_states` publisher** and must not be confused
+  with `sim_node`. Only one node may own `/joint_states`.
+- **Task 3 regression fixed:** `mj_setConst` resets `MjData` to `qpos0`; the
+  physics group now restores `qpos`/`qvel`. Before the fix, applying the `default`
+  profile silently homed the arm and discarded sampled object poses in MuJoCo.
 
 ## Environment separation
 
@@ -643,6 +901,14 @@ Apache-2.0 LICENSE before copying.
 | 32 | 2026-10-31 | `/tf_static` uses a plain transient-local publisher, not `StaticTransformBroadcaster` | tf2's static broadcaster deduplicates by child frame ID and ignores a changed camera extrinsic |
 | 33 | 2026-10-31 | `material_pool` is reported PARTIAL in MuJoCo; distractors are SKIPPED | Runtime texture-image swaps and runtime body creation are not supported by the scene |
 | 34 | 2026-10-31 | The ROS rate test uses a 60% CI floor and keeps the 80% local floor | Shared CI runners are noisier; 60% still catches the 4.98-6.5 Hz starvation regressions |
+| 35 | 2026-11-01 | One pure-NumPy Panda FK is shared by `FakeBackend` TF and the expert; MuJoCo remains ground truth | The old fake FK was a placeholder; duplicating FK would let TF and the planner disagree. Measured discrepancy vs MuJoCo is 3.45e-8 |
+| 36 | 2026-11-01 | Default expert planner is Cartesian waypoint IK plus bounded joint quintics; MoveIt is a guarded, unexercised adapter | MoveIt 2 is not installed; a runnable, testable planner is required now, and no MoveIt claim may be made |
+| 37 | 2026-11-01 | The expert state machine uses an explicit transition table with guards and per-state timeouts | Illegal transitions raise; guard failures become `FAILED` with a reason; timeouts become `TIMEOUT` |
+| 38 | 2026-11-01 | Perturbation choice is a pure function of `(seed, episode_index, fraction)`; `expected_quality` is diagnostic only | Reproducible demonstrations; the measured outcome is recorded, not the label |
+| 39 | 2026-11-01 | Staging writes atomic NPZ + JSON sidecar + sha256 manifest; images are off by default | Crash-safe iteration and verification; image capture needs size/time approval and becomes video in Task 7 |
+| 40 | 2026-11-01 | The collector runs the backend in-process, does not publish `/joint_states`, and uses a worker thread per batch | Deterministic control-rate execution without ROS latency; `sim_node` stays the only `/joint_states` owner; the executor keeps spinning |
+| 41 | 2026-11-01 | `/sim2real/staging_episode` is reliable, transient-local, depth 10 | A filter/recorder starting just after a batch still receives recent completed episodes; no images are embedded |
+| 42 | 2026-11-01 | MuJoCo physics randomization saves/restores `qpos`/`qvel` around `mj_setConst` | `mj_setConst` resets `MjData` to `qpos0`; without the fix the physics group homed the arm and discarded sampled object poses |
 
 ## Interface changelog
 
