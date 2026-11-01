@@ -42,6 +42,15 @@ uv pip install --python .venv-ros/bin/python "pytest>=8,<9" "pyyaml>=6,<7" "ruff
 # Editable core package so .venv-ros can run the same test suite. No deps.
 uv pip install --python .venv-ros/bin/python --no-deps -e .
 
+# SciPy and PyArrow for Task 5 metrics/Parquet. These are the newest pins that
+# still work with system NumPy 1.26.4 (scipy 1.18 requires NumPy >= 2.0 and
+# pyarrow 26 refuses NumPy < 2.0; both were reproduced failing in a scratch
+# system-site-packages venv under the sourced ROS environment). --no-deps keeps
+# the system NumPy visible.
+uv pip install --python .venv-ros/bin/python --no-deps \
+  "scipy==1.16.3" \
+  "pyarrow==21.0.0"
+
 # MuJoCo and its rendering dependencies, without NumPy: system NumPy 1.26.4
 # must remain the visible version. These versions are the approved Task 2 set.
 uv pip install --python .venv-ros/bin/python --no-deps \
@@ -57,12 +66,14 @@ uv pip install --python .venv-ros/bin/python --no-deps \
 
 .venv-ros/bin/python -c "import rclpy; print('rclpy OK:', rclpy.__file__)"
 .venv-ros/bin/python -c "import mujoco, numpy; print('mujoco', mujoco.__version__, 'numpy', numpy.__version__, 'Renderer', hasattr(mujoco, 'Renderer'))"
+.venv-ros/bin/python -c "import scipy, pyarrow; print('scipy', scipy.__version__, 'pyarrow', pyarrow.__version__, 'numpy ABI ok')"
 
 cat <<'EOF'
 
 ==> Environment summary
 .venv       core/CI, no ROS, managed by uv (includes the sim group).
 .venv-ros   system Python 3.12 + ROS Jazzy via --system-site-packages,
-            editable core, MuJoCo 3.17.0 and rendering deps (no NumPy).
+            editable core, MuJoCo 3.17.0 + rendering deps, scipy 1.16.3 and
+            pyarrow 21.0.0 (all --no-deps; system NumPy 1.26.4 stays visible).
 .venv-ml    NOT created. Planned for torch/LeRobot/PEFT (Task 8).
 EOF

@@ -21,3 +21,5 @@ JOINT_STATES_QOS = QosSpec(reliability="reliable", durability="volatile", depth=
 TF_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
 TF_STATIC_QOS = QosSpec(reliability="reliable", durability="transient_local", depth=1)
 CAMERA_QOS = QosSpec(reliability="reliable", durability="volatile", depth=5)
+# Filter topics: a burst of completed episodes must not be dropped.
+FILTER_QOS = QosSpec(reliability="reliable", durability="volatile", depth=50)

@@ -1,15 +1,32 @@
 # Architecture
 
-Status: **Task 4.** Simulator backends, `sim_node`, seeded domain randomization,
-and a language-conditioned scripted pick-and-place expert with a rollout
-collector are implemented. Task 2b decouples `/joint_states`/TF publication from
-camera rendering; Task 3 adds validated randomization profiles and reset-service
-integration. Task 4 adds a pure-Panda FK single source, bounded IK/planner
-abstractions, an explicit state machine, intentional perturbations, an atomic
-staging buffer, and `expert_collector_node` (`UNIFORM` only). Datasets, training,
-mapping, inference, and safety remain unimplemented. Isaac Sim is **UNAVAILABLE
-on this machine** (requirements-based, not tested); MoveIt 2 is **not installed**
-and its planner adapter is an unexercised guard.
+Status: **Task 5.** Simulator backends, `sim_node`, seeded domain randomization,
+a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
+and a versioned `curated_v1` dataset writer are implemented. Task 2b decouples
+`/joint_states`/TF publication from camera rendering; Task 3 adds validated
+randomization profiles and reset-service integration; Task 4 adds the pure-Panda
+FK single source, bounded IK/planner abstractions, an explicit state machine,
+intentional perturbations, and `expert_collector_node` (`UNIFORM` only). Task 5
+adds strict validation, dimensionless squared jerk, SPARC, path length,
+limit margins, collision runs, a deterministic acceptance engine, and
+`trajectory_filter_node` with `curated_v1` output. LeRobot loader validation,
+training, mapping, inference, and safety remain unimplemented. Isaac Sim is
+**UNAVAILABLE on this machine** (requirements-based, not tested); MoveIt 2 is
+**not installed** and its planner adapter is an unexercised guard.
+
+## Scope of Task 5
+
+- `src/sim2real/filtering/`: strict validation, metrics, deterministic decision
+  engine, conversion, and a session pipeline.
+- `src/sim2real/data/`: atomic, versioned `curated_v1` writer and rejection log.
+- `scripts/filter_staging.py`, `scripts/summarize_dataset.py`, and
+  `scripts/debug_keyframes.py` (diagnosis only).
+- `trajectory_filter_node` and `launch/filter.launch.py`.
+- `configs/filtering/{default,mujoco}.yaml` with per-backend thresholds.
+- `docs/FILTER_METRICS.md`: formulas, threshold provenance, seeds, hold-out
+  results, and limitations.
+- scipy/pyarrow added to the core dev group and installed into `.venv-ros` with
+  `--no-deps` after an import test under system NumPy 1.26.4.
 
 ## Scope of Task 4
 
@@ -172,6 +189,14 @@ perception (Task 7)
     -> /workspace/pointcloud, /workspace/tsdf_mesh
 ```
 
+Task 5 writes three separate areas:
+
+- `data/staging/<run_id>/` — raw expert rollouts (arrays + sidecar + manifest);
+- `data/curated/<dataset>/v<M.m.p>/` — accepted episodes in `curated_v1`;
+- `data/rejected/<run_id>/` — structured rejection log and diagnostic reference.
+
+An accepted episode never appears in the rejection log and vice versa.
+
 Only the names and message types below are fixed. Rates and QoS are deliberately
 left as `TBD` where no decision has been made.
 
@@ -190,8 +215,8 @@ left as `TBD` where no decision has been made.
 | `/camera/wrist/camera_info` | `sensor_msgs/msg/CameraInfo` | sim node | perception | 10 Hz, identical stamp to images | reliable, keep-last 5 | Must match the wrist depth image. |
 | `/task_instruction` | `std_msgs/msg/String` | operator/UI, evaluation harness | VLA adapter | TBD (task 8) | TBD (task 8) | Instruction changes must not race an in-flight action chunk. |
 | `/sim2real/staging_episode` | `sim2real_msgs/msg/RolloutEpisode` | expert collector / sim adapter | filter, recorder | per completed episode | reliable, transient-local, depth 10 | Unfiltered episodes are not training data. No images are embedded; late joiners receive recent completed episodes. |
-| `/sim2real/filtered_episode` | `sim2real_msgs/msg/RolloutEpisode` | filter | dataset exporter, recorder | TBD (task 5) | TBD (task 5) | Only accepted episodes may be exported. |
-| `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | TBD (task 5) | TBD (task 5) | Metrics explain a decision; they do not override safety stops. |
+| `/sim2real/filtered_episode` | `sim2real_msgs/msg/RolloutEpisode` | filter | dataset exporter, recorder | per accepted episode | reliable, keep-last 50 | Only accepted episodes may be exported. |
+| `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | per episode (accepted, rejected, or invalid) | reliable, keep-last 50 | Metrics explain a decision; they do not override safety stops. |
 | `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | TBD (task 7) | TBD (task 7) | Frame must be documented in the message header; no implicit frame. |
 | `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | TBD (task 7) | TBD (task 7) | `TRIANGLE_LIST` marker; not a collision mesh. |
 | `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter | TBD (task 8) | TBD (task 8) | `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `(k+1)*dt`; `header.stamp` = newest observation stamp. |
@@ -200,10 +225,13 @@ left as `TBD` where no decision has been made.
 | `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | latched, depth TBD (task 11) | Latched stop. Recovery requires `/estop_reset` (Task 11); no automatic clearing. |
 | `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | TBD (task 11) | Defined in Task 11. Must only clear the latch after an explicit operator action. |
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
+| `/sim2real/finalize_dataset` | `std_srvs/srv/Trigger` | operator/UI | filter | on request | reliable | Writes the buffered accepted episodes as a new `curated_v1` minor version. Returns `success=false` when nothing is buffered or the write fails; an existing version is never overwritten. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` only (`FAILURE_TARGETED` returns `success=false` until Task 9). A batch runs on one worker thread and a concurrent call is rejected. |
 
 QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
-that parses this table. `/tf` uses depth 10 (tf2_ros defaults to 100). Camera
+that parses this table. The filter's subscriber and both publishers use reliable
+keep-last depth 50 (`FILTER_QOS`); the collector's staging publisher remains
+reliable, transient-local, depth 10. `/tf` uses depth 10 (tf2_ros defaults to 100). Camera
 topics remain **reliable keep-last 5**: `ros2 topic echo
 --qos-reliability best_effort --once` receives them because a reliable publisher
 serves best-effort subscribers, but reverting to best-effort would reintroduce
@@ -717,6 +745,122 @@ concurrent call is rejected rather than queued. `result_metadata_json` contains
 count, profile, fraction, and the staging path. `FAILURE_TARGETED` returns
 `success=false` with "FAILURE_TARGETED not implemented until Task 9".
 
+## Trajectory filtering and curated datasets (Task 5)
+
+### Module layout
+
+```
+src/sim2real/filtering/
+  config.py       strict YAML schema; limits read from configs/sim/panda.yaml
+  validation.py   never-raising validation -> structured issues
+  metrics.py      dimensionless jerk, SPARC, path, margins, collision runs
+  decision.py     hard gates + soft thresholds + deterministic score
+  conversion.py   pure wire-fields -> EpisodeRecord
+  pipeline.py     per-run duplicate tracking
+  synthetic.py    analytic episode factory for tests/diagnostics
+src/sim2real/data/
+  dataset_writer.py  atomic versioned curated_v1 writer
+  rejection_log.py   rejections.jsonl + diagnostic reference
+```
+
+The core package stays ROS-free: the node converts messages to plain fields and
+calls the same functions the CLI uses.
+
+### Validation and decisions
+
+Validation checks shape consistency (7 joints, 8 actions, 4x4 EE pose, scalar
+gripper), finiteness, strictly increasing timestamps, dt jitter, minimum steps,
+required fields, and duplicate episode ids. Malformed input returns
+`INVALID`/`MALFORMED_EPISODE` (or a more specific code) and never raises.
+
+Metrics and decisions read only recorded state. Perturbation labels are
+diagnostic: a test changes `is_perturbed`, `perturbation_name`, and
+`expected_quality` and asserts an identical score, decision, and reason order.
+
+`DEGENERATE_TRAJECTORY` covers zero/near-zero path, non-positive duration, and
+all-zero speed. The engine emits structured reasons
+`{code, metric, value, threshold}` in a fixed order. Threshold provenance,
+seeds, quantile tables, and hold-out acceptance are in `docs/FILTER_METRICS.md`.
+
+### Curated output and rejection log
+
+`curated_v1` is LeRobot-*style* (columns, episode/task metadata) but is **not
+validated against the LeRobot loader** until Task 7. The writer is atomic:
+`curated/<name>/.partial-*` is renamed only after every file is written; an
+existing version is never overwritten; each write creates a new minor version
+containing the prior accepted episodes plus the new ones. Episode indices are
+contiguous and duplicates are refused.
+
+Staging has no images by default, so `meta/info.json` records `images: none` and
+`dataset_card.md` states prominently that the dataset cannot train a VLA until
+RGB-D frames are rendered. If staging ever supplies image references, they are
+recorded by relative path and SHA-256, never copied.
+
+The rejection log lives under `data/rejected/<run_id>/` with one JSON object per
+rejected/invalid episode plus a diagnostic episode reference. Staging, curated,
+and rejected areas are disjoint by construction and by test.
+
+### ROS adapter
+
+`trajectory_filter_node` subscribes to `/sim2real/staging_episode`, publishes
+`FilterMetrics` for every episode and the original `RolloutEpisode` for accepted
+episodes, and buffers accepted records until `/sim2real/finalize_dataset`
+(`std_srvs/Trigger`) or shutdown writes a curated version. A malformed message
+produces an `INVALID` metrics message; it never crashes the node. Filter topics
+use reliable keep-last depth 50 so a burst is not dropped.
+
+`TrajectoryStep` gained two measured-state fields in Task 5:
+`float64 gripper_position` and `bool unintended_collision`, both required by the
+filter. The collector populates them; this is an interface change (see the
+changelog).
+
+### scipy and pyarrow under `.venv-ros`
+
+`.venv-ros` uses system NumPy 1.26.4. Reproduced in a scratch
+system-site-packages venv under the sourced ROS environment:
+
+- `scipy==1.18.1` (the version `uv` resolves for the core dev group) **fails**:
+  it warns that NumPy >= 2.0 is required and then raises
+  `AttributeError: module 'numpy' has no attribute 'long'`.
+- `pyarrow==26.0.0` **fails**: `ImportError: pyarrow requires NumPy 2.0 or newer`.
+- `scipy==1.16.3` and `pyarrow==21.0.0` import and round-trip a small Parquet
+  file under NumPy 1.26.4. Both are pinned in the dev group and installed into
+  `.venv-ros` with `--no-deps`. `scripts/setup_envs.sh` reproduces it and a text
+  test asserts the lines.
+
+### Task 5 runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
+
+| measurement | result |
+| --- | --- |
+| Core suite | **257 passed, 0 failed, 6 skipped, 0 errors** |
+| ROS suite (`.venv-ros`) | **268 passed, 0 failed, 0 skipped** |
+| `colcon test-result --verbose` | **7 tests, 0 errors, 0 failures** |
+| Analytic minimum-jerk J_d at 20 Hz | **721.1 (T=4 s)**, 724.5 (T=2 s), 738.0 (T=1 s) vs analytic 720 |
+| Fake hold-out, 60 episodes | clean **31/33** accepted, bad_grasp **0/3**, jitter **0/2** |
+| MuJoCo hold-out, 60 episodes | clean-success **9/11** accepted, bad_grasp **0/3**, jitter **0/2** |
+| MuJoCo clean census, seeds 3000-3039 | **22 success / 18 failure** |
+| Keyframe replay | **24 PNGs**, max joint replay error **0.0 rad** |
+
+### Known limitations (Task 5)
+
+- **`unintended_collision` over-reports intended grasps (pre-existing Task 4
+  bug).** The helper skips intended finger↔cube contacts inside the loop but
+  returns `count > 0` afterwards, so any contact sets the flag. Clean successful
+  MuJoCo episodes show 1-3 collision runs. Expert code was not changed; the
+  MuJoCo filter config uses `max_collisions: 3` and the collision gate is not a
+  physical collision test until the flag is fixed.
+- **Derivatives at 20 Hz are noise-sensitive.** Savitzky-Golay window 9
+  suppresses 1 mm noise by about half versus window 5 but does not remove it.
+- **J_d depends on dwell time** (`T^5`); thresholds are empirical and
+  per-backend.
+- **Fake velocities are zero**, so fake velocity margins are always 1.0.
+- **Accepted MuJoCo data skews toward easy object poses**: the expert succeeds
+  22/40 on clean seeds, so filtering cannot recover the failures.
+- **LeRobot-style, unvalidated loader** and **no images**; both are Task 7
+  prerequisites before VLA training.
+- **Small threshold samples** (40-67 clean tuning episodes per backend); counts
+  are reported with percentages.
+
 ## Deferred: joint-command subscription
 
 No joint-command topic is subscribed in Task 2. The node holds its current
@@ -826,7 +970,7 @@ was reverted. No test asserts a success rate.
 | Environment | Created by | Contains | Must not contain |
 | --- | --- | --- | --- |
 | `.venv` | `uv sync` | core library + dev tools | ROS, torch, LeRobot |
-| `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff, MuJoCo 3.17.0 + rendering deps installed `--no-deps` | numpy/torch installs that shadow system packages |
+| `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff, MuJoCo 3.17.0 + rendering deps, scipy 1.16.3, pyarrow 21.0.0 (all `--no-deps`) | numpy/torch installs that shadow system packages |
 | `.venv-ml` | documented only, Task 8 | torch, LeRobot, PEFT | ROS |
 
 Why the split:
@@ -915,6 +1059,7 @@ Apache-2.0 LICENSE before copying.
 | Version | Date | Change | Reason |
 | --- | --- | --- | --- |
 | v0 | 2026-10-30 | Initial six interfaces: `TrajectoryStep`, `RolloutEpisode`, `FilterMetrics`, `SafetyStatus`, `ResetEnv`, `GenerateRollouts` | Task 1 proposal accepted without field/type refinements |
+| v1 | 2026-11-01 | `TrajectoryStep` adds measured `gripper_position` and `unintended_collision`; new `/sim2real/finalize_dataset` `std_srvs/Trigger` service | Task 5 filtering needs measured gripper state and collision flags; the finalize trigger writes curated output |
 
 Wire types in `ros2_ws/src/sim2real_msgs` are the source of truth for ROS.
 `src/sim2real/contracts.py` mirrors names and enum values for the pure-Python

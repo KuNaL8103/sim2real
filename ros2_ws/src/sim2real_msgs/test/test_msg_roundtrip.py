@@ -53,6 +53,8 @@ def test_trajectory_step_roundtrip():
     message.ee_frame_id = "panda_hand"
     message.action = [0.1, 0.02]
     message.action_space = TrajectoryStep.ACTION_JOINT_POSITION_TARGET
+    message.gripper_position = 0.02
+    message.unintended_collision = True
 
     result = roundtrip(message, TrajectoryStep)
     assert result.stamp.sec == 12
@@ -64,6 +66,8 @@ def test_trajectory_step_roundtrip():
     assert result.ee_frame_id == "panda_hand"
     assert result.action == pytest.approx([0.1, 0.02])
     assert result.action_space == 0
+    assert result.gripper_position == pytest.approx(0.02)
+    assert result.unintended_collision is True
 
 
 def test_rollout_episode_roundtrip():

@@ -374,6 +374,8 @@ class ExpertCollectorNode(Node):
             step.ee_frame_id = item["ee_frame_id"]
             step.action = [float(v) for v in item["action"]]
             step.action_space = int(item["action_space"])
+            step.gripper_position = float(item["gripper_position"])
+            step.unintended_collision = bool(item["unintended_collision"])
             steps.append(step)
         message.steps = steps
         return message

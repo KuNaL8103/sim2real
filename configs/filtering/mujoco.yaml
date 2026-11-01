@@ -1,0 +1,52 @@
+# Trajectory filter configuration: MuJoCo backend.
+#
+# MuJoCo trajectories are materially different from the fake test double:
+# measured on the same seeds, clean-successful median dimensionless jerk is
+# 2.47e6 (MuJoCo) vs 6.62e6 (fake), and median SPARC is -3.20 vs -3.76. The
+# thresholds below are therefore derived independently; one number is not forced
+# onto both backends.
+#
+# collision caveat: Task 4's per-step `unintended_collision` flag returns true
+# whenever ANY contact exists, including the intended cube<->finger grasp (it
+# ends with `return count > 0` after skipping intended contacts). Measured clean
+# successful MuJoCo episodes have 1-3 collision runs, so `max_collisions: 3`
+# reflects that known reporting bug, not acceptable physical collisions. Expert
+# code was not changed in Task 5.
+schema_version: 1
+sim_config: ../sim/panda.yaml
+
+validation:
+  min_steps: 20
+  dt_jitter_tolerance_s: 0.005
+  min_path_length_m: 0.01
+  derivative_method: savgol
+  savgol_window: 9
+  savgol_polyorder: 5
+
+metrics:
+  sparc:
+    f_c_hz: 10.0
+    nyquist_fraction: 0.8
+    padlevel: 4
+    amplitude_threshold: 0.05
+
+hard_gates:
+  require_success: true
+  max_collisions: 3
+  min_joint_margin: 0.0
+  min_velocity_margin: 0.0
+
+# Threshold rule (tuning set: seeds 1000-1099, 40% perturbed):
+#   clean + successful + non-perturbed, n=40; p95 * 1.2 for upper bounds and
+#   p5 - 0.3 (more negative) for SPARC. Never chosen from the hold-out set.
+soft_thresholds:
+  max_dimensionless_squared_jerk: 4062840.0
+  min_sparc: -4.16341
+  max_path_length_m: 1.15026
+
+weights:
+  dimensionless_squared_jerk: 0.4
+  sparc: 0.4
+  path_length_m: 0.2
+
+accept_score_threshold: 0.5

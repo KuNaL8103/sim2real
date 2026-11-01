@@ -14,10 +14,12 @@ End-to-end sim2real robotics data pipeline and VLA fine-tuning framework:
 - Pure-Python core algorithms, thin ROS 2 adapters, CPU-testable CI.
 - No physical robot.
 
-Tasks 1-4 implement scaffolding, contracts, fake and MuJoCo simulator backends,
-seeded domain randomization, and a language-conditioned scripted pick-and-place
-expert with atomic rollout staging. Filtering, datasets, training, mapping,
-inference, and safety logic are not implemented.
+Tasks 1-5 implement scaffolding, contracts, fake and MuJoCo simulator backends,
+seeded domain randomization, a language-conditioned scripted pick-and-place
+expert with atomic rollout staging, trajectory filtering with quality metrics,
+and versioned `curated_v1` dataset output (LeRobot-style, not yet loader-validated).
+Training, LeRobot export, mapping, inference, and safety logic are not
+implemented.
 
 ## Verified environment
 
@@ -210,6 +212,14 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 19. Reset quiesces rendering before touching the scene; Task 3 model changes
     must use the same path.
 20. Camera QoS stays reliable keep-last 5; D3D12 renderer settings are opt-in.
+21. Filter metrics use recorded executed state only; actions and perturbation
+    labels never influence a decision.
+22. Soft thresholds are per-backend and chosen only from clean successful
+    tuning episodes (p95 x 1.2 / p5 - 0.3); the hold-out set is reporting-only.
+23. `curated_v1` writes are atomic, never overwrite a version, and create a new
+    minor version for appended accepted episodes.
+24. Filter topics use reliable keep-last depth 50; the collector's staging
+    publisher remains transient-local depth 10.
 
 ## Task checklist
 
@@ -217,7 +227,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 2 — `SimBackend`, `FakeBackend`, MuJoCo Franka scene, sim ROS node
 - [x] Task 3 — seeded domain randomization, profiles, capability-gated applier, reset integration
 - [x] Task 4 — scripted expert, FK/IK/planner, perturbations, staging, rollout collector
-- [ ] Task 5 — trajectory filtering, metrics, `curated_v1`
+- [x] Task 5 — trajectory filtering, metrics, `curated_v1`
 - [ ] Task 6 — LeRobot export and Open-X dataset mixing
 - [ ] Task 7 — RGB-D mapping, point cloud, TSDF
 - [ ] Task 8 — SmolVLA + LoRA fine-tuning
@@ -228,18 +238,56 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=232 failed=0 skipped=5 errors=0 | date=2026-11-01 | base_commit=3493463
-- Last verified ROS test run: passed=242 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=3493463
-- Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; CI pending user confirmation; opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
+- Last verified test run: passed=257 failed=0 skipped=6 errors=0 | date=2026-11-01 | base_commit=46e2a01
+- Last verified ROS test run: passed=268 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=46e2a01
+- Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for this push pending user confirmation in the Actions tab; MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
+- Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; **CI user-confirmed green for the Task 4 push, 2026-11-01** (no run id recorded); opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
 - Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), Isaac randomization unverified. A Task 3 MuJoCo bug was found and fixed in Task 4: `mj_setConst` reset `MjData` to `qpos0`, so the physics group homed the arm and discarded sampled object poses.
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
 The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Task 4 tests ran on the
-working tree based on `3493463`.
+second line records the ROS-enabled suite separately. Task 5 tests ran on the
+working tree based on `46e2a01`.
 
-Run breakdown (2026-11-01, Task 4):
+Run breakdown (2026-11-01, Task 5):
+
+- Core-only: **257 passed, 0 failed, 6 skipped, 0 errors** (was 232/5 before
+  Task 5). The extra skip is the new ros-marked `trajectory_filter` module.
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **268 passed, 0 failed, 0 skipped, 0 errors** (was 242).
+- `colcon test` / `colcon test-result --verbose`: **7 tests, 0 errors, 0
+  failures, 0 skipped**; the six `sim2real_sim` unittest cases (including the new
+  filter round-trip) pass in the console but are not counted in the xunit total.
+- `ruff check` and `ruff format --check`: clean.
+- scipy **1.16.3** and pyarrow **21.0.0** are committed to the core dev group and
+  installed into `.venv-ros` with `--no-deps`; both import and round-trip
+  Parquet under sourced ROS with system NumPy **1.26.4**. The newer resolved
+  versions (scipy 1.18.1, pyarrow 26.0.0) were tested and **fail** on NumPy 1.26
+  (scipy raises `numpy.long` missing; pyarrow requires NumPy >= 2.0).
+- Threshold provenance: tuning seeds **1000-1099**, 100 episodes per backend,
+  40% perturbed; hold-out seeds **2000-2059**, 60 per backend. Rule: clean +
+  successful + non-perturbed p95 x 1.2 for upper bounds, p5 - 0.3 for SPARC.
+  Fake (n=67): `max_jerk=14611600`, `min_sparc=-5.05682`, `max_path=1.3032`,
+  `max_collisions=0`. MuJoCo (n=40): `max_jerk=4062840`,
+  `min_sparc=-4.16341`, `max_path=1.15026`, `max_collisions=3`.
+- Hold-out acceptance (60 per backend): fake clean **31/33** (2 clean-success
+  false rejects), bad_grasp 0/3, jitter 0/2, hesitation 2/4, detour 6/6,
+  low_sweep 8/8, overspeed 4/4. MuJoCo clean **9/11 successful** (2 false
+  rejects; 9/33 of all clean), bad_grasp 0/3, jitter 0/2, hesitation 2/4,
+  detour 3/6, low_sweep 6/8, overspeed 0/4.
+- Minimum-jerk check at 20 Hz with savgol(9,5): **724.5 (T=2 s), 721.1 (T=4 s),
+  738.0 (T=1 s)** vs the analytic 720; test tolerance 5%.
+- MuJoCo clean failure census (seeds 3000-3039, no rendering): **22 success /
+  18 failure**. Final states: RETREAT 13, RELEASE 5. Reasons: gripper did not
+  release 5; cube not stable 6; cube off-zone 7; one episode lost the cube
+  (rest-height error 2.735 m). Failed initial cube x mean **0.4780** vs success
+  **0.4356** (y 0.0193 vs -0.0492, yaw -0.4107 vs -0.3006).
+- Keyframes: `log/task5_keyframes/` (git-ignored) has **24 PNGs** for seeds
+  3004, 3008, 3036 at APPROACH_PREGRASP/GRASP/LIFT/RELEASE, overhead + wrist;
+  replay max joint error **0.0 rad**. Manual inspection is PENDING.
+
+Run breakdown (2026-11-01, Task 4, retained for history):
 
 - Core-only: **232 passed, 0 failed, 5 skipped, 0 errors**. Skips are the msgs
   round-trip and the four ros-marked `sim_node`/collector modules (no `rclpy`).
@@ -332,8 +380,31 @@ Run breakdown (2026-10-31, Task 2b):
 
 ## Known limitations
 
-- **No filtering, dataset, training, mapping, inference, or safety code exists
-  yet.** Task 4 produces raw staging output only; it is not training data.
+- **Task 5 filtering and `curated_v1` exist; training, LeRobot export, mapping,
+  inference, and safety do not.** Staging remains raw and unfiltered. Curated
+  output is a filtered subset, not yet validated against the LeRobot loader.
+- **`curated_v1` has no images.** Staging captures none, so `info.json` records
+  `images: none` and the dataset card says the data cannot train a VLA until
+  RGB-D frames are rendered (Task 7 prerequisite).
+- **The per-step `unintended_collision` flag over-reports intended grasps.**
+  `_unintended_collision` skips intended finger↔cube contacts inside its loop
+  but ends with `return count > 0`, so any contact sets the flag. Clean
+  successful MuJoCo episodes show 1-3 collision runs. Expert code was **not
+  changed** in Task 5; `configs/filtering/mujoco.yaml` uses `max_collisions: 3`
+  so the gate does not reject every episode. This is a diagnosis, not a fix.
+- **Metrics use 20 Hz derivatives and Savitzky-Golay smoothing (window 9,
+  polyorder 5).** Window 9 halves the 1 mm-noise-driven J_d versus window 5 but
+  does not remove it; window 17 suppresses noise further yet attenuates a real
+  6 Hz oscillation by >400x. Treat J_d as comparative.
+- **Dimensionless squared jerk depends on dwell time (`T^5`).** Grasp/release
+  pauses raise it, so thresholds are empirical and per-backend, not literature
+  values.
+- **Accepted MuJoCo data skews toward easy object poses.** The expert succeeded
+  only 22/40 on clean seeds 3000-3039; filtering cannot recover those failures.
+- **The fake backend reports zero joint velocities**, so fake velocity-limit
+  margins are always 1.0.
+- **Threshold samples are small** (40-67 clean tuning episodes per backend); the
+  docs report counts alongside percentages.
 - **MoveIt 2 is not installed and was not exercised.** `MoveItPlanner` is a
   guarded stub that raises `PlannerUnavailable`; no MoveIt behaviour is claimed.
 - **The scripted MuJoCo expert succeeds 7/10 on the clean seeded smoke and 9/20
@@ -349,9 +420,10 @@ Run breakdown (2026-10-31, Task 2b):
 - **Images are not captured by the runner.** `estimate_storage()` estimates disk
   and time, but per-episode image capture is not wired in; images become video in
   Task 7.
-- **Per-step `unintended_collision` is coarse.** It maps the backend contact
-  report; MuJoCo cube↔finger contacts are treated as intended. Task 5 adds real
-  trajectory and collision metrics.
+- **Per-step `unintended_collision` is coarse and currently buggy.** It maps
+  the backend contact report, and the Task 4 helper returns true whenever any
+  contact exists (including the intended grasp). Task 5 counts maximal runs but
+  the underlying flag is not a physical collision test until Task 4 code is fixed.
 - **The collector runs one batch at a time** and rejects a concurrent call.
 - **The collector is not a `/joint_states` publisher.** `sim_node` remains the
   only `/joint_states` owner when it runs.
@@ -403,8 +475,9 @@ Run breakdown (2026-10-31, Task 2b):
 - **The ROS rate test uses a 60% CI floor** (12 Hz) and keeps the stricter 80%
   local floor. Shared CI runners are noisier; the 60% floor still catches the
   4.98-6.5 Hz starvation regressions that motivated the test.
-- **`opencode.json` remains the V1 `permission.bash` schema.** The installed
-  runtime is OpenCode v2.2.5. On 2026-11-01 the approved native-v2 `permissions`
+- **OpenCode permission rules are unenforced in this setup; the v2 migration
+  was rolled back.** `opencode.json` remains the V1 `permission.bash` schema.
+  The installed runtime is OpenCode v2.2.5. On 2026-11-01 the approved native-v2 `permissions`
   array was written, `opencode reload` reported "Configuration reloaded", but
   `git push --dry-run origin main` produced **no observable prompt** in this
   session. Per the agreed test rule the backup was restored byte-for-byte
@@ -443,6 +516,11 @@ Run breakdown (2026-10-31, Task 2b):
   id invented).
 - [ ] Optional Task 4 viewer checkpoint: watch one MuJoCo rollout and confirm
   approach/grasp/lift/transport/release. **PENDING**; does not block the commit.
+- [ ] Optional Task 5 artifact inspection: open one curated Parquet file and
+  `data/rejected/*/rejections.jsonl`, plus the keyframe PNGs under
+  `log/task5_keyframes/`. **PENDING**; does not block the commit.
+- [ ] Confirm the GitHub Actions tab for the Task 5 push (user confirms; no run
+  id invented).
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

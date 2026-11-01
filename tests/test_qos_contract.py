@@ -8,6 +8,7 @@ from pathlib import Path
 from sim2real import contracts
 from sim2real.sim.qos import (
     CAMERA_QOS,
+    FILTER_QOS,
     JOINT_STATES_QOS,
     TF_QOS,
     TF_STATIC_QOS,
@@ -55,3 +56,11 @@ def test_camera_qos_matches_docs_for_every_camera_topic():
             assert "reliable" in cell and "keep-last 5" in cell
     assert CAMERA_QOS.reliability == "reliable"
     assert CAMERA_QOS.depth == 5
+
+
+def test_filter_qos_matches_docs():
+    for topic in (contracts.FILTERED_EPISODE_TOPIC, contracts.FILTER_METRICS_TOPIC):
+        cell = _qos_cell(topic)
+        assert "reliable" in cell and "keep-last 50" in cell
+    assert FILTER_QOS.reliability == "reliable"
+    assert FILTER_QOS.depth == 50

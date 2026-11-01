@@ -27,3 +27,11 @@ def test_setup_script_installs_mujoco_into_venv_ros():
 def test_setup_script_syncs_the_sim_group():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "uv sync --group sim" in text
+
+
+def test_setup_script_installs_numpy126_compatible_scipy_and_pyarrow():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert '"scipy==1.16.3"' in text
+    assert '"pyarrow==21.0.0"' in text
+    assert "--no-deps" in text
+    assert "import scipy, pyarrow" in text

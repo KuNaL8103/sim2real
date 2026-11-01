@@ -19,17 +19,8 @@ from sim2real.expert.staging import StagingBuffer
 OUTCOME_NAMES = {1: "success", 2: "failure", 3: "timeout", 4: "aborted", 0: "unknown"}
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_dir", help="directory containing manifest.jsonl")
-    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    args = parser.parse_args(argv)
-
-    run_dir = Path(args.run_dir).expanduser().resolve()
-    if not run_dir.is_dir():
-        parser.error(f"not a directory: {run_dir}")
-    buffer = StagingBuffer(run_dir.parent, run_dir.name)
-
+def build_summary(buffer: StagingBuffer, run_dir: Path) -> dict:
+    """Build the summary payload; category counts are expected to sum to episodes."""
     outcomes: Counter[str] = Counter()
     perturbations: Counter[str] = Counter()
     qualities: Counter[str] = Counter()
@@ -43,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         steps += len(record.steps)
 
     verification = buffer.verify()
-    payload = {
+    return {
         "staging_dir": str(run_dir),
         "episodes": len(seeds),
         "outcomes": dict(sorted(outcomes.items())),
@@ -56,6 +47,21 @@ def main(argv: list[str] | None = None) -> int:
         "verification": verification,
         "read_errors": buffer.last_errors,
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_dir", help="directory containing manifest.jsonl")
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    if not run_dir.is_dir():
+        parser.error(f"not a directory: {run_dir}")
+    buffer = StagingBuffer(run_dir.parent, run_dir.name)
+
+    payload = build_summary(buffer, run_dir)
+    verification = payload["verification"]
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:

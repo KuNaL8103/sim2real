@@ -48,6 +48,7 @@ def step_to_fields(record: EpisodeRecord, step: Any) -> dict[str, Any]:
         "ee_frame_id": contracts.PANDA_HAND_FRAME,
         "action": [float(value) for value in step.action],
         "action_space": int(step.action_space),
+        "gripper_position": float(step.gripper_position),
         "state": step.state,
         "unintended_collision": bool(step.unintended_collision),
     }

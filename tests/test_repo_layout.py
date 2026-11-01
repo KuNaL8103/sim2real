@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -79,9 +80,20 @@ def test_required_files_exist():
     assert not missing, f"missing files: {missing}"
 
 
-def test_data_directory_contains_only_gitkeep():
-    entries = sorted(path.name for path in (ROOT / "data").iterdir())
-    assert entries == [".gitkeep"], f"data/ must be empty apart from .gitkeep, found {entries}"
+def test_data_directory_keeps_only_gitkeep_tracked():
+    # Generated staging/curated/rejected data is expected after Task 5 and is
+    # git-ignored. The invariant is that only data/.gitkeep is tracked.
+    assert (ROOT / "data" / ".gitkeep").is_file()
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "data"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tracked.returncode == 0:
+        assert tracked.stdout.split() == ["data/.gitkeep"]
+    else:
+        assert "data/**" in (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name", CONFIG_NAMES)

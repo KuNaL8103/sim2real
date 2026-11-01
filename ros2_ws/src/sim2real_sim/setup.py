@@ -20,6 +20,11 @@ expert_configs = [
     os.path.relpath(path, here)
     for path in sorted(glob(os.path.join(repo_expert_configs, "*.yaml")))
 ]
+repo_filter_configs = os.path.join(here, "..", "..", "..", "configs", "filtering")
+filter_configs = [
+    os.path.relpath(path, here)
+    for path in sorted(glob(os.path.join(repo_filter_configs, "*.yaml")))
+]
 
 setup(
     name=package_name,
@@ -43,6 +48,10 @@ setup(
             os.path.join("share", package_name, "expert"),
             expert_configs,
         ),
+        (
+            os.path.join("share", package_name, "filtering"),
+            filter_configs,
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -56,6 +65,7 @@ setup(
         "console_scripts": [
             "sim_node = sim2real_sim.sim_node:main",
             "expert_collector_node = sim2real_sim.expert_collector_node:main",
+            "trajectory_filter_node = sim2real_sim.trajectory_filter_node:main",
         ]
     },
 )

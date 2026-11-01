@@ -1,2 +1,51 @@
-# Trajectory filtering thresholds. Filled by Task 5.
+# Trajectory filter configuration: fake backend (CI test double).
+#
+# Threshold provenance is recorded in docs/FILTER_METRICS.md. Soft thresholds
+# are derived ONLY from clean, successful, non-perturbed TUNING episodes; the
+# hold-out set is used for reporting, never for choosing a number.
+#
+# Joint and velocity limits are read from configs/sim/panda.yaml. The velocity
+# values there are Franka Emika datasheet values; they are not re-derived here.
 schema_version: 1
+sim_config: ../sim/panda.yaml
+
+validation:
+  # 20 Hz episodes are typically 60-120 steps. 20 steps (1 s) is the floor.
+  min_steps: 20
+  dt_jitter_tolerance_s: 0.005
+  min_path_length_m: 0.01
+  # Savitzky-Golay order 5 differentiates a quintic minimum-jerk profile exactly.
+  # Window 9 at 20 Hz spans 0.45 s and suppresses measurement noise.
+  derivative_method: savgol
+  savgol_window: 9
+  savgol_polyorder: 5
+
+metrics:
+  sparc:
+    # Effective cutoff is min(f_c_hz, nyquist_fraction * Nyquist). At 20 Hz this
+    # is min(10, 8) = 8 Hz, strictly below the 10 Hz Nyquist frequency.
+    f_c_hz: 10.0
+    nyquist_fraction: 0.8
+    padlevel: 4
+    amplitude_threshold: 0.05
+
+hard_gates:
+  require_success: true
+  max_collisions: 0
+  min_joint_margin: 0.0
+  min_velocity_margin: 0.0
+
+# Threshold rule (tuning set: seeds 1000-1099, 40% perturbed):
+#   clean + successful + non-perturbed, n=67; p95 * 1.2 for upper bounds and
+#   p5 - 0.3 (more negative) for SPARC. Never chosen from the hold-out set.
+soft_thresholds:
+  max_dimensionless_squared_jerk: 14611600.0
+  min_sparc: -5.05682
+  max_path_length_m: 1.3032
+
+weights:
+  dimensionless_squared_jerk: 0.4
+  sparc: 0.4
+  path_length_m: 0.2
+
+accept_score_threshold: 0.5

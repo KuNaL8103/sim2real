@@ -2,10 +2,12 @@
 
 ## Status
 
-**Task 4 staging exists; `curated_v1` does not.** The scripted expert writes raw
-rollouts to an atomic staging directory. Filtering, the `curated_v1` format,
-LeRobot export, and dataset mixing remain unimplemented. `data/` is ignored by
-git except `data/.gitkeep`.
+**Task 4 staging and Task 5 `curated_v1` filtering exist.** The scripted expert
+writes raw rollouts to an atomic staging directory. `trajectory_filter_node` and
+`scripts/filter_staging.py` validate, measure, and accept/reject them, then write
+a versioned `curated_v1` dataset and a rejection log. LeRobot loader validation
+and dataset mixing remain Task 7. `data/` is ignored by git except
+`data/.gitkeep`.
 
 ## Task 4 staging layout
 
@@ -38,6 +40,72 @@ Properties:
   `estimate_storage()` prints an upper-bound disk/time estimate before a run.
 - **No video yet.** Images become video in the Task 7 LeRobot conversion; no
   encoding is chosen here.
+
+## `curated_v1` layout (Task 5)
+
+```
+data/curated/<dataset_name>/v<MAJOR.MINOR.PATCH>/
+  meta/info.json                 schema_version, dataset/version, fps, robot_type,
+                                 feature table (dtype/shape/units/frame),
+                                 normalisation placeholders, filter config hash
+                                 and copy, source run ids, creation time, code
+                                 version, images section
+  meta/episodes.jsonl            episode_index, episode_id, seed, task, length,
+                                 outcome, perturbed flag, FilterMetrics, decision
+  meta/tasks.jsonl               task_index, instruction
+  dataset_card.md                what it is, units, limitations, images warning
+  data/chunk-000/episode_000000.parquet
+                                 timestamp, frame_index, episode_index, index,
+                                 task_index, observation.state (8),
+                                 action (8), next.done
+```
+
+Parquet columns are **LeRobot-STYLE**: names and shapes follow LeRobot
+conventions, but this layout is **not validated against the LeRobot loader**
+until Task 7. `observation.state` and `action` are fixed-size lists of 8:
+seven arm joints in radians plus one gripper finger joint in metres. `index` is
+a dataset-global frame index; `next.done` is true only on an episode's last row.
+
+Writer rules:
+
+- writes into a `.partial-*` directory, then atomically renames it;
+- refuses to overwrite an existing version;
+- a failure mid-write removes the partial directory and leaves no final version;
+- each write creates a **new minor version** containing the previous accepted
+  episodes plus the new ones (a complete snapshot, never an in-place patch);
+- episode indices stay contiguous and duplicate episode ids are refused;
+- images are never copied. Staging has no images by default, so `info.json`
+  records `images: {"mode": "none", ...}` and `dataset_card.md` says prominently
+  that the dataset **cannot train a VLA** until RGB-D frames are rendered later.
+
+Rejection log:
+
+```
+data/rejected/<run_id>/rejections.jsonl   one row per rejected/invalid episode:
+                                          episode id, seed, decision, structured
+                                          reasons {code, metric, value,
+                                          threshold}, metrics, validation issues
+data/rejected/<run_id>/episodes/<id>.json diagnostic copy of the episode reference
+```
+
+Staging, curated, and rejected directories are separate. An accepted episode
+never appears in the rejection log and vice versa; a test enforces this.
+
+## Filtering commands
+
+```bash
+uv run python scripts/filter_staging.py \
+    --staging data/staging/hold_fake \
+    --config configs/filtering/default.yaml \
+    --curated data/curated --rejected data/rejected \
+    --dataset-name dev_curated
+uv run python scripts/summarize_dataset.py data/curated/dev_curated
+cat data/curated/dev_curated/v*/meta/info.json
+head -n 3 data/rejected/*/rejections.jsonl
+```
+
+Use `configs/filtering/mujoco.yaml` for MuJoCo data. Thresholds and their
+provenance are documented in `docs/FILTER_METRICS.md`.
 
 ## Sizes measured on 2026-11-01
 
@@ -73,11 +141,14 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 ## Limitations
 
 - Staging holds **unfiltered** episodes, including intended failures and
-  timeouts. They are not training data until Task 5 accepts them.
+  timeouts. Curated output is the filtered subset; staging is not training data.
 - Outcomes are measured by the expert's success rule (zone xy, rest height,
-  stable steps, gripper open). There are no trajectory-quality metrics yet.
+  stable steps, gripper open). Trajectory metrics are Task 5 and are documented
+  separately.
 - Per-step `unintended_collision` is a coarse mapping of the backend contact
-  report; MuJoCo cube↔finger contacts are treated as intended.
+  report. A Task 4 bug makes it true whenever **any** contact exists, including
+  the intended cube↔finger grasp; see `docs/FILTER_METRICS.md`. Expert code was
+  not changed in Task 5.
 - The MuJoCo clean success rate measured so far is 7/10 (seeded smoke) and 9/20
   with 30% perturbation. Do not assume a high-quality dataset from this expert
   without filtering and inspection.
@@ -89,10 +160,10 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 
 | Item | Task | Status |
 | --- | --- | --- |
-| Trajectory metrics (dimensionless squared jerk, SPARC, path length, limit margins, collisions) | Task 5 | planned |
-| Acceptance engine and `trajectory_filter_node` | Task 5 | planned |
-| `curated_v1` on-disk episode format | Task 5 | planned, schema not defined |
-| LeRobot dataset export | Task 6 | planned |
+| Trajectory metrics (dimensionless squared jerk, SPARC, path length, limit margins, collisions) | Task 5 | **implemented** |
+| Acceptance engine and `trajectory_filter_node` | Task 5 | **implemented** |
+| `curated_v1` on-disk episode format | Task 5 | **implemented (LeRobot-style, unvalidated)** |
+| LeRobot dataset export and loader validation | Task 7 | planned |
 | Open-X / LeRobot dataset mixing | Task 6 | planned |
 | Dataset statistics and provenance | Task 6 | planned |
 
@@ -102,6 +173,6 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 - `RolloutEpisode` does not embed images. Raw RGB-D frames stay on disk and are
   referenced from `metadata_json` (bounded to 64 KiB).
 - `data/**` is ignored by git; only `data/.gitkeep` is tracked.
-- Dataset schemas will be versioned. `curated_v1` is a placeholder name for
-  Task 5, not a committed schema.
+- Dataset schemas are versioned (`curated_v1`, then a new schema name on a
+  breaking change). Each filter run writes a new minor version.
 - Ask before a run estimated above 1 GiB or 10 minutes of image capture.

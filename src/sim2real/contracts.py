@@ -74,12 +74,14 @@ ESTOP_SERVICE: Final = "/estop"
 ESTOP_RESET_SERVICE: Final = "/estop_reset"
 RESET_ENV_SERVICE: Final = "/sim2real/reset_env"
 GENERATE_ROLLOUTS_SERVICE: Final = "/sim2real/generate_rollouts"
+FINALIZE_DATASET_SERVICE: Final = "/sim2real/finalize_dataset"
 
 SERVICES: Final[dict[str, str]] = {
     ESTOP_SERVICE: TRIGGER_TYPE,
     ESTOP_RESET_SERVICE: TRIGGER_TYPE,
     RESET_ENV_SERVICE: RESET_ENV_TYPE,
     GENERATE_ROLLOUTS_SERVICE: GENERATE_ROLLOUTS_TYPE,
+    FINALIZE_DATASET_SERVICE: TRIGGER_TYPE,
 }
 
 # ---------------------------------------------------------------------------
