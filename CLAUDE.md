@@ -230,7 +230,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 - Last verified test run: passed=232 failed=0 skipped=5 errors=0 | date=2026-11-01 | base_commit=3493463
 - Last verified ROS test run: passed=242 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=3493463
-- Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; CI pending user confirmation; opencode.json v2 migration is the final separate commit and its prompt test must be reported
+- Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; CI pending user confirmation; opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
 - Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), Isaac randomization unverified. A Task 3 MuJoCo bug was found and fixed in Task 4: `mj_setConst` reset `MjData` to `qpos0`, so the physics group homed the arm and discarded sampled object poses.
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
@@ -403,9 +403,13 @@ Run breakdown (2026-10-31, Task 2b):
 - **The ROS rate test uses a 60% CI floor** (12 Hz) and keeps the stricter 80%
   local floor. Shared CI runners are noisier; the 60% floor still catches the
   4.98-6.5 Hz starvation regressions that motivated the test.
-- **`opencode.json` uses the V1 `permission.bash` schema**, but the installed
-  runtime is OpenCode v2.2.5, which enforces the `permissions` array. A native
-  v2 rewrite is proposed but **not written** pending user approval.
+- **`opencode.json` remains the V1 `permission.bash` schema.** The installed
+  runtime is OpenCode v2.2.5. On 2026-11-01 the approved native-v2 `permissions`
+  array was written, `opencode reload` reported "Configuration reloaded", but
+  `git push --dry-run origin main` produced **no observable prompt** in this
+  session. Per the agreed test rule the backup was restored byte-for-byte
+  (SHA-256 `59cb4e46...`) and the migration is **UNVERIFIED**; it was not
+  committed. A user-visible prompt test is required before retrying.
 - **`render_only_when_subscribed` defaults to false.** When enabled, a camera
   with no subscribers is skipped and counted.
 - **SmolVLA fine-tuning feasibility is UNKNOWN** until Task 8 measures it.
@@ -442,8 +446,10 @@ Run breakdown (2026-10-31, Task 2b):
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.
-- [ ] Decide and, if approved, apply the native OpenCode v2 `permissions`
-  rewrite of `opencode.json`.
+- [ ] Retry the native OpenCode v2 `permissions` rewrite only after a
+  user-visible prompt test; the 2026-11-01 attempt was rolled back as UNVERIFIED
+  (`opencode reload` succeeded, no observable prompt on
+  `git push --dry-run origin main`).
 - [ ] Decide whether CI actions should be pinned to commit SHAs.
 - [ ] Approve and build the Docker image separately; enable Docker Desktop WSL
   integration first.
