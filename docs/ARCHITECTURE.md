@@ -1,18 +1,39 @@
 # Architecture
 
-Status: **Task 5.** Simulator backends, `sim_node`, seeded domain randomization,
+Status: **Task 6.** Simulator backends, `sim_node`, seeded domain randomization,
 a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
-and a versioned `curated_v1` dataset writer are implemented. Task 2b decouples
-`/joint_states`/TF publication from camera rendering; Task 3 adds validated
-randomization profiles and reset-service integration; Task 4 adds the pure-Panda
-FK single source, bounded IK/planner abstractions, an explicit state machine,
-intentional perturbations, and `expert_collector_node` (`UNIFORM` only). Task 5
-adds strict validation, dimensionless squared jerk, SPARC, path length,
-limit margins, collision runs, a deterministic acceptance engine, and
-`trajectory_filter_node` with `curated_v1` output. LeRobot loader validation,
-training, mapping, inference, and safety remain unimplemented. Isaac Sim is
+a versioned `curated_v1` dataset writer, and RGB-D workspace mapping are
+implemented. Task 2b decouples `/joint_states`/TF publication from camera
+rendering; Task 3 adds validated randomization profiles and reset-service
+integration; Task 4 adds the pure-Panda FK single source, bounded IK/planner
+abstractions, an explicit state machine, intentional perturbations, and
+`expert_collector_node` (`UNIFORM` only). Task 5 adds strict validation,
+dimensionless squared jerk, SPARC, path length, limit margins, collision runs,
+a deterministic acceptance engine, and `trajectory_filter_node` with
+`curated_v1` output. Task 6 adds a workspace-bounded Open3D TSDF map that fuses
+overhead and wrist RGB-D frames through tf2 poses, a coarse robot self-filter,
+`/workspace/pointcloud`, a `TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`,
+and a vectorized obstacle-distance query for Task 11. LeRobot loader validation,
+training, inference, safety, and OctoMap remain unimplemented. Isaac Sim is
 **UNAVAILABLE on this machine** (requirements-based, not tested); MoveIt 2 is
 **not installed** and its planner adapter is an unexercised guard.
+
+## Scope of Task 6
+
+- `src/sim2real/mapping/`: validated config, TSDF fusion, robot self-filter,
+  transform providers, mapper orchestration, and the obstacle query.
+- `src/sim2real/ros_utils/pointcloud.py`: pure-NumPy PointCloud2 and Marker
+  field builders.
+- `configs/mapping/default.yaml`: workspace bounds mirroring
+  `configs/sim/scene.yaml`, voxel/truncation sizes, query resolution, memory
+  budget, self-filter radii, and reset policy.
+- `ros2_ws/src/sim2real_perception/workspace_mapper_node.py`,
+  `launch/mapper.launch.py`, and PointCloud2/Marker displays in the RViz config.
+- Deterministic analytic RGB-D fixtures under `tests/fixtures/` (no simulator,
+  camera, GUI, or GPU).
+- `open3d-cpu==0.20.0` in the core dev group and in `.venv-ros` (`--no-deps`,
+  plus plotly/dash for Open3D's eager visualization import).
+
 
 ## Scope of Task 5
 
@@ -164,7 +185,7 @@ ROS adapter rules:
 | --- | --- | --- | --- |
 | `sim2real_msgs` | `ament_cmake` | Messages/services for episodes, metrics, safety, reset, rollout generation | interfaces defined; builds if ROS deps present |
 | `sim2real_sim` | `ament_python` | Simulator backend adapter, `/joint_states` owner, reset service | **implemented** (fake, MuJoCo, guarded Isaac) |
-| `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | skeleton only |
+| `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | **implemented** (workspace mapper) |
 | `sim2real_vla` | `ament_python` | Task instruction intake, policy inference, action chunk publication | skeleton only |
 | `sim2real_control` | `ament_python` | Safety watchdog, trajectory dispatch, e-stop handling | skeleton only |
 
@@ -176,7 +197,7 @@ scripted expert (Task 4)
 filter (Task 5)
     -> /sim2real/filtered_episode (RolloutEpisode)
     -> /sim2real/filter_metrics   (FilterMetrics)
-export (Task 6)
+export (Task 7)
     -> curated_v1 on disk under data/  (ignored by git)
 training (Task 8)
     -> LoRA adapter on disk            (ignored by git)
@@ -185,7 +206,7 @@ inference (Tasks 9-10)
 safety/control (Task 11)
     -> /joint_trajectory_controller/joint_trajectory
     -> /safety/status
-perception (Task 7)
+perception (Task 6)
     -> /workspace/pointcloud, /workspace/tsdf_mesh
 ```
 
@@ -217,8 +238,8 @@ left as `TBD` where no decision has been made.
 | `/sim2real/staging_episode` | `sim2real_msgs/msg/RolloutEpisode` | expert collector / sim adapter | filter, recorder | per completed episode | reliable, transient-local, depth 10 | Unfiltered episodes are not training data. No images are embedded; late joiners receive recent completed episodes. |
 | `/sim2real/filtered_episode` | `sim2real_msgs/msg/RolloutEpisode` | filter | dataset exporter, recorder | per accepted episode | reliable, keep-last 50 | Only accepted episodes may be exported. |
 | `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | per episode (accepted, rejected, or invalid) | reliable, keep-last 50 | Metrics explain a decision; they do not override safety stops. |
-| `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | TBD (task 7) | TBD (task 7) | Frame must be documented in the message header; no implicit frame. |
-| `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | TBD (task 7) | TBD (task 7) | `TRIANGLE_LIST` marker; not a collision mesh. |
+| `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | Frame is `world`; no implicit frame. Consumers rebuild an `ObstacleQuery` from this cloud. |
+| `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | `TRIANGLE_LIST` marker; not a collision mesh. |
 | `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter | TBD (task 8) | TBD (task 8) | `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `(k+1)*dt`; `header.stamp` = newest observation stamp. |
 | `/joint_trajectory_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` | safety/control adapter | ros2_control trajectory controller | TBD (task 11) | TBD (task 11) | Only the safety adapter may publish here; raw VLA output must never reach the controller. |
 | `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | TBD (task 11) | TBD (task 11) | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. |
@@ -227,6 +248,7 @@ left as `TBD` where no decision has been made.
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
 | `/sim2real/finalize_dataset` | `std_srvs/srv/Trigger` | operator/UI | filter | on request | reliable | Writes the buffered accepted episodes as a new `curated_v1` minor version. Returns `success=false` when nothing is buffered or the write fails; an existing version is never overwritten. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` only (`FAILURE_TARGETED` returns `success=false` until Task 9). A batch runs on one worker thread and a concurrent call is rejected. |
+| `/workspace/reset_map` | `std_srvs/srv/Trigger` | operator/UI, orchestrator | perception | on request | reliable | Clears the TSDF and coverage. Required after `/sim2real/reset_env` when camera extrinsics did not jitter, because `/tf_static` did not change. |
 
 QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
 that parses this table. The filter's subscriber and both publishers use reliable
@@ -237,7 +259,10 @@ topics remain **reliable keep-last 5**: `ros2 topic echo
 serves best-effort subscribers, but reverting to best-effort would reintroduce
 the RViz Camera-display reliability mismatch observed in Task 2. The RViz Image
 and Camera displays are already configured Best Effort; that alone was not
-sufficient.
+sufficient. The mapper's publishers use reliable keep-last depth 1 (`MAP_QOS`),
+because each publication replaces the complete map rather than queueing a
+stream; its camera subscribers use reliable keep-last 5, and its `/tf_static`
+subscription uses reliable transient-local depth 1 (`MAP_STATIC_TF_QOS`).
 
 ## Frames and conventions
 
@@ -861,6 +886,156 @@ system-site-packages venv under the sourced ROS environment:
 - **Small threshold samples** (40-67 clean tuning episodes per backend); counts
   are reported with percentages.
 
+## RGB-D workspace mapping (Task 6)
+
+### Module layout
+
+```
+src/sim2real/mapping/
+  config.py          strict YAML schema; workspace bounds from scene.yaml
+  tsdf_fusion.py     TSDFMap: integrate / extract_point_cloud / extract_mesh / reset
+  self_filter.py     coarse link-sphere robot self-filter
+  transforms.py      TransformProvider protocol, StaticTransformProvider, change detection
+  obstacle_query.py  ObstacleQuery + MapStatus (3-D EDT)
+  mapper.py          WorkspaceMapper: TF lookups, counters, scene-change reset, status
+src/sim2real/ros_utils/pointcloud.py  PointCloud2 + Marker field builders
+configs/mapping/default.yaml
+```
+
+The core package stays ROS-free. The node converts messages to NumPy and calls
+the same functions the tests call.
+
+### Pipeline
+
+1. For each camera, `message_filters.ApproximateTimeSynchronizer` (queue 10,
+   slop `sync_slop_s`) matches color, depth, and `CameraInfo`. **No
+   cross-camera synchronization is required**: each frame is integrated with its
+   own TF lookup at its own image stamp.
+2. The camera pose is looked up as `world <- camera_optical_frame` at the image
+   stamp with a bounded tf2 timeout. A missing or extrapolated transform skips
+   the frame, increments `skipped_no_tf`, and logs at most every 5 s. It never
+   raises out of the callback.
+3. Depth is sanitized: `NaN`, `inf`, `<= 0`, and values outside
+   `[depth_min_m, depth_trunc_m]` become 0. Valid pixels are back-projected with
+   the message intrinsics and `T_world_camera`; pixels whose world point is
+   outside `workspace_bounds` are zeroed **before** integration.
+4. The clean frame is fused into one workspace-bounded TSDF volume. Both cameras
+   write to the same volume.
+5. At `publish_rate_hz` the surface is extracted, the robot self-filter is
+   applied, and `/workspace/pointcloud` (xyz+rgb, frame `world`) and
+   `/workspace/tsdf_mesh` (`TRIANGLE_LIST`, frame `world`) are published.
+6. `/workspace/reset_map` (std_srvs/Trigger) clears the volume and coverage.
+
+### Extrinsic convention
+
+Open3D's `integrate` takes the **extrinsic** matrix, which is camera-from-world:
+`extrinsic = inverse(T_world_camera)`. `TSDFMap.integrate` receives
+`T_world_camera` (camera pose in world) and computes the inverse explicitly.
+`test_two_view_consistency_catches_inverted_extrinsic` fails if the inverse is
+forgotten, and a translated-camera test pins the convention.
+
+### Open3D and NumPy decision (evidence)
+
+- `open3d-cpu==0.20.0` is the CPU-only wheel: **105 MB** (the CUDA wheel is
+  400.8 MB) and `manylinux_2_35` x86_64 for CPython 3.12. It declares
+  `numpy>=1.18.0`.
+- It imports and runs **headlessly with no display** under the sourced ROS
+  environment with system NumPy **1.26.4**; a synthetic frame integrated and
+  extracted a point cloud and mesh. Open3D's top-level import needs `plotly`
+  and `dash` (installed without NumPy).
+- The newest Open3D is **not** a NumPy 2-only package, so no ABI conflict was
+  found. `uv pip list` shows NumPy 2.5.4 in `.venv` and 1.26.4 in `.venv-ros`.
+- **Open3D 0.20.0's legacy `ScalableTSDFVolume` is broken for metric float32
+  depth.** Its activation step calls
+  `CreateFromDepthImage(image.depth_, ..., 1000.0, 1000.0, stride)` on a depth
+  image that `RGBDImage.create_from_color_and_depth` has already converted to
+  metres; the integrator then uses the true metric depth. Volume units are
+  activated at 1/1000 of the correct position, so the extracted cloud and mesh
+  are empty. This reproduces with Open3D's own `SampleRedwoodRGBDImages` and is
+  upstream issue <https://github.com/isl-org/Open3D/issues/7592> (open PR
+  #7594). Open3D 0.19.0 is unaffected, but its eager `open3d.ml` import needs a
+  large ML dependency set under Python 3.12.
+- **Workaround:** use `UniformTSDFVolume` over the bounded workspace. Its
+  metric-depth path is correct, and the workspace is small (a 0.6 m cube at
+  1 cm is 216k voxels). This is a documented deviation from the Task 6 request
+  to use `ScalableTSDFVolume`; it is not a claim that the scalable volume works.
+- `tsdf_fusion.py` contains no double-scaling and no per-point Python loop.
+  `cv_bridge` and `sensor_msgs_py.point_cloud2` are not used; PointCloud2 is
+  built from a structured NumPy array.
+
+### No free-space carving and ghosts
+
+The TSDF only updates voxels within `sdf_trunc_m` of a measured surface. It is
+a surface map, **not** an occupancy/free-space map. Consequences:
+
+- Empty space is not carved; the query does not know that a region was observed
+  empty.
+- A moved object leaves a ghost until the map is reset.
+- Unknown space is represented only through `MapStatus`. `valid=False` must be
+  treated as **unsafe** by Task 11; "no obstacle found" is never a safe result.
+- OctoMap is **not** part of Task 6 and remains deferred.
+
+### Scene-change reset policy
+
+`/sim2real/reset_env` moves objects and may jitter camera extrinsics. The mapper
+subscribes to `/tf_static` directly (not the tf2 static buffer, which keeps only
+the latest static transform per frame pair) and compares the camera static
+transforms with the previous observation. A change beyond
+`static_tf_translation_epsilon_m` (5 mm) or `static_tf_rotation_epsilon_rad`
+(0.01 rad) resets the volume, increments `resets_static_tf`, and logs. The first
+observation never resets. A change at or below the epsilon is ignored.
+
+A reset **without** camera jitter does not change `/tf_static`, so the Task 12
+orchestrator must call `/workspace/reset_map` after `/sim2real/reset_env` as
+well. At `max_integrations_before_reset` the volume is also retired to bound
+map age; the next frames refill it.
+
+### Consumers and unknown space
+
+The safety node is a separate process: it rebuilds an `ObstacleQuery` from
+`/workspace/pointcloud` (surface points after the robot self-filter) rather than
+sharing memory with the mapper. `ObstacleQuery.distance` is a vectorized 3-D
+Euclidean distance transform lookup, clamped by `max_query_distance_m`; points
+outside the grid return the clamp and are flagged by `outside_workspace`.
+`is_occupied` reports occupied cells. `MapStatus` carries `valid`, `age_s`,
+`num_integrations`, `coverage_ratio`, and reasons (`NO_DATA`, `STALE`,
+`LOW_COVERAGE`, `TF_FAILURES`). `NO_DATA`, `STALE`, and `LOW_COVERAGE` are
+blocking: the map is invalid. `TF_FAILURES` is a warning; a map can still be
+valid if coverage and age are acceptable, but the safety layer should surface it.
+The mapper's default `map_stale_after_s` is 5 s, `min_coverage_ratio` is 0.25,
+and the memory budget is 256 MB (the default estimate is a few MB).
+
+### Robot self-filter
+
+One sphere per link frame (`panda_link0` ... `panda_hand`), positions from TF.
+Points inside a sphere are removed before publication and before the safety
+query. This is a coarse approximation: a grasped object near the hand is removed
+with the hand, geometry between link frames is not covered, and a large radius
+erases nearby scene points. It is not a collision model.
+
+### Known limitations (Task 6)
+
+- The map is a surface map; there is no free-space carving, no raycasting, and
+  no OctoMap.
+- Moved objects leave ghosts until a reset; a scene change without camera
+  jitter needs an explicit `/workspace/reset_map`.
+- The self-filter is a coarse sphere approximation.
+- Open3D 0.20.0's `ScalableTSDFVolume` is not used because it is broken
+  upstream (#7592); the bounded `UniformTSDFVolume` is the working path.
+- **RViz and MuJoCo must not initialize GL in parallel on WSLg, and the full
+  RViz config's Camera/Image displays are unstable under MuJoCo.** The mapper
+  uses `rviz/mapper.rviz` (Grid, TF, PointCloud2, Marker only) and starts RViz
+  8 s after the simulator; that survived a 165 s MuJoCo run with no X11 error.
+  The full `sim2real.rviz` config (four Camera/Image displays) crashed WSLg at
+  0.7-150 s under MuJoCo. For the two-terminal workflow, start the sim with
+  `use_rviz:=false` and run RViz with the lean mapper config. The fake backend
+  is unaffected.
+- `open3d-cpu` adds about 105 MB plus plotly/dash to the environments; CI
+  installs it through the core dev group.
+- Coverage is an xy-column proxy, not a metric of surface completeness.
+
+
+
 ## Deferred: joint-command subscription
 
 No joint-command topic is subscribed in Task 2. The node holds its current
@@ -1053,6 +1228,11 @@ Apache-2.0 LICENSE before copying.
 | 40 | 2026-11-01 | The collector runs the backend in-process, does not publish `/joint_states`, and uses a worker thread per batch | Deterministic control-rate execution without ROS latency; `sim_node` stays the only `/joint_states` owner; the executor keeps spinning |
 | 41 | 2026-11-01 | `/sim2real/staging_episode` is reliable, transient-local, depth 10 | A filter/recorder starting just after a batch still receives recent completed episodes; no images are embedded |
 | 42 | 2026-11-01 | MuJoCo physics randomization saves/restores `qpos`/`qvel` around `mj_setConst` | `mj_setConst` resets `MjData` to `qpos0`; without the fix the physics group homed the arm and discarded sampled object poses |
+| 43 | 2026-11-01 | Pin `open3d-cpu==0.20.0` and use a workspace-bounded `UniformTSDFVolume` | 0.20.0 imports headlessly under system NumPy 1.26.4, but its legacy `ScalableTSDFVolume` produces empty geometry from metric float32 depth (upstream #7592). The workspace is small and bounded, so a uniform volume is adequate and correct; this is not a claim that the scalable volume works |
+| 44 | 2026-11-01 | Mapping publishers use reliable keep-last 1; camera subscribers use reliable keep-last 5 | The latest map replaces the previous complete map; camera subscribers must stay compatible with the sim's reliable keep-last 5 publishers |
+| 45 | 2026-11-01 | Scene-change reset compares camera `/tf_static` transforms directly, with 5 mm / 0.01 rad epsilons | tf2 keeps only the latest static transform per frame pair; a jittered camera must not keep ghosts. A reset without jitter needs an explicit `/workspace/reset_map` |
+| 46 | 2026-11-01 | `ObstacleQuery` is a 3-D EDT over surface points; `MapStatus` carries validity, not free space | There is no carving; unknown space is expressed as `NO_DATA`/`STALE`/`LOW_COVERAGE`, and an invalid status is unsafe for Task 11 |
+| 47 | 2026-11-01 | The ROS-free core run is the official baseline (`env -u PYTHONPATH -u AMENT_PREFIX_PATH`) | A module-level ROS name once broke CI collection while local runs passed because system `rclpy` was visible |
 
 ## Interface changelog
 
@@ -1060,6 +1240,7 @@ Apache-2.0 LICENSE before copying.
 | --- | --- | --- | --- |
 | v0 | 2026-10-30 | Initial six interfaces: `TrajectoryStep`, `RolloutEpisode`, `FilterMetrics`, `SafetyStatus`, `ResetEnv`, `GenerateRollouts` | Task 1 proposal accepted without field/type refinements |
 | v1 | 2026-11-01 | `TrajectoryStep` adds measured `gripper_position` and `unintended_collision`; new `/sim2real/finalize_dataset` `std_srvs/Trigger` service | Task 5 filtering needs measured gripper state and collision flags; the finalize trigger writes curated output |
+| v2 | 2026-11-01 | New `/workspace/reset_map` `std_srvs/Trigger` service; `/workspace/pointcloud` and `/workspace/tsdf_mesh` now have fixed reliable keep-last 1 QoS and are produced by `sim2real_perception` | Task 6 mapping: consumers need an explicit reset after a scene change without camera jitter, and the latest complete map replaces the previous one |
 
 Wire types in `ros2_ws/src/sim2real_msgs` are the source of truth for ROS.
 `src/sim2real/contracts.py` mirrors names and enum values for the pure-Python

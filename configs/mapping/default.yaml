@@ -1,2 +1,73 @@
-# RGB-D / TSDF mapping settings. Filled by Task 7.
+# RGB-D workspace mapping / TSDF fusion.  Units are metres, seconds, and hertz.
+#
+# Workspace bounds mirror configs/sim/scene.yaml.  Points outside them are
+# discarded BEFORE integration, so the mapper cannot silently grow outside the
+# tabletop scene.  The volume is expanded by sdf_trunc on each side so a
+# surface exactly on the workspace boundary (the table top at z=0.42) can still
+# produce a zero crossing.
 schema_version: 1
+
+mapping:
+  voxel_size_m: 0.01
+  # Must be >= 2 * voxel_size_m; 4 cm gives a smooth tabletop surface.
+  sdf_trunc_m: 0.04
+  # Overhead camera sits at z=1.10, the table at z=0.42 (~0.68 m); the wrist
+  # camera is closer.  1.5 m covers the scene with margin.
+  depth_trunc_m: 1.5
+  depth_min_m: 0.05
+
+  # Mirrors configs/sim/scene.yaml: workspace.min / workspace.max.
+  workspace_bounds:
+    min: [0.25, -0.30, 0.42]
+    max: [0.65, 0.30, 0.75]
+
+  # Obstacle distance query grid (3-D EDT at this resolution).
+  query_resolution_m: 0.02
+  max_query_distance_m: 0.50
+
+  # The map changes slowly; 2 Hz is plenty for RViz and safety consumers.
+  publish_rate_hz: 2.0
+  max_triangles: 200000
+  # Bounded map age: at the limit the volume is reset and refills.  Memory is
+  # already fixed by the workspace cube; this also prevents unbounded drift.
+  max_integrations_before_reset: 500
+  max_memory_mb: 256.0
+
+  map_stale_after_s: 5.0
+  min_coverage_ratio: 0.25
+
+  # ApproximateTimeSynchronizer slop for color/depth/camera_info.
+  sync_slop_s: 0.05
+  tf_timeout_s: 0.10
+
+  # A jittered camera extrinsic changes /tf_static; reset the old TSDF so it
+  # cannot keep ghosts of the previous scene.  A reset without camera jitter
+  # does NOT change /tf_static, so callers must also call /workspace/reset_map.
+  reset_on_static_tf_change: true
+  static_tf_translation_epsilon_m: 0.005
+  static_tf_rotation_epsilon_rad: 0.01
+
+  # Coarse robot self-filter: one sphere per link frame, positions from TF.
+  # Known failure modes: a grasped object near the hand is removed with the
+  # hand, and geometry between link frames is not covered.
+  self_filter:
+    link_frames:
+      - panda_link0
+      - panda_link1
+      - panda_link2
+      - panda_link3
+      - panda_link4
+      - panda_link5
+      - panda_link6
+      - panda_link7
+      - panda_hand
+    radii_m:
+      panda_link0: 0.08
+      panda_link1: 0.05
+      panda_link2: 0.05
+      panda_link3: 0.05
+      panda_link4: 0.05
+      panda_link5: 0.05
+      panda_link6: 0.05
+      panda_link7: 0.05
+      panda_hand: 0.06

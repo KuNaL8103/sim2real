@@ -51,6 +51,16 @@ uv pip install --python .venv-ros/bin/python --no-deps \
   "scipy==1.16.3" \
   "pyarrow==21.0.0"
 
+# Open3D CPU wheel for Task 6 mapping. --no-deps keeps system NumPy 1.26.4
+# visible. Open3D 0.20.0 imports open3d.visualization at the top level, which
+# needs plotly and dash; install those (and their pure-Python deps) normally,
+# but do NOT let uv install a NumPy. 0.20.0 is pinned for both environments:
+# it imports under NumPy 1.26.4 with no display. Its legacy
+# ScalableTSDFVolume is broken for metric float32 depth (upstream #7592), so
+# the mapper uses UniformTSDFVolume over the bounded workspace.
+uv pip install --python .venv-ros/bin/python --no-deps "open3d-cpu==0.20.0"
+uv pip install --python .venv-ros/bin/python "plotly==7.1.0" "dash==4.5.0"
+
 # MuJoCo and its rendering dependencies, without NumPy: system NumPy 1.26.4
 # must remain the visible version. These versions are the approved Task 2 set.
 uv pip install --python .venv-ros/bin/python --no-deps \
@@ -67,6 +77,7 @@ uv pip install --python .venv-ros/bin/python --no-deps \
 .venv-ros/bin/python -c "import rclpy; print('rclpy OK:', rclpy.__file__)"
 .venv-ros/bin/python -c "import mujoco, numpy; print('mujoco', mujoco.__version__, 'numpy', numpy.__version__, 'Renderer', hasattr(mujoco, 'Renderer'))"
 .venv-ros/bin/python -c "import scipy, pyarrow; print('scipy', scipy.__version__, 'pyarrow', pyarrow.__version__, 'numpy ABI ok')"
+.venv-ros/bin/python -c "import open3d, numpy; print('open3d', open3d.__version__, 'numpy', numpy.__version__, 'headless import ok')"
 
 cat <<'EOF'
 

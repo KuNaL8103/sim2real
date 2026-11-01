@@ -17,7 +17,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -55,23 +55,31 @@ def generate_launch_description() -> LaunchDescription:
                     }
                 ],
             ),
-            Node(
-                package="rviz2",
-                executable="rviz2",
-                name="rviz2",
-                output="screen",
-                arguments=["-d", default_rviz],
-                condition=IfCondition(
-                    PythonExpression(
-                        [
-                            "'",
-                            use_rviz,
-                            "' == 'true' and '",
-                            headless,
-                            "' != 'true'",
-                        ]
+            # On WSLg, creating RViz's GLX context in parallel with MuJoCo's
+            # EGL context can drop the X11 connection. Start RViz after the
+            # simulator has initialized. The fake backend is unaffected.
+            TimerAction(
+                period=8.0,
+                actions=[
+                    Node(
+                        package="rviz2",
+                        executable="rviz2",
+                        name="rviz2",
+                        output="screen",
+                        arguments=["-d", default_rviz],
+                        condition=IfCondition(
+                            PythonExpression(
+                                [
+                                    "'",
+                                    use_rviz,
+                                    "' == 'true' and '",
+                                    headless,
+                                    "' != 'true'",
+                                ]
+                            )
+                        ),
                     )
-                ),
+                ],
             ),
         ]
     )

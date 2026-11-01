@@ -45,6 +45,7 @@ This is a factual record, not a claim that the environment is fully validated.
 | WSL GPU bridge | `/dev/dxg` present; `/usr/lib/wsl/lib` includes `libcuda.so.1`, `libd3d12.so`, `libnvidia-ml.so.1` |
 | Display / graphics | `DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`, X display reachable; `glxinfo -B` reports Mesa llvmpipe (LLVM 20.1.2), **"Accelerated: no"**, OpenGL 4.5. Default `MUJOCO_GL=egl` selects llvmpipe. Opt-in `GALLIUM_DRIVER=d3d12` selected the AMD iGPU, and adding `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` selected `D3D12 (NVIDIA GeForce RTX 4050 Laptop GPU)`. |
 | MuJoCo | 3.17.0 in `.venv` (sim group, NumPy 2.5.4) and `.venv-ros` (`--no-deps`, system NumPy 1.26.4, plus glfw/PyOpenGL/absl-py/etils). MuJoCo Menagerie Panda pinned at `71f066ad0be9cd271f7ed58c030243ef157af9f4` (Apache-2.0). |
+| Open3D | 0.20.0 CPU wheel (`open3d-cpu`, 105 MB; the CUDA wheel is 400.8 MB) in `.venv` and in `.venv-ros` with `--no-deps`. Imports and integrates a synthetic frame headlessly under system NumPy 1.26.4; `plotly 7.1.0` and `dash 4.5.0` are needed by Open3D's eager visualization import and do not pull NumPy. The legacy `ScalableTSDFVolume` is broken upstream (#7592); mapping uses a bounded `UniformTSDFVolume`. |
 | Docker | Windows Docker CLI path is visible, but WSL integration is **disabled** (`docker` unusable here) |
 | GitHub CLI | `gh` not installed (not needed for push via git credentials) |
 | VS Code WSL check | **VERIFIED 2026-10-30** from user-supplied integrated-terminal output: `WSL_DISTRO_NAME=Ubuntu-24.04`, kernel `6.18.54.1-microsoft-standard-WSL2`, `pwd=/home/kunal/Python/sim2real`; `ms-vscode-remote.remote-wsl` is installed. Status-bar text was not included in that output. |
@@ -110,11 +111,14 @@ Therefore:
 ## Canonical commands
 
 ```bash
-# Core / CI
-uv sync
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest -ra
+# Core / CI: the ROS-free run is the official core baseline.
+# Unsetting PYTHONPATH/AMENT_PREFIX_PATH reproduces CI. A module-level ROS name
+# once broke CI collection while local runs passed because system rclpy was
+# visible.
+uv sync --group sim
+env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run ruff check .
+env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run ruff format --check .
+env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra
 
 # Simulator dependencies and pinned assets (approved in Task 2)
 uv sync --group sim
@@ -228,8 +232,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 3 — seeded domain randomization, profiles, capability-gated applier, reset integration
 - [x] Task 4 — scripted expert, FK/IK/planner, perturbations, staging, rollout collector
 - [x] Task 5 — trajectory filtering, metrics, `curated_v1`
-- [ ] Task 6 — LeRobot export and Open-X dataset mixing
-- [ ] Task 7 — RGB-D mapping, point cloud, TSDF
+- [x] Task 6 — RGB-D workspace mapping, point cloud, TSDF, obstacle query
+- [ ] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler
 - [ ] Task 8 — SmolVLA + LoRA fine-tuning
 - [ ] Task 9 — closed-loop evaluation
 - [ ] Task 10 — ROS 2 inference bridge
@@ -238,17 +242,76 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=257 failed=0 skipped=6 errors=0 | date=2026-11-01 | base_commit=46e2a01
-- Last verified ROS test run: passed=268 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=46e2a01
-- Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for this push pending user confirmation in the Actions tab; MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
+- Last verified test run: passed=306 failed=0 skipped=7 errors=0 | date=2026-11-01 | base_commit=3914737
+- Last verified ROS test run: passed=318 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=3914737
+- Task 6 status: complete with pending checks: RViz mapping check PENDING (user); MuJoCo runtime measured but no rate/quality threshold asserted; CI for this push pending user confirmation in the Actions tab; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
+- Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for the Task 5 push and the follow-up import-guard fix is **user-confirmed green, 2026-11-01** (no run id recorded); MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
 - Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; **CI user-confirmed green for the Task 4 push, 2026-11-01** (no run id recorded); opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
 - Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), Isaac randomization unverified. A Task 3 MuJoCo bug was found and fixed in Task 4: `mj_setConst` reset `MjData` to `qpos0`, so the physics group homed the arm and discarded sampled object poses.
 - Task 2 status: complete with Task 2b hardening; pending checks: Isaac Sim UNAVAILABLE (not installed, not run), CI result after this push (user confirms Actions tab)
 - Task 1 status: complete
 
-The first line records the **core** suite (`.venv`, no ROS dependency). The
-second line records the ROS-enabled suite separately. Task 5 tests ran on the
-working tree based on `46e2a01`.
+The first line records the **core** suite (`.venv`, ROS-free,
+`env -u PYTHONPATH -u AMENT_PREFIX_PATH`). The second line records the
+ROS-enabled suite separately. Task 6 tests ran on the working tree based on
+`3914737`.
+
+Run breakdown (2026-11-01, Task 6):
+
+- Core-only (ROS-free): **306 passed, 0 failed, 7 skipped, 0 errors** (was
+  257/6 before Task 6). The extra skip is the new ros-marked
+  `test_workspace_mapper` module.
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **318 passed, 0 failed, 0 skipped, 0 errors** (was 268).
+- `colcon test` / `colcon test-result --verbose`: **7 tests, 0 errors, 0
+  failures, 0 skipped**.
+- `ruff check` and `ruff format --check`: clean.
+- Open3D: `open3d-cpu==0.20.0`, a **105 MB** CPU-only wheel (the CUDA wheel is
+  400.8 MB). It imports and integrates a synthetic frame **headlessly** under
+  the sourced ROS environment with system NumPy **1.26.4**; `.venv` uses NumPy
+  **2.5.4**. `plotly 7.1.0` and `dash 4.5.0` satisfy Open3D's eager
+  `open3d.visualization` import and do not pull NumPy.
+- **Open3D 0.20.0 `ScalableTSDFVolume` is broken for metric float32 depth**
+  (upstream issue #7592, open PR #7594): the activation step re-scales an
+  already-metric depth image by 1000, so volume units are opened at 1/1000 of
+  the true position while the integrator uses true metric depth; the extracted
+  cloud and mesh are empty. Reproduced with the official
+  `SampleRedwoodRGBDImages` and with a synthetic frame. Open3D 0.19.0 works but
+  its eager `open3d.ml` import needs a large ML dependency set under Python
+  3.12. The mapper therefore uses a workspace-bounded `UniformTSDFVolume`; this
+  is a documented deviation, not a claim that the scalable volume works.
+- New core tests: **49** (mapping config/fusion/query/filter/transforms/
+  pointcloud plus collection-safety and setup-script checks). Coverage includes
+  back-projection RMS **< 1e-3 m**, single-view table z within one voxel,
+  two-view consistency, invalid depth, workspace crop, analytic box distances,
+  self-filter, TF failure, `MapStatus`, PointCloud2 round-trip, Marker cap, and
+  scene-change reset.
+- Fake runtime: `/workspace/pointcloud` **2.000 Hz** (window 20) and
+  **1.701 Hz** (window 9) on the reset run; `frame_id=world`,
+  `point_step=16`; cloud width **56** before reset and **2623 after**
+  `/sim2real/reset_env` (seed 7, `default`); mesh Marker type 8
+  (`TRIANGLE_LIST`), frame `world`; QoS RELIABLE/VOLATILE;
+  `/workspace/reset_map` returned success. The mapper logged
+  `camera static transform changed beyond epsilon; map reset` with
+  `resets_static_tf=1`; no `TF_OLD_DATA` after the buffer clear.
+- MuJoCo headless runtime: overhead color **4.365 Hz** (window 35) this session
+  (the Task 2b baseline was 2.67-3.86 Hz; rates are measured, not asserted);
+  pointcloud width **211**; integration mean **10.7-10.9 ms/frame** over
+  120-180 frames; mapper `VmRSS`/`VmHWM` **202,636 KiB**; sim node
+  `VmRSS`/`VmHWM` **646,564 KiB**. No rendering benchmark ran concurrently with
+  colcon.
+- The mapper clears its tf2 buffer on a map reset and re-adds the cached static
+  transforms, because the sim clock restarts at 0 and tf2 otherwise rejects the
+  new dynamic TF as `TF_OLD_DATA`.
+- **RViz + MuJoCo on WSLg:** two separate issues. (1) Starting RViz in parallel
+  with MuJoCo's EGL context can drop the X11 connection; both launch files now
+  delay RViz by 8 s. (2) The full RViz config's four Camera/Image displays add
+  GL load and crashed WSLg at 0.7-150 s under MuJoCo. The mapper now uses
+  `sim2real_perception/rviz/mapper.rviz` (Grid, TF, PointCloud2, Marker only),
+  which survived a **165 s** MuJoCo run with no X11 error and a 217-point cloud.
+  The user's fake-backend screenshot confirms the colored cloud/TF rendering.
+  For the two-terminal workflow, run the sim with `use_rviz:=false` and start
+  RViz with the mapper config.
 
 Run breakdown (2026-11-01, Task 5):
 
@@ -380,9 +443,32 @@ Run breakdown (2026-10-31, Task 2b):
 
 ## Known limitations
 
-- **Task 5 filtering and `curated_v1` exist; training, LeRobot export, mapping,
-  inference, and safety do not.** Staging remains raw and unfiltered. Curated
-  output is a filtered subset, not yet validated against the LeRobot loader.
+- **Task 6 mapping is a surface map, not a free-space map.** The TSDF only
+  updates voxels within `sdf_trunc_m` of a measured surface; there is no
+  carving. A moved object leaves a ghost until the map is reset. "Unknown" is
+  expressed only through `MapStatus` (`NO_DATA`/`STALE`/`LOW_COVERAGE`); an
+  invalid status is unsafe for Task 11.
+- **The robot self-filter is a coarse sphere per link.** A grasped object near
+  `panda_hand` is removed with the hand, and geometry between link frames is not
+  covered.
+- **Open3D 0.20.0's `ScalableTSDFVolume` is broken upstream (#7592).** The
+  mapper uses a workspace-bounded `UniformTSDFVolume`. Open3D 0.19.0 works but
+  its eager `open3d.ml` import needs a large ML dependency set under Python
+  3.12. OctoMap is deferred.
+- **`open3d-cpu` adds about 105 MB** (plus plotly/dash) to `.venv` and
+  `.venv-ros`; it is installed `--no-deps` in `.venv-ros` so system NumPy
+  1.26.4 stays visible.
+- **Follow-up session after Task 6:** fix the collision flag
+  (`_unintended_collision` returns true for the intended grasp), examine the
+  MuJoCo expert success census, and design replay-rendering of images. Expert,
+  filter, and limit code was **not** changed in Task 6.
+- **`configs/sim/panda.yaml` velocity limits are labelled "Franka datasheet"
+  but are UNVERIFIED.** They must be verified against official Franka
+  documentation before the Task 11 safety work.
+- **Task 5 filtering and `curated_v1` exist; training, LeRobot export,
+  inference, and safety do not.** Mapping exists (Task 6). Staging remains raw
+  and unfiltered. Curated output is a filtered subset, not yet validated against
+  the LeRobot loader.
 - **`curated_v1` has no images.** Staging captures none, so `info.json` records
   `images: none` and the dataset card says the data cannot train a VLA until
   RGB-D frames are rendered (Task 7 prerequisite).
@@ -519,8 +605,20 @@ Run breakdown (2026-10-31, Task 2b):
 - [ ] Optional Task 5 artifact inspection: open one curated Parquet file and
   `data/rejected/*/rejections.jsonl`, plus the keyframe PNGs under
   `log/task5_keyframes/`. **PENDING**; does not block the commit.
-- [ ] Confirm the GitHub Actions tab for the Task 5 push (user confirms; no run
+- [x] Confirm the GitHub Actions tab for the Task 5 push and the follow-up
+  import-guard fix — **user-confirmed green, 2026-11-01** (no run id invented).
+- [ ] RViz mapping check (Task 6): fixed frame `world`, colored point cloud
+  showing the table and three cubes, mesh Marker over them, wrist views filling
+  in more detail, and the robot links absent from the obstacle query.
+  **Fake-backend cloud visually confirmed by the user's screenshot; MuJoCo
+  RViz uses the lean `mapper.rviz` and survived 165 s with no X11 error; final
+  user visual confirmation of the MuJoCo cube/mesh layout is still PENDING.**
+- [ ] Confirm the GitHub Actions tab for the Task 6 push (user confirms; no run
   id invented).
+- [ ] Verify `configs/sim/panda.yaml` velocity limits against official Franka
+  documentation before the Task 11 safety work.
+- [ ] Short follow-up session: fix the collision flag, examine the expert
+  success census, and design replay-rendering of images.
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

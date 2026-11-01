@@ -35,3 +35,14 @@ def test_setup_script_installs_numpy126_compatible_scipy_and_pyarrow():
     assert '"pyarrow==21.0.0"' in text
     assert "--no-deps" in text
     assert "import scipy, pyarrow" in text
+
+
+def test_setup_script_installs_open3d_cpu_without_numpy():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert '"open3d-cpu==0.20.0"' in text
+    assert '"plotly==7.1.0"' in text
+    assert '"dash==4.5.0"' in text
+    assert "import open3d, numpy" in text
+    # The open3d install must be --no-deps so it cannot shadow system NumPy.
+    open3d_line = next(line for line in text.splitlines() if "open3d-cpu==" in line)
+    assert "--no-deps" in open3d_line

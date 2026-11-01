@@ -23,3 +23,8 @@ TF_STATIC_QOS = QosSpec(reliability="reliable", durability="transient_local", de
 CAMERA_QOS = QosSpec(reliability="reliable", durability="volatile", depth=5)
 # Filter topics: a burst of completed episodes must not be dropped.
 FILTER_QOS = QosSpec(reliability="reliable", durability="volatile", depth=50)
+# Mapping publishers: the latest map replaces the previous one; do not queue.
+MAP_QOS = QosSpec(reliability="reliable", durability="volatile", depth=1)
+# The mapper subscribes to the sim's reliable keep-last 5 camera topics.
+MAP_CAMERA_SUB_QOS = QosSpec(reliability="reliable", durability="volatile", depth=5)
+MAP_STATIC_TF_QOS = QosSpec(reliability="reliable", durability="transient_local", depth=1)

@@ -29,6 +29,11 @@ dev = [
   "ruff>=0.9",
   "scipy==1.16.3",
   "pyarrow==21.0.0",
+  # CPU-only Open3D wheel (105 MB) for TSDF fusion. The CUDA wheel is 400 MB
+  # and unnecessary; this machine's GPU is not used for mapping. Pinned because
+  # 0.20.0 is the newest wheel that imports under system NumPy 1.26.4 in
+  # .venv-ros. See docs/ARCHITECTURE.md for the ScalableTSDFVolume regression.
+  "open3d-cpu==0.20.0",
 ]
 # Declared but intentionally empty. Populated only when the matching
 # environment is approved; these are NOT installed by `uv sync`.
@@ -64,6 +69,7 @@ markers = [
   "sim: requires a simulator backend",
   "render: requires rendering support (possibly GPU)",
   "gpu: requires an NVIDIA GPU",
+  "o3d: requires the open3d package (CPU wheel); skips with a reason otherwise",
   "slow: long-running test",
   "integration: crosses package or process boundaries",
 ]
