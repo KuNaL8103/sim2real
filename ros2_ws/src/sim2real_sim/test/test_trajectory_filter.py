@@ -32,18 +32,21 @@ try:
     from sim2real.filtering.synthetic import make_episode
     from sim2real_msgs.msg import FilterMetrics, RolloutEpisode, TrajectoryStep
 
+    # Build the QoS profile only when the ROS imports succeeded. Defining it at
+    # module scope unconditionally would raise NameError during collection in
+    # the core CI job, where rclpy is intentionally absent.
+    QOS = QoSProfile(
+        history=HistoryPolicy.KEEP_LAST,
+        depth=50,
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.VOLATILE,
+    )
     IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - depends on the environment
     IMPORT_ERROR = f"ROS prerequisites missing: {exc}"
+    QOS = None
 
 pytestmark = pytest.mark.ros
-
-QOS = QoSProfile(
-    history=HistoryPolicy.KEEP_LAST,
-    depth=50,
-    reliability=ReliabilityPolicy.RELIABLE,
-    durability=DurabilityPolicy.VOLATILE,
-)
 
 
 def _stamp(stamp_ns: int) -> Time:
