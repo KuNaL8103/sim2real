@@ -23,10 +23,10 @@ try:
     from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
     from rclpy.node import Node
     from sensor_msgs.msg import JointState as JointStateMsg
-    from sim2real_sim.sim_node import SimNode
 
     from sim2real import contracts
     from sim2real.sim import create_backend
+    from sim2real_sim.sim_node import SimNode
 
     IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover

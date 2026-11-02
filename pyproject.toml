@@ -54,6 +54,20 @@ exclude = [".venv", ".venv-ros", ".venv-ml", "build", "install", "log", "data"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+# Make the first-party classification identical in every environment. CI and
+# local runs previously disagreed about `tests`, which changed the required
+# import order.
+known-first-party = [
+  "sim2real",
+  "sim2real_msgs",
+  "sim2real_sim",
+  "sim2real_perception",
+  "sim2real_vla",
+  "sim2real_control",
+  "tests",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # sim_node bootstraps src/ and .venv-ros before importing sim2real/mujoco.
 "ros2_ws/src/sim2real_sim/sim2real_sim/sim_node.py" = ["E402"]

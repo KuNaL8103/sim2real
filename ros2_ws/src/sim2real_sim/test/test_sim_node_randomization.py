@@ -23,13 +23,13 @@ try:
     from geometry_msgs.msg import Pose
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-    from sim2real_sim.sim_node import SimNode
     from tf2_msgs.msg import TFMessage
 
     from sim2real import contracts
     from sim2real.metadata import validate_metadata_json
     from sim2real.sim import create_backend
     from sim2real_msgs.srv import ResetEnv
+    from sim2real_sim.sim_node import SimNode
 
     IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - depends on the environment

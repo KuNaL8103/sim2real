@@ -23,7 +23,6 @@ try:
     import rclpy
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-    from sim2real_sim.expert_collector_node import ExpertCollectorNode
 
     from sim2real import contracts
     from sim2real.expert.staging import StagingBuffer
@@ -31,6 +30,7 @@ try:
     from sim2real.sim import create_backend
     from sim2real_msgs.msg import RolloutEpisode
     from sim2real_msgs.srv import GenerateRollouts
+    from sim2real_sim.expert_collector_node import ExpertCollectorNode
 
     IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - depends on the environment

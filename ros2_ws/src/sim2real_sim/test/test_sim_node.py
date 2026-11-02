@@ -30,10 +30,10 @@ try:
     )
     from sensor_msgs.msg import CameraInfo, Image
     from sensor_msgs.msg import JointState as JointStateMsg
-    from sim2real_sim.sim_node import SimNode
     from tf2_msgs.msg import TFMessage
 
     from sim2real import contracts
+    from sim2real_sim.sim_node import SimNode
 
     IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - depends on the environment

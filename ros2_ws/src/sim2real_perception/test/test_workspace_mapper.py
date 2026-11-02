@@ -33,11 +33,12 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+    from std_srvs.srv import Trigger
+    from tf2_ros import StaticTransformBroadcaster
 
     # These import sim2real.mapping (and scipy). Keep them guarded so the ROS
     # job can import this module without a system scipy and skip the test.
     from sim2real_perception.workspace_mapper_node import WorkspaceMapperNode
-    from std_srvs.srv import Trigger
     from tests.fixtures.mapping import write_config
     from tests.fixtures.synthetic_rgbd import (
         SyntheticIntrinsics,
@@ -45,7 +46,6 @@ try:
         overhead_camera,
         render,
     )
-    from tf2_ros import StaticTransformBroadcaster
 
     if importlib.util.find_spec("open3d") is None:
         raise ImportError("open3d is not available")

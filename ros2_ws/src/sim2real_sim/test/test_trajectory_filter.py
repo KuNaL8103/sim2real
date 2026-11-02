@@ -24,13 +24,13 @@ try:
     from geometry_msgs.msg import Pose
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-    from sim2real_sim.trajectory_filter_node import TrajectoryFilterNode
     from std_srvs.srv import Trigger
 
     from sim2real import contracts
     from sim2real.expert.conversion import episode_to_rollout_fields
     from sim2real.filtering.synthetic import make_episode
     from sim2real_msgs.msg import FilterMetrics, RolloutEpisode, TrajectoryStep
+    from sim2real_sim.trajectory_filter_node import TrajectoryFilterNode
 
     # Build the QoS profile only when the ROS imports succeeded. Defining it at
     # module scope unconditionally would raise NameError during collection in
