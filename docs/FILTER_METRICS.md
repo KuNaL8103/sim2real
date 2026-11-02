@@ -205,15 +205,51 @@ were accepted. Hold-out reason counts: fake `JERK_TOO_HIGH=6`,
 `NOT_SUCCESS=3`, `SPARC_TOO_LOW=1`; MuJoCo `NOT_SUCCESS=35`,
 `JERK_TOO_HIGH=8`, `PATH_TOO_LONG=1`, `SPARC_TOO_LOW=1`.
 
+### Task 6b re-derivation (2026-11-02) — supersedes the MuJoCo Task 5 numbers
+
+The collision classifier and the expert release guard changed the MuJoCo data.
+The **MuJoCo** rows above (n=40 tuning, hold-out seeds 2000-2059) are
+**superseded**. The fake thresholds in `configs/filtering/default.yaml` were
+not re-derived (the fake collision count semantics did not change; the Task 6b
+scope rule allows only the MuJoCo file to change).
+
+New tuning set: 100 MuJoCo episodes, seeds **1000-1099**, perturbed fraction
+0.4; clean + successful + non-perturbed **n=47**:
+
+| metric | p95 / p5 | rule | chosen |
+| --- | --- | --- | --- |
+| J_d | p95 7,197,954.18 | x 1.2 | **8,637,545.0** |
+| SPARC | p5 -4.232499 | - 0.3 | **-4.53250** |
+| path m | p95 1.092156 | x 1.2 | **1.31059** |
+| collision runs | p95 2 (0:3, 1:30, 2:12, 3:2) | ceil(2 x 1.2) | **3** |
+
+New fresh hold-out: 60 episodes per backend, seeds **6000-6059**, same 0.4
+fraction; never used to choose thresholds:
+
+| perturbation | fake accepted / n | MuJoCo accepted / n |
+| --- | --- | --- |
+| clean | 31 / 38 | 24 / 38 |
+| bad_grasp | 0 / 6 | 0 / 6 |
+| detour | 0 / 3 | 2 / 3 |
+| jitter | 0 / 5 | 2 / 5 |
+| low_sweep | 4 / 4 | 0 / 4 |
+| overspeed | 0 / 4 | 1 / 4 |
+| **total** | **35 / 60** | **29 / 60** |
+
+Clean-successful false rejections: fake **7/38 (18.4%)**, MuJoCo **1/25
+(4.0%)**. Hold-out reason counts: fake `NOT_SUCCESS=6`, `JERK_TOO_HIGH=19`,
+`SPARC_TOO_LOW=9`; MuJoCo `NOT_SUCCESS=27`, `JERK_TOO_HIGH=11`. The fake false
+rejects rose because the release guard adds holds (dwell raises J_d); the fake
+thresholds are intentionally unchanged by this task.
+
 ## Known limitations
 
-- **Collision flag over-reports intended grasps (pre-existing Task 4 bug).**
-  `_unintended_collision` skips `left_finger<->cube_red` contacts inside its
-  loop but ends with `return count > 0`, so any contact sets the flag. Clean
-  successful MuJoCo episodes therefore show 1-3 collision runs. Expert code was
-  **not changed** in Task 5; `mujoco.yaml` uses `max_collisions: 3` to avoid
-  rejecting every episode. The collision gate is not a physical collision test
-  until that flag is fixed.
+- **Collision flag over-reporting was fixed in Task 6b.** The old
+  `_unintended_collision` ended with `return count > 0` and counted the
+  intended grasp. The pure classifier now counts only penetrating unintended
+  contacts and classifies cube-cube, hand-cube, finger-table, and
+  finger-non-target contacts. Clean successful MuJoCo episodes still have 0-3
+  runs of those real contacts, which is why `max_collisions` is 3.
 - **20 Hz derivative noise.** Three derivatives at 50 ms spacing are sensitive
   to noise. Savitzky-Golay window 9 reduces but does not eliminate it; J_d is
   comparative, not an absolute physical quantity.
