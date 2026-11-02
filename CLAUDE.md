@@ -130,6 +130,9 @@ uv run --group sim python scripts/bench_render.py --frames 3
 # One-shot core verification
 ./scripts/run_core_tests.sh
 
+# CI parity (core + ROS job, with scipy/open3d shadowed for the ROS half)
+./scripts/ci_parity.sh
+
 # Create .venv and .venv-ros
 ./scripts/setup_envs.sh
 
@@ -233,6 +236,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 4 — scripted expert, FK/IK/planner, perturbations, staging, rollout collector
 - [x] Task 5 — trajectory filtering, metrics, `curated_v1`
 - [x] Task 6 — RGB-D workspace mapping, point cloud, TSDF, obstacle query
+- [x] Task 6b — collision classifier, release/physics guards, filter re-derivation, replay prototype, limit verification
 - [ ] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler
 - [ ] Task 8 — SmolVLA + LoRA fine-tuning
 - [ ] Task 9 — closed-loop evaluation
@@ -242,9 +246,10 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=306 failed=0 skipped=7 errors=0 | date=2026-11-01 | base_commit=3914737
-- Last verified ROS test run: passed=318 failed=0 skipped=0 errors=0 | date=2026-11-01 | base_commit=3914737
-- Task 6 status: complete with pending checks: RViz mapping check PENDING (user); MuJoCo runtime measured but no rate/quality threshold asserted; CI for this push pending user confirmation in the Actions tab; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
+- Last verified test run: passed=333 failed=0 skipped=7 errors=0 | date=2026-11-02 | base_commit=8207142
+- Last verified ROS test run: passed=345 failed=0 skipped=0 errors=0 | date=2026-11-02 | base_commit=8207142
+- Task 6b status: complete with pending checks: RViz visual confirmation PENDING (no report in this session); CI for this push pending user confirmation in the Actions tab; expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
+- Task 6 status: complete with pending checks: **CI user-confirmed green for the Task 6 push (f8c77f2) and the CI fix (8207142), 2026-11-01** (no run id recorded); RViz mapping check was visually confirmed for the fake backend and the lean mapper config, but this session has no new user report; MuJoCo runtime measured but no rate/quality threshold asserted; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
 - Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for the Task 5 push and the follow-up import-guard fix is **user-confirmed green, 2026-11-01** (no run id recorded); MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
 - Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; **CI user-confirmed green for the Task 4 push, 2026-11-01** (no run id recorded); opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
 - Task 3 status: complete with pending checks: CI for this push (user confirms Actions tab), RViz manual checkpoint (optional, not confirmed), Isaac randomization unverified. A Task 3 MuJoCo bug was found and fixed in Task 4: `mj_setConst` reset `MjData` to `qpos0`, so the physics group homed the arm and discarded sampled object poses.
@@ -253,8 +258,80 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 The first line records the **core** suite (`.venv`, ROS-free,
 `env -u PYTHONPATH -u AMENT_PREFIX_PATH`). The second line records the
-ROS-enabled suite separately. Task 6 tests ran on the working tree based on
-`3914737`.
+ROS-enabled suite separately. Task 6b tests ran on the working tree based on
+`8207142`.
+
+Run breakdown (2026-11-02, Task 6b):
+
+- Core ROS-free: **333 passed, 0 failed, 7 skipped, 0 errors** (was 306/7
+  before Task 6b; 27 new tests).
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **345 passed, 0 failed, 0 skipped, 0 errors** (was 318).
+- `colcon test-result --verbose`: **7 tests, 0 errors, 0 failures**. The new
+  `scripts/ci_parity.sh` passed end-to-end: `uv sync --locked --group sim`,
+  asset fetch, ruff, ROS-free pytest, and colcon build/test under system Python
+  with scipy/open3d shadowed by ImportError stubs.
+- Ruff is deterministic: `[tool.ruff.lint.isort]` sets
+  `known-first-party = ["sim2real", "tests", "sim2real_*"]`; six existing ROS
+  test files only needed import reordering.
+- Collision classifier (`configs/sim/collision.yaml`,
+  `sim.collision.classify_contacts`): only `dist < 0` counts; allowed
+  finger<->target-cube, cube<->table, cube<->zone; robot self-contacts are
+  reported as `self` and not counted; unknown names are flagged conservatively.
+  Clean seeds 4000-4039 (baseline expert): **26/40 success**; successful clean
+  episodes had **0.577 steps flagged on average** (max 19) and **0.308 runs**
+  (max 1). Categories: cube-cube 46, cube-hand 25, table-finger 11,
+  finger/non-target-cube 15. Perturbations 4100-4129: jitter 17/30 (flag mean
+  2.23, runs 0.63), hesitation 18/30 (9.30, 2.00), detour 17/30 (2.23, 0.53),
+  overspeed 8/30 (1.27, 0.27), bad_grasp 0/30 (1.03, 0.17), low_sweep 23/30
+  (6.10, 1.23). The old "any contact" bug is fixed; the remaining flags are
+  real classified contacts (cube-cube, hand-cube, finger-table,
+  finger-non-target), not the intended grasp.
+- Expert attempt: baseline **26/40** (Wilson [0.495, 0.779]); a wait-until-open
+  release guard plus a 10-step pre-release settle raised it to **28/40**
+  (Wilson [0.547, 0.819]) and fixed the release failures at seeds 4015/4033.
+  Full grasp-offset compensation was **17/40**, xy-only minus **25/40**, xy-only
+  plus **26/40**; all three were reverted. The one-time confirmation on seeds
+  4040-4099 (never used to choose changes) was **36/60** (60%, Wilson
+  [0.474, 0.714]); failed cube x mean **0.4356** vs success **0.4308**, so no
+  strong x bias. The improvement is small and **not material**; off-zone and
+  cube-instability failures remain. The physics guard aborts with
+  `PHYSICS_INSTABILITY` on non-finite/huge qacc or an object outside the
+  workspace plus 0.25 m; it is tested with a teleporting fake and did not fire
+  in the 60 confirmation episodes.
+- Filter re-derivation: 100 MuJoCo tuning episodes seeds 1000-1099 (40%
+  perturbed): 60 success, clean-success **n=47**; jerk p95 7,197,954.18 x 1.2 =
+  **8,637,545.0**; SPARC p5 -4.232499 - 0.3 = **-4.53250**; path p95
+  1.092156 x 1.2 = **1.31059**; collision runs 0:3, 1:30, 2:12, 3:2, p95=2 ->
+  ceil(2.4)=**3**. `configs/filtering/mujoco.yaml` updated; filter code
+  unchanged. Fresh hold-out seeds 6000-6059: MuJoCo **29 accepted / 60**,
+  clean-success **24/25** (1 false reject), bad_grasp 0/6, detour 2/3,
+  jitter 2/5, low_sweep 0/4, overspeed 1/4. Fake **35/60**, clean-success
+  **31/38** (7 false rejects; the fake default thresholds were not re-derived,
+  per the scope rule).
+- Replay: `scripts/bench_render.py` alone measured llvmpipe **196.5 / 138.7 ms**
+  and D3D12/NVIDIA **54.7 / 56.4 ms** per camera frame. Three MuJoCo prototype
+  episodes 7000-7002: **548 frames, 0.100 GiB**, default renderer
+  **35.8 / 31.9 / 30.7 s** per episode, NVIDIA **17.5 / 16.2 / 17.2 s**;
+  max joint replay error **0.0 rad**, max final object error **0.0 m**. Two
+  replays of one episode gave identical hashes for **38/38** frames at
+  decimation 5. `scripts/render_replay.py` writes the shared PNG format, never
+  overwrites, updates the sidecar/manifest with path+sha256, and refuses
+  >1 GiB / 10 min without `--i-approved`.
+- Limits: official Franka FER table
+  <https://frankarobotics.github.io/docs/robot_specifications.html> matches
+  `configs/sim/panda.yaml` exactly for position, velocity, and acceleration
+  (per-joint lists). Jerk (7500/3750/5000/6250/7500/10000/10000 rad/s^3) and
+  effort (87/87/87/87/12/12/12 Nm) are **absent** from the YAML. No YAML or
+  limit code was changed; add them before Task 11.
+- Open3D issue #7592 (fetched): **0.20.0 produces empty geometry from metric
+  float32 depth; 0.19.0 works**. The report is macOS arm64, CPU, NumPy 1.26.4,
+  with PR #7594 open. Our x86_64 0.20.0 reproduces it. Decision log row 43
+  records the `UniformTSDFVolume` deviation and the bounded-workspace memory
+  budget.
+- RViz: no new user report in this session. Task 6 established that the full
+  `sim2real.rviz` Camera/Image displays plus MuJoCo EGL can drop the X11
+  connection; the lean `mapper.rviz` plus the 8 s delay survived 165 s.
 
 Run breakdown (2026-11-01, Task 6):
 
@@ -458,13 +535,34 @@ Run breakdown (2026-10-31, Task 2b):
 - **`open3d-cpu` adds about 105 MB** (plus plotly/dash) to `.venv` and
   `.venv-ros`; it is installed `--no-deps` in `.venv-ros` so system NumPy
   1.26.4 stays visible.
-- **Follow-up session after Task 6:** fix the collision flag
-  (`_unintended_collision` returns true for the intended grasp), examine the
-  MuJoCo expert success census, and design replay-rendering of images. Expert,
-  filter, and limit code was **not** changed in Task 6.
-- **`configs/sim/panda.yaml` velocity limits are labelled "Franka datasheet"
-  but are UNVERIFIED.** They must be verified against official Franka
-  documentation before the Task 11 safety work.
+- **Task 6b follow-up results (2026-11-02):** the collision flag is fixed
+  (pure contact classifier; only actual penetration counts; allowed
+  finger-target, cube-table, cube-zone; robot self-contacts reported not
+  counted). A wait-until-open release guard and a 10-step pre-release settle
+  raised the clean development success from **26/40 to 28/40**; the one-time
+  confirmation was **36/60** (Wilson [0.474, 0.714]). Grasp-offset compensation
+  was tried (17/40, 25/40, 26/40) and reverted. The expert still fails mostly
+  off-zone or on cube instability; the improvement is **not material**.
+- **Replay rendering is a prototype, not wired into curation.** `render_replay.py`
+  writes per-step PNGs and records path+sha256 in the staging sidecar/manifest,
+  but `curated_v1` still records `images: none`; integrating replay images into
+  the dataset writer is Task 7. Depth is off; images are PNG frames, not video.
+- **`configs/sim/panda.yaml` position/velocity/acceleration limits VERIFIED**
+  against the official Franka FER table
+  (<https://frankarobotics.github.io/docs/robot_specifications.html>): all three
+  per-joint lists match exactly. **Jerk and effort limits are absent** from the
+  YAML (official: jerk 7500/3750/5000/6250/7500/10000/10000 rad/s^3; effort
+  87/87/87/87/12/12/12 Nm); add them before the Task 11 safety work. The expert
+  planner uses velocity/acceleration; the filter uses joint/velocity margins.
+- **The collision flag now reports real classified contacts.** Clean successful
+  MuJoCo tuning episodes still have 0-3 unintended runs because cube-cube,
+  hand-cube, finger-table, and finger-non-target contacts occur; these are no
+  longer the intended grasp. `max_collisions: 3` is derived as
+  ceil(p95(2) x 1.2), not the old "any contact" workaround.
+- **The scripted MuJoCo expert remains modest.** Baseline 26/40 (Wilson
+  [0.495, 0.779]) and final 28/40 (Wilson [0.547, 0.819]) on the development
+  seeds; confirmation 36/60. Main failures are off-zone placement and cube
+  instability. No test asserts a success threshold.
 - **Task 5 filtering and `curated_v1` exist; training, LeRobot export,
   inference, and safety do not.** Mapping exists (Task 6). Staging remains raw
   and unfiltered. Curated output is a filtered subset, not yet validated against
@@ -472,12 +570,6 @@ Run breakdown (2026-10-31, Task 2b):
 - **`curated_v1` has no images.** Staging captures none, so `info.json` records
   `images: none` and the dataset card says the data cannot train a VLA until
   RGB-D frames are rendered (Task 7 prerequisite).
-- **The per-step `unintended_collision` flag over-reports intended grasps.**
-  `_unintended_collision` skips intended finger↔cube contacts inside its loop
-  but ends with `return count > 0`, so any contact sets the flag. Clean
-  successful MuJoCo episodes show 1-3 collision runs. Expert code was **not
-  changed** in Task 5; `configs/filtering/mujoco.yaml` uses `max_collisions: 3`
-  so the gate does not reject every episode. This is a diagnosis, not a fix.
 - **Metrics use 20 Hz derivatives and Savitzky-Golay smoothing (window 9,
   polyorder 5).** Window 9 halves the 1 mm-noise-driven J_d versus window 5 but
   does not remove it; window 17 suppresses noise further yet attenuates a real
@@ -485,31 +577,29 @@ Run breakdown (2026-10-31, Task 2b):
 - **Dimensionless squared jerk depends on dwell time (`T^5`).** Grasp/release
   pauses raise it, so thresholds are empirical and per-backend, not literature
   values.
-- **Accepted MuJoCo data skews toward easy object poses.** The expert succeeded
-  only 22/40 on clean seeds 3000-3039; filtering cannot recover those failures.
+- **Accepted MuJoCo data reflects a modest success rate; there is no strong
+  initial-x bias in the new seeds.** The expert succeeded 22/40 on clean seeds
+  3000-3039 (Task 5) and 26/40 on 4000-4039 (Task 6b); filtering cannot recover
+  the failures. Failed cube x mean 0.4356 vs success 0.4308 in the confirmation.
 - **The fake backend reports zero joint velocities**, so fake velocity-limit
   margins are always 1.0.
 - **Threshold samples are small** (40-67 clean tuning episodes per backend); the
   docs report counts alongside percentages.
 - **MoveIt 2 is not installed and was not exercised.** `MoveItPlanner` is a
   guarded stub that raises `PlannerUnavailable`; no MoveIt behaviour is claimed.
-- **The scripted MuJoCo expert succeeds 7/10 on the clean seeded smoke and 9/20
-  with 30% perturbation.** The main failure is an off-centre grasp under
-  randomized cube pose (0.06-0.12 m from the zone centre) or a gripper that
-  cannot reopen around a wedged cube. Yaw-aligning the gripper was tried and made
-  the batch worse, so it was reverted. No test asserts a success threshold.
+- **The scripted MuJoCo expert remains modest.** 26/40 clean development
+  baseline, 28/40 after the release guard, and 36/60 on the one-time
+  confirmation. The main failures are off-centre placement and cube
+  instability, not a single deterministic bug. Yaw-aligning the gripper was
+  tried in Task 4 and reverted. No test asserts a success threshold.
 - **`FakeBackend`'s grasp is a kinematic test double, not physics.** A closed
   gripper within 5 cm of the TCP attaches the cube; opening above 0.02 m releases
   it at table height. It has no contact forces.
 - **Perturbations are open-loop command variations.** They are not a learned
   failure distribution; `FAILURE_TARGETED` returns `success=false` until Task 9.
-- **Images are not captured by the runner.** `estimate_storage()` estimates disk
-  and time, but per-episode image capture is not wired in; images become video in
-  Task 7.
-- **Per-step `unintended_collision` is coarse and currently buggy.** It maps
-  the backend contact report, and the Task 4 helper returns true whenever any
-  contact exists (including the intended grasp). Task 5 counts maximal runs but
-  the underlying flag is not a physical collision test until Task 4 code is fixed.
+- **Images are not captured during rollouts.** `render_replay.py` replays a
+  staged episode and writes PNGs with manifest references; integrating replay
+  images into `curated_v1`/LeRobot is Task 7.
 - **The collector runs one batch at a time** and rejects a concurrent call.
 - **The collector is not a `/joint_states` publisher.** `sim_node` remains the
   only `/joint_states` owner when it runs.
@@ -613,12 +703,20 @@ Run breakdown (2026-10-31, Task 2b):
   **Fake-backend cloud visually confirmed by the user's screenshot; MuJoCo
   RViz uses the lean `mapper.rviz` and survived 165 s with no X11 error; final
   user visual confirmation of the MuJoCo cube/mesh layout is still PENDING.**
-- [ ] Confirm the GitHub Actions tab for the Task 6 push (user confirms; no run
+- [x] Confirm the GitHub Actions tab for the Task 6 push (f8c77f2) and the CI
+  fix (8207142) — **user-confirmed green, 2026-11-01** (no run id invented).
+- [x] Verify `configs/sim/panda.yaml` position/velocity/acceleration limits
+  against the official Franka FER table — **verified, all three per-joint lists
+  match** (2026-11-02).
+- [ ] Add Franka jerk and effort limits (official FER values) to
+  `configs/sim/panda.yaml` before the Task 11 safety work; they are currently
+  absent.
+- [x] Task 6b follow-up: collision flag fixed by the contact classifier; expert
+  success census examined; replay rendering designed and prototyped.
+- [ ] RViz visual confirmation of the Task 6b MuJoCo scene/mesh layout (no report
+  in this session; the lean mapper config and 8 s delay are established).
+- [ ] Confirm the GitHub Actions tab for the Task 6b push (user confirms; no run
   id invented).
-- [ ] Verify `configs/sim/panda.yaml` velocity limits against official Franka
-  documentation before the Task 11 safety work.
-- [ ] Short follow-up session: fix the collision flag, examine the expert
-  success census, and design replay-rendering of images.
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

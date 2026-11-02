@@ -61,6 +61,38 @@ Therefore:
     the true robot geometry, and can remove a grasped object.
 
 
+## Limits verification (2026-11-02)
+
+The official Franka Emika Robot (FER) limits are in the FCI page
+<https://frankarobotics.github.io/docs/robot_specifications.html> (section
+"Limits for Franka Emika Robot (FER)"). Values below are Joint 1..7 in order.
+`configs/sim/panda.yaml` uses per-joint lists, not a single value.
+
+| Quantity | `configs/sim/panda.yaml` | Official FER | Match? |
+| --- | --- | --- | --- |
+| `q_min` | -2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973 | same | **yes** |
+| `q_max` | 2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973 | same | **yes** |
+| `dq_max` | 2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61 | 2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100 | **yes** |
+| `ddq_max` | 15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0 | 15, 7.5, 10, 12.5, 15, 20, 20 | **yes** |
+| `dddq_max` (jerk) | **absent** | 7500, 3750, 5000, 6250, 7500, 10000, 10000 rad/s^3 | **MISSING** |
+| `tau_max` (effort) | **absent** | 87, 87, 87, 87, 12, 12, 12 Nm | **MISSING** |
+| `dtau_max` | **absent** | 1000 Nm/s | **MISSING** |
+
+Position, velocity, and acceleration are verified, not invented. Jerk, effort,
+and torque rate are absent from the YAML and must be added deliberately before
+Task 11. Components that depend on these limits:
+
+- the expert planner uses `velocity_limits` and `acceleration_limits`;
+- the filter's limit margins use joint and velocity limits;
+- the future safety node needs position, velocity, acceleration, jerk, effort,
+  and torque rate.
+
+No YAML or limit code was changed in Task 6b. Recommendation: add the official
+jerk/effort/torque-rate values to `configs/sim/panda.yaml` in a separate,
+reviewed change before the safety work.
+
+
+
 ## Planned Task 11 scope
 
 - Joint position, velocity, acceleration, and jerk limit checks.

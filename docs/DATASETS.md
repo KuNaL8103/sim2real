@@ -20,7 +20,7 @@ data/staging/<run_id>/
   episode_<episode_id>.json  sidecar: ids, seed, backend, instruction, task ids,
                              outcome, failure_reason, perturbation, expected
                              quality, transitions, randomization report,
-                             success metrics, metadata_json
+                             success metrics, final object poses, metadata_json
   manifest.jsonl             {episode_id, seed, outcome, path, sha256, written_at}
 ```
 
@@ -34,12 +34,31 @@ Properties:
 - **Duplicate-safe.** Re-writing an existing `episode_id` raises
   `DuplicateEpisodeError`; `overwrite=True` replaces the files and keeps exactly
   one manifest row.
-- **No images by default.** `staging.capture_images: false`. When enabled, the
-  intended format is uint8 RGB and float16 depth at the configured decimation
-  and resolution. Per-episode image capture is **not wired into the runner yet**;
-  `estimate_storage()` prints an upper-bound disk/time estimate before a run.
-- **No video yet.** Images become video in the Task 7 LeRobot conversion; no
-  encoding is chosen here.
+- **No images by default.** `staging.capture_images: false`. The runner does not
+  capture images. `scripts/render_replay.py` replays a staged episode offline
+  and writes PNG frames under `<run>/images/<episode_id>/`; per-episode image
+  capture during a rollout is **not wired in**, and images are not part of the
+  `curated_v1` write yet (Task 7).
+- **No video yet.** The replay prototype writes PNG frames. Images become video
+  or dataset tensors in Task 7; no encoding is chosen here.
+
+## Replay image references (Task 6b)
+
+`scripts/render_replay.py --staging <run> [--episode-id <id>] [--decimation N]`
+rebuilds the scene through the same reset path, steps the recorded actions, and
+writes one PNG per selected step and camera. It:
+
+- prints a frame/byte/minute estimate first (RGB uint8 only, depth OFF);
+- refuses an estimate above **1 GiB or 10 minutes** without `--i-approved`;
+- never overwrites an existing image file;
+- adds an `images` list to the episode sidecar and the manifest row:
+  `{step_index, camera, path, sha256, skipped}`;
+- records final object poses in the sidecar (`final_object_poses`) for the
+  fidelity check, and compares them with the recorded values.
+
+The `images` shape is the mapping the `curated_v1` writer accepts; the writer is
+**not** changed in Task 6b. Design, measured render costs, and open questions
+are in `docs/IMAGE_REPLAY.md`.
 
 ## `curated_v1` layout (Task 5)
 
@@ -164,8 +183,8 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 | Acceptance engine and `trajectory_filter_node` | Task 5 | **implemented** |
 | `curated_v1` on-disk episode format | Task 5 | **implemented (LeRobot-style, unvalidated)** |
 | LeRobot dataset export and loader validation | Task 7 | planned |
-| Open-X / LeRobot dataset mixing | Task 6 | planned |
-| Dataset statistics and provenance | Task 6 | planned |
+| Open-X / LeRobot dataset mixing | Task 7 | planned |
+| Dataset statistics and provenance | Task 7 | planned |
 
 ## Storage policy
 

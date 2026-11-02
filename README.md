@@ -4,10 +4,11 @@ End-to-end sim2real robotics data pipeline and VLA fine-tuning framework for a
 Franka Panda, built around ROS 2 Jazzy, MuJoCo (Isaac Sim optional), LeRobot,
 and SmolVLA + LoRA.
 
-**Task 6 status: RGB-D workspace mapping is implemented.** Simulator backends,
-seeded domain randomization, the scripted pick-and-place expert, trajectory
-filtering, `curated_v1` output, and the workspace mapper exist. LeRobot export,
-training, inference, and safety are not implemented.
+**Task 6b status: RGB-D mapping plus follow-up reliability fixes.** The
+workspace mapper, contact classifier, runner physics guard, re-derived MuJoCo
+filter thresholds, replay-rendering prototype, and verified Franka limits are
+implemented. LeRobot export, training, inference, and safety are not
+implemented.
 
 ## What exists today
 
@@ -23,8 +24,8 @@ training, inference, and safety are not implemented.
 - `sim2real_msgs` interfaces, including the Task 5 measured `TrajectoryStep`
   fields.
 - Documentation, versioned YAML configs, scripts, CI, and hardware-free tests.
-- Verified on 2026-11-01: core **306 passed / 7 skipped**, ROS `.venv-ros`
-  **318 passed**, `colcon test-result` **7 tests / 0 failures**. Details and
+- Verified on 2026-11-02: core **333 passed / 7 skipped**, ROS `.venv-ros`
+  **345 passed**, `colcon test-result` **7 tests / 0 failures**. Details and
   provenance are in `CLAUDE.md` and `docs/ARCHITECTURE.md`.
 
 ## Quick start
@@ -50,6 +51,25 @@ source install/setup.bash
 cd ..
 .venv-ros/bin/python -m pytest -ra
 ```
+
+## Task 6b follow-up fixes
+
+- **Contact classifier** (`configs/sim/collision.yaml`,
+  `sim2real.sim.collision`): the unintended-collision flag counts only
+  penetrating contacts and applies explicit allowed rules (finger-target,
+  cube-table, cube-zone); cube-cube, hand-cube, finger-table, and
+  finger-non-target are unintended; robot self-contacts are reported, not
+  counted.
+- **Runner guards**: a pre-release settle + wait-until-open release guard, and a
+  `PHYSICS_INSTABILITY` abort for non-finite/huge state or an object outside the
+  workspace margin.
+- **Filter re-derivation**: MuJoCo thresholds re-derived from seeds 1000-1099
+  (clean-success n=47) and validated on the fresh 6000-6059 hold-out.
+- **Replay rendering**: `scripts/render_replay.py` writes PNG frames with
+  manifest references, never overwrites, and refuses >1 GiB/10 min without
+  approval. Design and measured costs are in `docs/IMAGE_REPLAY.md`.
+- **Franka limits**: position, velocity, and acceleration match the official
+  FER table; jerk/effort are still absent from `configs/sim/panda.yaml`.
 
 ## Workspace mapping (Task 6)
 

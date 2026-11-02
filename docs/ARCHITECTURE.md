@@ -1,22 +1,40 @@
 # Architecture
 
-Status: **Task 6.** Simulator backends, `sim_node`, seeded domain randomization,
+Status: **Task 6b.** Simulator backends, `sim_node`, seeded domain randomization,
 a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
 a versioned `curated_v1` dataset writer, and RGB-D workspace mapping are
-implemented. Task 2b decouples `/joint_states`/TF publication from camera
-rendering; Task 3 adds validated randomization profiles and reset-service
-integration; Task 4 adds the pure-Panda FK single source, bounded IK/planner
-abstractions, an explicit state machine, intentional perturbations, and
-`expert_collector_node` (`UNIFORM` only). Task 5 adds strict validation,
-dimensionless squared jerk, SPARC, path length, limit margins, collision runs,
-a deterministic acceptance engine, and `trajectory_filter_node` with
-`curated_v1` output. Task 6 adds a workspace-bounded Open3D TSDF map that fuses
-overhead and wrist RGB-D frames through tf2 poses, a coarse robot self-filter,
-`/workspace/pointcloud`, a `TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`,
-and a vectorized obstacle-distance query for Task 11. LeRobot loader validation,
-training, inference, safety, and OctoMap remain unimplemented. Isaac Sim is
-**UNAVAILABLE on this machine** (requirements-based, not tested); MoveIt 2 is
-**not installed** and its planner adapter is an unexercised guard.
+implemented. Task 6b fixes the collision flag with a pure contact classifier,
+adds a runner physics guard and a release guard, re-derives the MuJoCo filter
+thresholds, prototypes replay rendering, and verifies the Franka limits.
+Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
+adds validated randomization profiles and reset-service integration; Task 4 adds
+the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
+state machine, intentional perturbations, and `expert_collector_node` (`UNIFORM`
+only). Task 5 adds strict validation, dimensionless squared jerk, SPARC, path
+length, limit margins, collision runs, a deterministic acceptance engine, and
+`trajectory_filter_node` with `curated_v1` output. Task 6 adds a workspace-bounded
+Open3D TSDF map, a coarse robot self-filter, `/workspace/pointcloud`, a
+`TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`, and a vectorized
+obstacle-distance query. LeRobot loader validation, training, inference, and
+safety remain unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
+(requirements-based, not tested); MoveIt 2 is **not installed** and its planner
+adapter is an unexercised guard.
+
+## Scope of Task 6b
+
+- `configs/sim/collision.yaml` and `src/sim2real/sim/collision.py`: pure
+  `classify_contacts` over `(geom1, geom2, dist)` with explicit allowed rules
+  and a penetration-only gate. Both backends use it; the runner sets the target
+  context.
+- Runner physics guard (`PHYSICS_INSTABILITY`) and the release guard
+  (pre-release settle + wait-until-open timeout).
+- Re-derived `configs/filtering/mujoco.yaml` from 100 fresh tuning episodes.
+- `scripts/render_replay.py` + `docs/IMAGE_REPLAY.md`: replay staged actions,
+  write PNGs with manifest references, estimate size/time, never overwrite.
+- Read-only Franka limit verification against the official FER table.
+- `scripts/ci_parity.sh` mirrors the core and ROS CI jobs, including the
+  system-Python colcon run with scipy/open3d shadowed.
+
 
 ## Scope of Task 6
 
@@ -1036,6 +1054,82 @@ erases nearby scene points. It is not a collision model.
 
 
 
+## Contact classification, expert guard, and replay (Task 6b)
+
+### Contact classification
+
+The pinned Menagerie MJCF has named scene geoms (`table`, `cube_*_geom`,
+`zone_*`) and unnamed robot collision geoms; the backend names the latter
+`<body>/geom<id>`. Visual geoms use `contype=0/conaffinity=0`, and the zones are
+non-colliding. `configs/sim/collision.yaml` groups arm links, hand, fingers,
+cubes, table, and zones. `classify_contacts` applies these rules:
+
+- **Allowed:** finger<->the current target cube; cube<->table; cube<->zone.
+- **Unintended:** any other contact involving a robot geom (arm/hand vs
+  table/cube/anything, finger vs table, finger vs a non-target cube), and
+  cube<->cube (target vs non-target or two non-target cubes).
+- **Robot self-contacts:** reported as `self` in details and not counted; the
+  clean seeds 4000-4005 showed none, so the exclusion is not hiding observed
+  collisions.
+- **Unknown geom names:** reported and flagged conservatively.
+- **Penetration only:** a contact counts only when `contact.dist < 0`; a
+  zero/positive distance is reported as `touch` and not counted. A finger-target
+  grasp at exactly 0 still confirms the grasp through the detail string.
+
+The evidence (clean seeds 4000-4039, baseline expert, new classifier): 26/40
+successful; successful clean episodes had 0.577 flagged steps on average (max 19)
+and 0.308 collision runs (max 1). Categories were cube-cube 46, cube-hand 25,
+table-finger 11, and finger/non-target-cube 15. The six perturbations on seeds
+4100-4129 and their flag/run means are in `CLAUDE.md`. The old
+"any contact" bug is gone; the remaining flags are real classified contacts, not
+the intended grasp.
+
+### Runner physics guard
+
+`_EpisodeRunner._check_physics` aborts with `OUTCOME_ABORTED` and
+`PHYSICS_INSTABILITY` when a joint/velocity state is non-finite, MuJoCo `qacc`
+exceeds 10,000 rad/s^2, or any tracked object leaves the scene workspace plus
+0.25 m. It is tested with a fake backend that teleports a cube. It did not fire
+in the 60 confirmation episodes.
+
+### Expert reliability attempt
+
+The baseline was 26/40 clean (Wilson [0.495, 0.779]). A pre-release 10-step
+settle and a wait-until-open release loop (up to 40 steps) raised it to 28/40
+and fixed the two "gripper did not release" failures. Full grasp-offset
+compensation and both xy-only signs were tried and reverted (17/40, 25/40,
+26/40). The one-time confirmation on seeds 4040-4099 was 36/60 (Wilson
+[0.474, 0.714]); failed cube x mean 0.4356 vs success 0.4308. The improvement is
+small and not material; off-zone placement and cube instability remain.
+
+### Filter thresholds
+
+Re-derived from 100 MuJoCo tuning episodes (seeds 1000-1099, 40% perturbed;
+clean-success n=47): jerk p95 x 1.2 = **8,637,545.0**, SPARC p5 - 0.3 =
+**-4.53250**, path p95 x 1.2 = **1.31059**. Collision runs 0:3, 1:30, 2:12, 3:2;
+p95=2, so `max_collisions = ceil(2 x 1.2) = 3`. The fresh hold-out seeds
+6000-6059 accepted 24/25 clean-success MuJoCo episodes (1 false reject) and
+31/38 fake clean-success episodes (7 false rejects; fake thresholds were not
+re-derived). Details and per-perturbation counts are in `docs/FILTER_METRICS.md`.
+
+### Replay rendering
+
+`scripts/render_replay.py` rebuilds the scene through the same reset path, steps
+the recorded actions, and writes PNGs at a chosen decimation under
+`<run>/images/<episode_id>/`. It reuses the `debug_keyframes.py` PNG format
+(now `sim2real.expert.images.write_png`), never overwrites, and records
+`path`+`sha256` in the sidecar and manifest. The script refuses an estimate above
+1 GiB or 10 minutes without `--i-approved`. Measured costs and the determinism
+contract are in `docs/IMAGE_REPLAY.md`; curated-dataset integration is Task 7.
+
+### Limits verification
+
+The official Franka FER table
+(<https://frankarobotics.github.io/docs/robot_specifications.html>) matches
+`configs/sim/panda.yaml` exactly for position, velocity, and acceleration.
+Jerk and effort limits are absent from the YAML; the table and recommendation
+are in `docs/SAFETY.md`. No YAML or limit code was changed.
+
 ## Deferred: joint-command subscription
 
 No joint-command topic is subscribed in Task 2. The node holds its current
@@ -1228,11 +1322,18 @@ Apache-2.0 LICENSE before copying.
 | 40 | 2026-11-01 | The collector runs the backend in-process, does not publish `/joint_states`, and uses a worker thread per batch | Deterministic control-rate execution without ROS latency; `sim_node` stays the only `/joint_states` owner; the executor keeps spinning |
 | 41 | 2026-11-01 | `/sim2real/staging_episode` is reliable, transient-local, depth 10 | A filter/recorder starting just after a batch still receives recent completed episodes; no images are embedded |
 | 42 | 2026-11-01 | MuJoCo physics randomization saves/restores `qpos`/`qvel` around `mj_setConst` | `mj_setConst` resets `MjData` to `qpos0`; without the fix the physics group homed the arm and discarded sampled object poses |
-| 43 | 2026-11-01 | Pin `open3d-cpu==0.20.0` and use a workspace-bounded `UniformTSDFVolume` | 0.20.0 imports headlessly under system NumPy 1.26.4, but its legacy `ScalableTSDFVolume` produces empty geometry from metric float32 depth (upstream #7592). The workspace is small and bounded, so a uniform volume is adequate and correct; this is not a claim that the scalable volume works |
+| 43 | 2026-11-01 | Pin `open3d-cpu==0.20.0` and use a workspace-bounded `UniformTSDFVolume` | 0.20.0 imports headlessly under system NumPy 1.26.4, but its legacy `ScalableTSDFVolume` produces empty geometry from metric float32 depth (upstream #7592). The workspace is bounded and the default memory estimate is a few MB, far below the 256 MB budget; a uniform volume is adequate and correct. This is not a claim that the scalable volume works |
 | 44 | 2026-11-01 | Mapping publishers use reliable keep-last 1; camera subscribers use reliable keep-last 5 | The latest map replaces the previous complete map; camera subscribers must stay compatible with the sim's reliable keep-last 5 publishers |
 | 45 | 2026-11-01 | Scene-change reset compares camera `/tf_static` transforms directly, with 5 mm / 0.01 rad epsilons | tf2 keeps only the latest static transform per frame pair; a jittered camera must not keep ghosts. A reset without jitter needs an explicit `/workspace/reset_map` |
 | 46 | 2026-11-01 | `ObstacleQuery` is a 3-D EDT over surface points; `MapStatus` carries validity, not free space | There is no carving; unknown space is expressed as `NO_DATA`/`STALE`/`LOW_COVERAGE`, and an invalid status is unsafe for Task 11 |
 | 47 | 2026-11-01 | The ROS-free core run is the official baseline (`env -u PYTHONPATH -u AMENT_PREFIX_PATH`) | A module-level ROS name once broke CI collection while local runs passed because system `rclpy` was visible |
+| 48 | 2026-11-02 | Contacts are classified by geom groups and explicit rules; only `dist < 0` counts | The old "any contact" flag counted the intended grasp. A pure classifier is testable without MuJoCo and shared by both backends; zero-distance touches still confirm a grasp through the detail text |
+| 49 | 2026-11-02 | Robot self-contacts are reported as `self`, not counted; unknown geoms are flagged | Parent/child and neighbouring links are not environment collisions. No self-contact appeared in the clean survey, so the exclusion hides nothing observed |
+| 50 | 2026-11-02 | The runner aborts with `PHYSICS_INSTABILITY` on non-finite/huge state or an object outside the workspace plus 0.25 m | A 14 m cube displacement must not be recorded as a normal failure; the staged record keeps the reason |
+| 51 | 2026-11-02 | Add a pre-release settle and a wait-until-open release guard; revert grasp-offset compensation | The fixed 5-step release failed when the position actuators needed longer. Offset compensation was worse in all three variants (17/40, 25/40, 26/40) and was reverted |
+| 52 | 2026-11-02 | Re-derive MuJoCo filter thresholds from seeds 1000-1099; `max_collisions=3` from p95 x 1.2 | The collision semantics and expert changed. Clean-success n=47; jerk 8,637,545.0, SPARC -4.53250, path 1.31059; collision runs p95=2, so ceil(2.4)=3 |
+| 53 | 2026-11-02 | Replay writes the shared PNG format, records path+sha256 in the sidecar/manifest, and refuses >1 GiB/10 min without approval | Deterministic replay is the only practical way to add images here (llvmpipe is ~0.2 s/camera frame); curated integration is Task 7 |
+| 54 | 2026-11-02 | Franka position/velocity/acceleration limits verified; jerk/effort remain absent | The official FER table matches the YAML; Task 11 needs the missing jerk/effort values, which must be added deliberately |
 
 ## Interface changelog
 
