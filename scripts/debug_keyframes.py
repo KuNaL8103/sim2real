@@ -12,50 +12,26 @@ and RELEASE. It does not modify expert code or tune anything.
 Run this ALONE: MuJoCo rendering is software GL here, and EGL contexts are
 thread-bound. No colcon build or other heavy job should run at the same time.
 
-The PNG writer is a ~20-line stdlib implementation so this script needs no image
-library.
+The PNG writer is the shared stdlib implementation in
+``sim2real.expert.images`` so the replay script reuses the same format.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import struct
-import zlib
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from sim2real.expert.images import write_png
 from sim2real.expert.rollout import derive_episode_seed
 from sim2real.expert.staging import StagingBuffer
 from sim2real.sim import create_backend
 from sim2real.sim.reset_handler import reset_environment
 
 STATES = ("APPROACH_PREGRASP", "GRASP", "LIFT", "RELEASE")
-
-
-def _png(path: Path, rgb: np.ndarray) -> None:
-    height, width, channels = rgb.shape
-    if channels != 3:
-        raise ValueError("expected HxWx3 RGB")
-    raw = b"".join(b"\x00" + rgb[row].tobytes() for row in range(height))
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + kind
-            + data
-            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-        )
-
-    payload = (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 9))
-        + chunk(b"IEND", b"")
-    )
-    path.write_bytes(payload)
 
 
 def _staging_run(path: Path) -> StagingBuffer:
@@ -112,7 +88,7 @@ def _replay_and_render(record: Any, backend: Any, output: Path) -> dict[str, Any
         for camera in ("overhead", "wrist"):
             frame = backend.render(camera)
             name = f"{index:03d}_{state}_{camera}.png"
-            _png(episode_dir / name, frame.rgb)
+            write_png(episode_dir / name, frame.rgb)
             images.append(
                 {
                     "step_index": index,
