@@ -160,6 +160,11 @@ The fake and MuJoCo distributions differ materially, so each has its own file:
 
 ### Tuning distributions (clean + successful + non-perturbed)
 
+> **Superseded for fake on 2026-11-02.** The fake rows below are the Task 5
+> numbers, before the release guard changed the trajectories. The current fake
+> thresholds come from the re-derivation section below. The MuJoCo rows are
+> superseded by the Task 6b section.
+
 | backend | n | metric | min | p50 | p95 | max | chosen |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | fake | 67 | J_d | 4.96e6 | 6.62e6 | 1.218e7 | 1.919e7 | **1.46116e7** |
@@ -188,6 +193,9 @@ reported velocities) / 0.332 (MuJoCo). Clean collision runs were 0 (fake) and
 
 ### Hold-out evaluation (60 episodes per backend, never used for tuning)
 
+> **Superseded for fake on 2026-11-02** by the fresh 8000-8059 hold-out below.
+> The MuJoCo rows are superseded by the Task 6b section.
+
 | perturbation | fake accepted / n | MuJoCo accepted / n |
 | --- | --- | --- |
 | clean | **31 / 33** | 9 / 33 |
@@ -209,9 +217,10 @@ were accepted. Hold-out reason counts: fake `JERK_TOO_HIGH=6`,
 
 The collision classifier and the expert release guard changed the MuJoCo data.
 The **MuJoCo** rows above (n=40 tuning, hold-out seeds 2000-2059) are
-**superseded**. The fake thresholds in `configs/filtering/default.yaml` were
-not re-derived (the fake collision count semantics did not change; the Task 6b
-scope rule allows only the MuJoCo file to change).
+**superseded**. At the time of Task 6b the fake thresholds in
+`configs/filtering/default.yaml` were deliberately left unchanged; they were
+re-derived separately on 2026-11-02 after the release guard was found to raise
+fake clean-episode false rejects. The fake result is below.
 
 New tuning set: 100 MuJoCo episodes, seeds **1000-1099**, perturbed fraction
 0.4; clean + successful + non-perturbed **n=47**:
@@ -241,6 +250,45 @@ Clean-successful false rejections: fake **7/38 (18.4%)**, MuJoCo **1/25
 `SPARC_TOO_LOW=9`; MuJoCo `NOT_SUCCESS=27`, `JERK_TOO_HIGH=11`. The fake false
 rejects rose because the release guard adds holds (dwell raises J_d); the fake
 thresholds are intentionally unchanged by this task.
+
+### Fake re-derivation (2026-11-02) — supersedes both fake tables above
+
+After the Task 6b release guard added holds, the old fake thresholds rejected
+7 of 38 clean-successful hold-out episodes. The fake config was re-derived with
+the **same rule** and no filter-code changes.
+
+Tuning set: 100 fake episodes, seeds **1000-1099**, perturbed fraction 0.4
+(33 actually perturbed by the deterministic selector); clean + successful +
+non-perturbed **n=67**:
+
+| metric | min | p50 | p95 / p5 | rule | chosen |
+| --- | --- | --- | --- | --- | --- |
+| J_d | 8.603e6 | 1.207e7 | p95 2.193e7 | x 1.2 | **2.6311413e7** |
+| SPARC | -5.349 | -4.099 | p5 -5.101 | - 0.3 | **-5.400654** |
+| path m | 0.8265 | 0.9119 | p95 1.1847 | x 1.2 | **1.421672** |
+| collision runs | 0 | 0 | p95 0 (0:67) | ceil(0 x 1.2) | **0** |
+
+Fresh hold-out: 60 fake episodes, seeds **8000-8059**, same requested fraction
+(25 actually perturbed); never used to choose thresholds. Under the new config:
+
+| perturbation | accepted / n | false rejects among clean successes |
+| --- | --- | --- |
+| clean | **33 / 35** | **2 / 35 (5.7%)** |
+| bad_grasp | **0 / 4** | — |
+| detour | **1 / 1** | — |
+| hesitation | **1 / 4** | — |
+| jitter | **2 / 8** | — |
+| low_sweep | **7 / 7** | — |
+| overspeed | **0 / 1** | — |
+| **total** | **44 / 60** | — |
+
+The two clean false rejects were seeds 8043 and 8051, both `JERK_TOO_HIGH`.
+Hold-out reason counts: `JERK_TOO_HIGH=11`, `NOT_SUCCESS=4`,
+`SPARC_TOO_LOW=1`. On the tuning set the new thresholds reject 2/67 clean
+successes (seeds 1004 and 1081, both `JERK_TOO_HIGH`), versus 17/67 under the
+old Task 5 values. The old fake numbers (J_d 1.46116e7, SPARC -5.05682, path
+1.3032, 31/33 clean acceptance) are **superseded** and retained only for
+history.
 
 ## Known limitations
 
