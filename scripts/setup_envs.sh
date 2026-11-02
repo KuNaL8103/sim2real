@@ -2,11 +2,20 @@
 # Create the two environments used in Task 1.
 #   .venv      core/CI environment, no ROS
 #   .venv-ros  ROS adapter/test environment built on the system Python 3.12
-# .venv-ml is documented only (torch/LeRobot/PEFT) and is NOT created here.
+# .venv-ml (torch/LeRobot/PEFT) is opt-in with --with-ml and is never created by
+# the default CI path.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+WITH_ML=0
+if [[ "${1:-}" == "--with-ml" ]]; then
+  WITH_ML=1
+elif [[ -n "${1:-}" ]]; then
+  echo "usage: $0 [--with-ml]" >&2
+  exit 2
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "ERROR: uv is not installed. Install it first (see docs/DEPLOYMENT.md)." >&2
@@ -79,6 +88,21 @@ uv pip install --python .venv-ros/bin/python --no-deps \
 .venv-ros/bin/python -c "import scipy, pyarrow; print('scipy', scipy.__version__, 'pyarrow', pyarrow.__version__, 'numpy ABI ok')"
 .venv-ros/bin/python -c "import open3d, numpy; print('open3d', open3d.__version__, 'numpy', numpy.__version__, 'headless import ok')"
 
+if [[ "$WITH_ML" == "1" ]]; then
+  echo "==> ML environment (.venv-ml, opt-in)"
+  # CPU-only torch; no CUDA wheels, no system site-packages, no ROS imports.
+  if [ ! -x .venv-ml/bin/python ]; then
+    uv venv .venv-ml --python 3.12
+  fi
+  uv pip install --python .venv-ml/bin/python --no-deps -e .
+  uv pip install --python .venv-ml/bin/python "lerobot[dataset]==0.6.1" \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    --index-strategy unsafe-best-match
+  uv pip install --python .venv-ml/bin/python "pytest>=8,<9"
+  .venv-ml/bin/python -c \
+    "import torch, lerobot; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'lerobot', lerobot.__version__)"
+fi
+
 cat <<'EOF'
 
 ==> Environment summary
@@ -86,5 +110,5 @@ cat <<'EOF'
 .venv-ros   system Python 3.12 + ROS Jazzy via --system-site-packages,
             editable core, MuJoCo 3.17.0 + rendering deps, scipy 1.16.3 and
             pyarrow 21.0.0 (all --no-deps; system NumPy 1.26.4 stays visible).
-.venv-ml    NOT created. Planned for torch/LeRobot/PEFT (Task 8).
+.venv-ml    OPTIONAL; created only with --with-ml (CPU-only torch + LeRobot).
 EOF

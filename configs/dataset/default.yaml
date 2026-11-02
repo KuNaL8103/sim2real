@@ -1,2 +1,40 @@
-# Dataset export and mixing settings. Filled by Task 6.
+# Dataset builder defaults (Task 7).
+#
+# The default image decimation is 2, so a 20 Hz Panda staging episode becomes a
+# 10 Hz LeRobot dataset.  Observation state, action, and images are selected at
+# the SAME source steps.  A 50-step action chunk at 10 Hz spans 5 s; see
+# docs/DATASETS.md for the Task 8 padding/masking consequence.
 schema_version: 1
+
+dataset:
+  name: train_v1
+  output_root: data/lerobot
+  action_representation: joint_position
+  decimation: 2
+  max_episodes: 40
+  val_fraction: 0.2
+  split_seed: 123
+  allow_imageless: false
+  renderer: llvmpipe
+  resolution: [256, 256]
+  cameras: [overhead, wrist]
+  image_mode: image
+  quantile_method: exact
+  reservoir_size: 10000
+  max_replay_joint_error_rad: 0.000001
+  max_replay_object_error_m: 0.000001
+
+# Explicitly no large download is implied by this file.  The Bridge adapter is
+# fixture-first; TFDS is a guarded, separately approved path.
+bridge:
+  dataset_name: bridge
+  license_tag: CC-BY-4.0
+  max_episodes: 5
+  seed: 0
+  resolution: [256, 256]
+  camera_map:
+    third_person: image_0
+    wrist: image_3
+  on_missing_instruction: fill_default
+  default_instruction: perform the task
+  missing_image: skip

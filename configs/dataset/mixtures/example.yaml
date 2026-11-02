@@ -1,0 +1,29 @@
+# Explicit mixture manifest.  Panda and Bridge are different embodiments and
+# different action semantics; this manifest is the only supported way to mix
+# them.  The sampler returns source/episode/frame references, never a
+# concatenated action column.
+schema_version: 1
+name: panda_plus_bridge_aux
+seed: 7
+normalize: false
+replacement: true
+allow_mixed_action_semantics: true
+
+sources:
+  - id: panda_sim
+    weight: 0.8
+    unit: frames
+    action_representation: joint_position
+  - id: widowx_bridge
+    weight: 0.2
+    unit: frames
+    action_representation: bridge_ee_delta
+
+# Used by scripts/preview_mixture.py when no real dataset lengths are supplied.
+source_lengths:
+  panda_sim:
+    num_episodes: 20
+    episode_length: 45
+  widowx_bridge:
+    num_episodes: 5
+    episode_length: 38

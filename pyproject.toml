@@ -40,6 +40,9 @@ dev = [
 sim = [
     "mujoco>=3.17.0",
 ]
+# Intentionally empty: .venv-ml is opt-in and pinned by
+# scripts/setup_envs.sh --with-ml (LeRobot 0.6.1 + CPU-only torch). CI never
+# installs this group.
 ml = []
 
 [tool.hatch.build.targets.wheel]
@@ -86,4 +89,5 @@ markers = [
   "o3d: requires the open3d package (CPU wheel); skips with a reason otherwise",
   "slow: long-running test",
   "integration: crosses package or process boundaries",
+  "ml: requires the optional .venv-ml environment (torch/LeRobot); skips with a reason when unavailable",
 ]

@@ -23,6 +23,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -41,6 +42,23 @@ MAX_UNAPPROVED_GIB = 1.0
 MAX_UNAPPROVED_MINUTES = 10.0
 DEFAULT_RENDER_SECONDS = 0.25
 DEFAULT_CAMERAS = ("overhead", "wrist")
+
+
+def renderer_name() -> str:
+    """Record the renderer label used for a replay.
+
+    This is an explicit label, not a probe: the default backend uses llvmpipe;
+    the D3D12 paths are opt-in environment settings.  ``SIM2REAL_RENDERER`` can
+    override the label for a different machine.
+    """
+    override = os.environ.get("SIM2REAL_RENDERER")
+    if override:
+        return override
+    if os.environ.get("GALLIUM_DRIVER") == "d3d12":
+        if os.environ.get("MESA_D3D12_DEFAULT_ADAPTER_NAME") == "NVIDIA":
+            return "d3d12+nvidia"
+        return "d3d12"
+    return "llvmpipe"
 
 
 class ReplayError(RuntimeError):
@@ -192,6 +210,7 @@ def replay_record(
     return {
         "episode_id": record.episode_id,
         "frames": len(images),
+        "renderer": renderer_name(),
         "max_joint_error_rad": max_joint_error,
         "max_object_error_m": max_object_error,
         "seconds": time.perf_counter() - started,
@@ -205,11 +224,29 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
-def update_manifest(buffer: StagingBuffer, episode_id: str, images: list[dict[str, Any]]) -> None:
-    """Record image references in the sidecar and the manifest row."""
+def update_manifest(
+    buffer: StagingBuffer,
+    episode_id: str,
+    images: list[dict[str, Any]],
+    *,
+    replay: dict[str, Any] | None = None,
+) -> None:
+    """Record image references, renderer, and replay fidelity in the metadata."""
     sidecar_path = buffer.sidecar_path(episode_id)
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     sidecar["images"] = images
+    if replay is not None:
+        sidecar["renderer"] = replay.get("renderer", renderer_name())
+        sidecar["replay"] = {
+            key: replay.get(key)
+            for key in (
+                "renderer",
+                "max_joint_error_rad",
+                "max_object_error_m",
+                "frames",
+                "seconds",
+            )
+        }
     _atomic_write(sidecar_path, json.dumps(sidecar, sort_keys=True, allow_nan=False) + "\n")
     rows: list[dict[str, Any]] = []
     for line in buffer.manifest_path.read_text(encoding="utf-8").splitlines():
@@ -218,6 +255,9 @@ def update_manifest(buffer: StagingBuffer, episode_id: str, images: list[dict[st
         row = json.loads(line)
         if str(row.get("episode_id")) == episode_id:
             row["images"] = images
+            if replay is not None:
+                row["renderer"] = replay.get("renderer", renderer_name())
+                row["replay"] = sidecar["replay"]
         rows.append(row)
     _atomic_write(
         buffer.manifest_path,
@@ -286,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
                 cameras=DEFAULT_CAMERAS,
             )
             if output == buffer.root:
-                update_manifest(buffer, record.episode_id, report["images"])
+                update_manifest(buffer, record.episode_id, report["images"], replay=report)
             else:
                 print("note: --out differs from the staging root; manifest not updated")
             print(
