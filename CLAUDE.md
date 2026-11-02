@@ -14,12 +14,12 @@ End-to-end sim2real robotics data pipeline and VLA fine-tuning framework:
 - Pure-Python core algorithms, thin ROS 2 adapters, CPU-testable CI.
 - No physical robot.
 
-Tasks 1-5 implement scaffolding, contracts, fake and MuJoCo simulator backends,
+Tasks 1-7 implement scaffolding, contracts, fake and MuJoCo simulator backends,
 seeded domain randomization, a language-conditioned scripted pick-and-place
 expert with atomic rollout staging, trajectory filtering with quality metrics,
-and versioned `curated_v1` dataset output (LeRobot-style, not yet loader-validated).
-Training, LeRobot export, mapping, inference, and safety logic are not
-implemented.
+versioned `curated_v1` output, RGB-D mapping, and a two-layer LeRobot v3 /
+Open X dataset builder. Training, inference, and safety logic are not
+implemented; Bridge real data and video encoding are not exercised.
 
 ## Verified environment
 
@@ -167,7 +167,7 @@ Never run ROS nodes with `.venv/bin/python`.
 | --- | --- | --- |
 | `.venv` | core library, lint, CPU tests, CI | no |
 | `.venv-ros` | ROS adapter tests and integration | yes, via `--system-site-packages` |
-| `.venv-ml` | torch / LeRobot / PEFT (Task 8) | no; not created yet |
+| `.venv-ml` | torch / LeRobot / PEFT (Task 7/8); opt-in only | no; created 2026-11-02 |
 
 `.venv-ros` must see the system `rclpy` and system NumPy 1.26.4. Do not install
 NumPy there; a venv copy would shadow the system version. `.venv` may use a
@@ -237,7 +237,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 5 — trajectory filtering, metrics, `curated_v1`
 - [x] Task 6 — RGB-D workspace mapping, point cloud, TSDF, obstacle query
 - [x] Task 6b — collision classifier, release/physics guards, filter re-derivation, replay prototype, limit verification
-- [ ] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler
+- [x] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler (complete with pending checks above)
 - [ ] Task 8 — SmolVLA + LoRA fine-tuning
 - [ ] Task 9 — closed-loop evaluation
 - [ ] Task 10 — ROS 2 inference bridge
@@ -246,9 +246,10 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=333 failed=0 skipped=7 errors=0 | date=2026-11-02 | base_commit=8207142
-- Last verified ROS test run: passed=345 failed=0 skipped=0 errors=0 | date=2026-11-02 | base_commit=8207142
-- Task 6b status: complete with pending checks: RViz visual confirmation PENDING (no report in this session); CI for this push pending user confirmation in the Actions tab; expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
+- Last verified test run: passed=368 failed=0 skipped=8 errors=0 | date=2026-11-02 | base_commit=ef975e4
+- Last verified ROS test run: passed=380 failed=0 skipped=1 errors=0 | date=2026-11-02 | base_commit=ef975e4
+- Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; CI for this push pending user confirmation in the Actions tab
+- Task 6b status: complete with pending checks: **CI user-confirmed green for the 6b push, 2026-11-02** (no run id recorded); RViz visual confirmation PENDING (no report in this session); expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
 - Task 6 status: complete with pending checks: **CI user-confirmed green for the Task 6 push (f8c77f2) and the CI fix (8207142), 2026-11-01** (no run id recorded); RViz mapping check was visually confirmed for the fake backend and the lean mapper config, but this session has no new user report; MuJoCo runtime measured but no rate/quality threshold asserted; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
 - Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for the Task 5 push and the follow-up import-guard fix is **user-confirmed green, 2026-11-01** (no run id recorded); MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
 - Task 4 status: complete with pending checks: MoveIt not installed/not exercised; MuJoCo success rate measured (7/10 clean, 9/20 with 30% perturbation) and not tuned; viewer check PENDING; **CI user-confirmed green for the Task 4 push, 2026-11-01** (no run id recorded); opencode.json v2 migration attempted and ROLLED BACK as UNVERIFIED (reload succeeded, but `git push --dry-run origin main` produced no observable prompt in this session; backup restored)
@@ -332,6 +333,64 @@ Run breakdown (2026-11-02, Task 6b):
 - RViz: no new user report in this session. Task 6 established that the full
   `sim2real.rviz` Camera/Image displays plus MuJoCo EGL can drop the X11
   connection; the lean `mapper.rviz` plus the 8 s delay survived 165 s.
+
+Run breakdown (2026-11-02, Task 7):
+
+- Core ROS-free: **368 passed, 0 failed, 8 skipped, 0 errors** (was 333/7
+  before Task 7; 35 new passing tests plus the `ml` skip).
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **380 passed, 0 failed, 1 skipped, 0 errors** (was 345/0). The skip is the
+  `ml` writer test because `.venv-ros` has no LeRobot.
+- `colcon test-result --verbose`: **7 tests, 0 errors, 0 failures**. Ruff check
+  and format check are clean.
+- `.venv-ml`: Python 3.12, **LeRobot 0.6.1 / format v3.0**, torch
+  **2.11.0+cpu**, torchvision 0.26.0+cpu, torchcodec 0.11.1+cpu, av 15.1.0,
+  datasets 4.8.5; **1.5 GiB** installed. The ml-marked writer test passed with
+  `PYTHONPATH=src .venv-ml/bin/python -m pytest -m ml -ra
+  tests/test_dataset_writer_ml.py` (**1 passed**). The bare `-m ml` command
+  collects unrelated modules that need scipy/open3d, so it is path-limited in
+  this minimal env.
+- Primary sources: LeRobot stable **0.6.1**, `CODEBASE_VERSION = "v3.0"`;
+  official creation API `LeRobotDataset.create/add_frame/save_episode/finalize`;
+  image/video dtypes; `meta/info.json`, `meta/stats.json`,
+  `meta/tasks.parquet`, `meta/episodes/...parquet`; native q01/q10/q50/q90/q99.
+  Open X GCS lists **`bridge`**, not `bridge_orig`; the spreadsheet reports
+  25,460 episodes / 387.49 GB / 5 Hz / 4 RGB + 1 depth + 1 wrist. BridgeData V2
+  is **CC BY 4.0**. URLs and the action-frame caveat are in `docs/DATASETS.md`.
+- Training-data generation: **200 generated** (seeds 10000-10199, MuJoCo,
+  `default` profile, 0.25 perturbation fraction), **131 successful**, **123
+  accepted** with `configs/filtering/mujoco.yaml`; clean-success accepted
+  **114/117**. Accepted initial red-cube x: min **0.3601 m**, median
+  **0.4351 m**, max **0.5371 m** (skew toward easier low-x poses).
+- Replay: first two accepted episodes at decimation 2, **184 PNG frames**,
+  **0.034 GiB**, max joint error **0.0 rad**, max object error **0.0 m**.
+  Built `data/lerobot/train_v1_imagedemo`: **2 episodes, 92 frames, 10 fps,
+  4.7 MiB**, image mode, q01/q99 present.
+- Determinism scope: the earlier 38/38 was one episode at decimation 5, not
+  every frame. Extended to **182/182 frames of episode 7000 at decimation 1**,
+  two llvmpipe replays, identical SHA-256, 0.0 rad / 0.0 m error.
+- Bridge fixture: **5 available / 3 converted**, one language fill, one NaN
+  drop, one missing-wrist drop; built `data/lerobot/bridge_fixture` at 5 fps,
+  12 frames. No TFDS download and no TensorFlow installed.
+- Housekeeping collision check: 40 clean MuJoCo episodes seeds 10000-10039
+  succeeded **31/40**; successful collision runs **1:22, 2:6, 3:3** (mean
+  1.39, max 3), closer to the 1000-1099 tuning distribution (0:3, 1:30, 2:12,
+  3:2) than the old 4000-4039 0.308 figure. No initial overlap: minimum pair
+  centre distance **0.07055 m**, above the 0.04 m edge, 0.0566 m face diagonal,
+  and the configured 0.07 m separation; zero contacts at reset. No config
+  change proposed.
+- `scripts/ci_parity.sh`: **passed** end-to-end. Its core half reported
+  **366 passed / 10 skipped** with `SIM2REAL_SKIP_RENDER=1` (two render skips
+  beyond the normal eight); the ROS half reported **7 tests, 0 errors, 0
+  failures** with scipy/open3d shadowed. The official core baseline remains
+  368/8.
+- Fake filter re-derivation: current-code 100 tuning seeds 1000-1099 (33
+  actually perturbed) gave clean-success n=67; J_d p95 2.193e7 x 1.2 =
+  **2.6311413e7**, SPARC p5 -5.10065 - 0.3 = **-5.400654**, path p95 1.1847 x
+  1.2 = **1.421672**, collisions 0. Fresh 8000-8059 hold-out (60 episodes, 35
+  clean) accepted **44/60**, clean-success **33/35** (2 false rejects, 5.7%),
+  versus 7/38 before. `configs/filtering/default.yaml` updated; docs mark old
+  fake numbers superseded.
 
 Run breakdown (2026-11-01, Task 6):
 
@@ -543,10 +602,38 @@ Run breakdown (2026-10-31, Task 2b):
   confirmation was **36/60** (Wilson [0.474, 0.714]). Grasp-offset compensation
   was tried (17/40, 25/40, 26/40) and reverted. The expert still fails mostly
   off-zone or on cube instability; the improvement is **not material**.
+- **Task 7 accepted data skews toward easy poses.** The 200-episode MuJoCo run
+  accepted 123 (114/117 clean successes); accepted initial cube x ranged
+  0.3601-0.5371 m with median 0.4351 m. Larger-x poses fail more often, so the
+  dataset is not a uniform sample of the randomization profile.
+- **The default Panda dataset is 10 Hz, not 20 Hz.** Decimation 2 keeps state,
+  action, and images aligned, but a 50-step Task 8 chunk spans 5 s, longer than
+  a typical 4.5 s episode; padding/masking is mandatory.
+- **Images are optional only by explicit fallback.** Missing replay images are
+  an error unless `allow_imageless: true`; that path produces an `images: none`
+  dataset that cannot train a VLA. The real demo has images for only 2 episodes.
+- **One renderer per dataset.** Replay records `llvmpipe` by default and refuses
+  mixed renderer labels; the opt-in D3D12/NVIDIA path remains a benchmark
+  setting, never a CI/default. Depth is off and the video/MP4 path was not
+  exercised; the demo uses PNG images via the official `image` feature.
+- **Bridge is auxiliary and fixture-first.** The official Open X slug is
+  `bridge`, not `bridge_orig`; no real Bridge/TFDS data was downloaded or
+  committed. BridgeData V2 is CC BY 4.0. Its rpy state is relative to the
+  controller default rotation, and the action rotation is about the EEF position
+  in world axes; a base-vs-world transform is not independently verified.
+- **Stats cross-check is not identical to LeRobot's.** Our mean/std agreed to
+  ~1e-6 on the demo, but exact q01/q99 differed from LeRobot's per-episode
+  histogram aggregation by up to 0.064. LeRobot `meta/stats.json` is
+  authoritative for training; image stats here are per-channel frame means, not
+  full pixel histograms.
+- **The `.venv-ml` full-suite pytest is path-limited.** That minimal CPU env has
+  no scipy/open3d/mujoco. The ml writer test passes when selected by path:
+  `.venv-ml/bin/python -m pytest -m ml -ra tests/test_dataset_writer_ml.py`.
 - **Replay rendering is a prototype, not wired into curation.** `render_replay.py`
-  writes per-step PNGs and records path+sha256 in the staging sidecar/manifest,
-  but `curated_v1` still records `images: none`; integrating replay images into
-  the dataset writer is Task 7. Depth is off; images are PNG frames, not video.
+  writes per-step PNGs and records path+sha256/renderer/fidelity in the staging
+  sidecar/manifest, but `curated_v1` still records `images: none`; the Task 7
+  builder reads the staging sidecar instead. Depth is off; images are PNG
+  frames, not video.
 - **`configs/sim/panda.yaml` position/velocity/acceleration limits VERIFIED**
   against the official Franka FER table
   (<https://frankarobotics.github.io/docs/robot_specifications.html>): all three
@@ -563,13 +650,14 @@ Run breakdown (2026-10-31, Task 2b):
   [0.495, 0.779]) and final 28/40 (Wilson [0.547, 0.819]) on the development
   seeds; confirmation 36/60. Main failures are off-zone placement and cube
   instability. No test asserts a success threshold.
-- **Task 5 filtering and `curated_v1` exist; training, LeRobot export,
-  inference, and safety do not.** Mapping exists (Task 6). Staging remains raw
-  and unfiltered. Curated output is a filtered subset, not yet validated against
-  the LeRobot loader.
-- **`curated_v1` has no images.** Staging captures none, so `info.json` records
-  `images: none` and the dataset card says the data cannot train a VLA until
-  RGB-D frames are rendered (Task 7 prerequisite).
+- **Task 5 filtering, Task 6 mapping, and Task 7 LeRobot export exist; training,
+  inference, and safety do not.** Staging remains raw and unfiltered. Curated
+  output is a filtered subset; Task 7 validates the exported LeRobot loader
+  round trip, but only on a 2-episode real image demo.
+- **`curated_v1` itself still has no images.** Staging captures none, so its
+  `info.json` records `images: none`. The Task 7 builder reads replay PNG
+  references from the staging sidecar; curated episodes without replay images
+  are rejected unless the imageless fallback is explicitly enabled.
 - **Metrics use 20 Hz derivatives and Savitzky-Golay smoothing (window 9,
   polyorder 5).** Window 9 halves the 1 mm-noise-driven J_d versus window 5 but
   does not remove it; window 17 suppresses noise further yet attenuates a real
@@ -666,7 +754,8 @@ Run breakdown (2026-10-31, Task 2b):
 - RViz was re-confirmed after the Task 2b threading change on 2026-10-31.
 - Docker image not pulled or built; Docker Desktop's WSL integration for
   Ubuntu-24.04 is disabled.
-- `.venv-ml` is documented only and not created.
+- `.venv-ml` now exists (1.5 GiB, CPU-only) and is opt-in via
+  `scripts/setup_envs.sh --with-ml`; CI never creates or installs it.
 - `hydra-core`/`omegaconf` are installed for later tasks but unused.
 - CI actions are pinned to tags (`actions/checkout@v7`,
   `astral-sh/setup-uv@v10.3.3`), not commit SHAs. Pinning policy is pending.
@@ -715,8 +804,13 @@ Run breakdown (2026-10-31, Task 2b):
   success census examined; replay rendering designed and prototyped.
 - [ ] RViz visual confirmation of the Task 6b MuJoCo scene/mesh layout (no report
   in this session; the lean mapper config and 8 s delay are established).
-- [ ] Confirm the GitHub Actions tab for the Task 6b push (user confirms; no run
+- [x] Confirm the GitHub Actions tab for the Task 6b push — **user-confirmed
+  green, 2026-11-02** (no run id invented).
+- [ ] Confirm the GitHub Actions tab for the Task 7 push (user confirms; no run
   id invented).
+- [ ] Optional Task 7 viewer check: run the LeRobot dataset visualizer on
+  `data/lerobot/train_v1_imagedemo` and open replayed PNGs in VS Code. **PENDING**;
+  does not block the commit.
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

@@ -1,11 +1,15 @@
 # Architecture
 
-Status: **Task 6b.** Simulator backends, `sim_node`, seeded domain randomization,
+Status: **Task 7.** Simulator backends, `sim_node`, seeded domain randomization,
 a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
-a versioned `curated_v1` dataset writer, and RGB-D workspace mapping are
-implemented. Task 6b fixes the collision flag with a pure contact classifier,
-adds a runner physics guard and a release guard, re-derives the MuJoCo filter
-thresholds, prototypes replay rendering, and verifies the Franka limits.
+a versioned `curated_v1` dataset writer, RGB-D workspace mapping, and the
+two-layer LeRobot/Open X dataset builder are implemented. Task 7 adds the
+official LeRobot v3 writer, replay-image integration, normalization statistics,
+episode-level train/val splitting, a deterministic mixture sampler, and a
+fixture-first Bridge RLDS adapter. Task 6b fixed the collision flag with a pure
+contact classifier, added a runner physics guard and a release guard, re-derived
+the MuJoCo filter thresholds, prototyped replay rendering, and verified the
+Franka limits.
 Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
 adds validated randomization profiles and reset-service integration; Task 4 adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
@@ -15,8 +19,9 @@ length, limit margins, collision runs, a deterministic acceptance engine, and
 `trajectory_filter_node` with `curated_v1` output. Task 6 adds a workspace-bounded
 Open3D TSDF map, a coarse robot self-filter, `/workspace/pointcloud`, a
 `TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`, and a vectorized
-obstacle-distance query. LeRobot loader validation, training, inference, and
-safety remain unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
+obstacle-distance query. Task 7 adds the LeRobot v3 writer and Open X/Bridge
+fixture adapter; real Bridge data, training, inference, and safety remain
+unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
 (requirements-based, not tested); MoveIt 2 is **not installed** and its planner
 adapter is an unexercised guard.
 
@@ -216,7 +221,7 @@ filter (Task 5)
     -> /sim2real/filtered_episode (RolloutEpisode)
     -> /sim2real/filter_metrics   (FilterMetrics)
 export (Task 7)
-    -> curated_v1 on disk under data/  (ignored by git)
+    -> curated_v1 + LeRobot v3 / Open X fixtures under data/  (ignored by git)
 training (Task 8)
     -> LoRA adapter on disk            (ignored by git)
 inference (Tasks 9-10)
@@ -1130,6 +1135,84 @@ The official Franka FER table
 Jerk and effort limits are absent from the YAML; the table and recommendation
 are in `docs/SAFETY.md`. No YAML or limit code was changed.
 
+## Dataset builder and LeRobot export (Task 7)
+
+### Two layers
+
+```
+src/sim2real/dataset_builder/
+  schema.py, embodiments.py, stats.py, split.py, mixing.py, validation.py
+  adapters/curated_v1.py, adapters/rlds_bridge.py
+  lerobot_writer.py
+configs/dataset/{default,embodiments}.yaml
+configs/dataset/mixtures/example.yaml
+scripts/{build_lerobot_dataset,compute_stats,preview_mixture,convert_bridge_subset}.py
+```
+
+The first layer is NumPy-only and imports no torch, LeRobot, ROS, or renderer.
+It owns the unified episode schema, embodiment declarations, curated/RLDS
+adapters, statistics, splitting, mixing, and validation. The second layer,
+`lerobot_writer.py`, is a thin adapter around the **official**
+`LeRobotDataset.create` / `add_frame` / `save_episode` / `finalize` API. It is
+the only module that imports LeRobot/torch and is covered by the `ml` marker.
+
+`.venv-ml` is an opt-in, CPU-only environment created by
+`scripts/setup_envs.sh --with-ml`; it is never created by CI and never imports
+ROS. The current verified pin is LeRobot 0.6.1 with format v3.0, torch
+2.11.0+cpu, and `av`/`torchcodec` for the dataset extra. Image mode
+(`use_videos=False`) was exercised; the video/MP4 path was not.
+
+### Unified episodes and alignment
+
+`UnifiedEpisode` carries `observation.state`, `action`, semantic camera images,
+timestamps, task, embodiment id, source, fps, original episode id, and license.
+Panda state is 7 joint angles plus the measured finger opening in metres.
+`joint_position` actions are 8 absolute targets (7 joints + gripper in metres).
+The derived `ee_delta` is 7: world-axis translation delta, rotation vector of
+`R[t+1] R[t]^T`, and a normalized gripper in `0..1`; the last step is zero.
+
+Default **decimation is 2**: state, action, and images are selected at the same
+20 Hz source steps and stored at 10 Hz. fps is always derived, never hardcoded.
+The consequence for Task 8 is recorded in the decision log: a 50-step chunk at
+10 Hz spans 5 s, longer than a typical episode, so padding/masking is required.
+
+### Images and replay
+
+Curated `curated_v1` rows do not contain images. The adapter maps each curated
+episode back to its staging sidecar, verifies every replay PNG's SHA-256, and
+selects the same decimated steps. Replay uses the existing
+`scripts/render_replay.py` path and `sim2real.expert.images.write_png` format.
+The replay script now persists its renderer label and maximum joint/object
+errors. The builder refuses mixed renderers, missing images (unless
+`allow_imageless`), digest mismatches, and episodes above the configured replay
+error tolerance. Depth stays off; no second renderer or image format exists.
+
+### Statistics, split, and mixture
+
+`stats.py` streams mean/std with a Chan/Welford merge and computes exact
+quantiles for small data or reservoir quantiles for large data. It emits the
+LeRobot-compatible `mean/std/min/max/count/q01/q10/q50/q90/q99` layout and
+floors constant-dimension std at `1e-8`. LeRobot's `meta/stats.json` is
+authoritative for training; our exact quantiles differ from LeRobot's
+per-episode histogram aggregation by up to 0.064 on the two-episode demo.
+
+`split.py` assigns episodes per source by a stable hash; train/val are disjoint
+and the split manifest is stored beside the LeRobot metadata. `mixing.py`
+requires an explicit manifest and returns `(source_id, episode_index,
+frame_index)` references. It never concatenates incompatible action columns;
+Bridge and Panda may be mixed only through the manifest and only as an auxiliary
+source. The sampler is deterministic and can save/restore its RNG state,
+position, counts, and seen set.
+
+### Runtime evidence
+
+Task 7 generated 200 MuJoCo episodes (seeds 10000-10199), accepted 123 (114 of
+117 clean successes), replayed the first two accepted episodes at decimation 2
+(184 PNGs, 0.034 GiB, 0.0 replay error), and built
+`data/lerobot/train_v1_imagedemo`: 2 episodes, 92 frames, 10 fps, 4.7 MiB. The
+Bridge fixture produced 3 episodes/12 frames at 5 fps. Details and primary
+source URLs are in `docs/DATASETS.md`.
+
 ## Deferred: joint-command subscription
 
 No joint-command topic is subscribed in Task 2. The node holds its current
@@ -1240,7 +1323,7 @@ was reverted. No test asserts a success rate.
 | --- | --- | --- | --- |
 | `.venv` | `uv sync` | core library + dev tools | ROS, torch, LeRobot |
 | `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff, MuJoCo 3.17.0 + rendering deps, scipy 1.16.3, pyarrow 21.0.0 (all `--no-deps`) | numpy/torch installs that shadow system packages |
-| `.venv-ml` | documented only, Task 8 | torch, LeRobot, PEFT | ROS |
+| `.venv-ml` | `scripts/setup_envs.sh --with-ml` (opt-in; never CI) | Python 3.12, CPU-only torch 2.11.0+cpu, LeRobot 0.6.1, torchvision/torchcodec, av, datasets; editable core | ROS, system site-packages, CUDA torch |
 
 Why the split:
 
@@ -1334,6 +1417,12 @@ Apache-2.0 LICENSE before copying.
 | 52 | 2026-11-02 | Re-derive MuJoCo filter thresholds from seeds 1000-1099; `max_collisions=3` from p95 x 1.2 | The collision semantics and expert changed. Clean-success n=47; jerk 8,637,545.0, SPARC -4.53250, path 1.31059; collision runs p95=2, so ceil(2.4)=3 |
 | 53 | 2026-11-02 | Replay writes the shared PNG format, records path+sha256 in the sidecar/manifest, and refuses >1 GiB/10 min without approval | Deterministic replay is the only practical way to add images here (llvmpipe is ~0.2 s/camera frame); curated integration is Task 7 |
 | 54 | 2026-11-02 | Franka position/velocity/acceleration limits verified; jerk/effort remain absent | The official FER table matches the YAML; Task 11 needs the missing jerk/effort values, which must be added deliberately |
+| 55 | 2026-11-02 | LeRobot export uses the official 0.6.1/v3.0 creation API in an opt-in CPU `.venv-ml`; image mode is the default | Hand-writing Parquet/MP4 metadata would drift from the loader; image mode avoids an unexercised codec path for 2-episode/local data |
+| 56 | 2026-11-02 | Default dataset decimation is 2, so Panda is 10 Hz; state/action/images use the same steps and fps is derived | Rendering is the expensive step; absolute joint targets subsample without losing meaning. Task 8 must handle 50-step/5 s chunks with padding/masking |
+| 57 | 2026-11-02 | One renderer per dataset; replay records renderer and fidelity; mixed renderers/errors above tolerance are refused | A dataset mixing PNGs from llvmpipe and D3D12 would silently change appearance; replay must prove it reproduced the episode |
+| 58 | 2026-11-02 | Bridge is an auxiliary, fixture-first source; official slug is `bridge`, not `bridge_orig`; real data stays git-ignored | The official Open X bucket and spreadsheet use `bridge`; BridgeData V2 is CC BY 4.0 and no real subset was downloaded |
+| 59 | 2026-11-02 | Stats are our exact/streaming cross-check; LeRobot `meta/stats.json` is authoritative for training | LeRobot aggregates per-episode histogram quantiles; mean/std agreed to ~1e-6 but q01/q99 differed by up to 0.064 on the demo |
+| 60 | 2026-11-02 | Train/val is an episode-level stable-hash split stored in `meta/sim2real_split.json`; mixtures are explicit manifests | The LeRobot loader sees all episodes; Task 8 must apply the split. The sampler returns references only, never concatenated cross-embodiment action columns |
 
 ## Interface changelog
 

@@ -27,8 +27,12 @@ and the maximum object translation error (m). Two replays of the same episode
 must produce byte-identical PNGs on the same renderer.
 
 Measured prototype (seeds 7000-7002, both cameras): **max joint error 0.0 rad**,
-**max final object error 0.0 m**; two replays of one episode gave identical
-SHA-256 for **38/38** frames at decimation 5.
+**max final object error 0.0 m**. The earlier “38/38 identical hashes” covered
+the decimation-5 selection for one episode, not every frame. On 2026-11-02 the
+check was extended to **182/182 frames of episode 7000 at decimation 1** (two
+overhead/wrist replays, same llvmpipe renderer); all SHA-256 values matched and
+both replays reported 0.0 rad / 0.0 m error. The earlier 38/38 result is
+therefore retained only as the narrower prototype check.
 
 ## Algorithm
 
@@ -47,7 +51,8 @@ for step_index in 0 .. len(steps)-1:
             write PNG under <run>/images/<episode_id>/<step>_<camera>.png
             record path + sha256 (never overwrite an existing file)
 compare final joint state and object poses
-update the episode sidecar and manifest with the image references
+update the episode sidecar and manifest with image references, renderer,
+and replay error fields
 ```
 
 Step 0 is the post-reset observation; frame timestamps are
@@ -130,8 +135,10 @@ overwritten.
 2. Frames as PNG references or encoded video? PNG at 100 episodes is already
    about 3.3 GiB; video would reduce storage but needs an encoder.
 3. Is depth needed (float16 optional, currently off)?
-4. Does LeRobot v3 accept external image references, or must frames be copied
-   into the dataset layout?
+4. ~~Does LeRobot v3 accept external image references, or must frames be copied
+   into the dataset layout?~~ **Answered in Task 7:** the official writer copies
+   image bytes into its own PNG layout; our builder reads the replay PNGs and
+   passes decoded arrays to `LeRobotDataset.add_frame`.
 5. What is the storage/time budget for the first training set, and is the
    opt-in NVIDIA renderer acceptable for offline replay (never CI)?
 6. Should the replay store camera intrinsics/extrinsics per episode, or rely on
