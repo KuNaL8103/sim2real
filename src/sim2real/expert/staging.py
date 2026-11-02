@@ -95,6 +95,7 @@ def _record_sidecar(record: EpisodeRecord) -> dict[str, Any]:
         "transitions": record.transitions,
         "randomization_report": record.randomization_report,
         "success_metrics": record.success_metrics,
+        "final_object_poses": record.final_object_poses,
         "state_per_step": [step.state for step in record.steps],
         "metadata": record.metadata_dict(),
     }
@@ -164,6 +165,7 @@ def _record_from_arrays(sidecar: dict[str, Any], arrays: Any) -> EpisodeRecord:
         transitions=list(sidecar.get("transitions") or []),
         randomization_report=dict(sidecar.get("randomization_report") or {}),
         success_metrics=dict(sidecar.get("success_metrics") or {}),
+        final_object_poses=dict(sidecar.get("final_object_poses") or {}),
         started_at=str(sidecar.get("started_at", "")),
         metadata=dict(sidecar.get("metadata") or {}),
     )

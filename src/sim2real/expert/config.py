@@ -54,6 +54,8 @@ class MotionConfig:
     gripper_open: float = 0.04
     grasp_hold_steps: int = 8
     release_hold_steps: int = 5
+    release_settle_steps: int = 10
+    release_open_timeout_steps: int = 40
     settle_steps: int = 6
     reached_tolerance_m: float = 0.02
     grasp_confirm_distance_m: float = 0.06
@@ -78,6 +80,14 @@ class StagingConfig:
 
 
 @dataclass(frozen=True)
+class PhysicsGuardConfig:
+    """Abort an episode when the simulator state leaves sane bounds."""
+
+    workspace_margin_m: float = 0.25
+    max_abs_qacc: float = 10000.0
+
+
+@dataclass(frozen=True)
 class ExpertConfig:
     control_rate_hz: float
     ik: IKConfig
@@ -86,6 +96,7 @@ class ExpertConfig:
     success: SuccessConfig
     staging: StagingConfig
     state_timeouts_s: dict[str, float]
+    physics_guard: PhysicsGuardConfig = field(default_factory=PhysicsGuardConfig)
     max_steps: int = 600
     default_profile: str = "default"
     instructions_file: Path = DEFAULT_CONFIG_DIR / "instructions.yaml"
@@ -220,6 +231,18 @@ def load_expert_config(config_dir: str | Path | None = None) -> ExpertConfig:
         release_hold_steps=_integer(
             motion_data.get("release_hold_steps", 5), "motion.release_hold_steps", path, minimum=1
         ),
+        release_settle_steps=_integer(
+            motion_data.get("release_settle_steps", 10),
+            "motion.release_settle_steps",
+            path,
+            minimum=0,
+        ),
+        release_open_timeout_steps=_integer(
+            motion_data.get("release_open_timeout_steps", 40),
+            "motion.release_open_timeout_steps",
+            path,
+            minimum=1,
+        ),
         settle_steps=_integer(
             motion_data.get("settle_steps", 6), "motion.settle_steps", path, minimum=0
         ),
@@ -290,6 +313,19 @@ def load_expert_config(config_dir: str | Path | None = None) -> ExpertConfig:
 
     instructions = data.get("instructions_file", "instructions.yaml")
     perturbations = data.get("perturbations_file", "perturbations.yaml")
+    guard_data = _mapping(data.get("physics_guard", {}), "physics_guard", path)
+    physics_guard = PhysicsGuardConfig(
+        workspace_margin_m=_positive(
+            guard_data.get("workspace_margin_m", 0.25),
+            "physics_guard.workspace_margin_m",
+            path,
+        ),
+        max_abs_qacc=_positive(
+            guard_data.get("max_abs_qacc", 10000.0),
+            "physics_guard.max_abs_qacc",
+            path,
+        ),
+    )
 
     return ExpertConfig(
         control_rate_hz=_positive(data.get("control_rate_hz", 20.0), "control_rate_hz", path),
@@ -299,6 +335,7 @@ def load_expert_config(config_dir: str | Path | None = None) -> ExpertConfig:
         success=success,
         staging=staging,
         state_timeouts_s=timeouts,
+        physics_guard=physics_guard,
         max_steps=_integer(data.get("max_steps", 600), "max_steps", path, minimum=1),
         default_profile=str(data.get("default_profile", "default")),
         instructions_file=(directory / str(instructions)).resolve(),

@@ -34,6 +34,10 @@ motion:
   gripper_open: 0.04
   grasp_hold_steps: 8
   release_hold_steps: 5
+  # Hold the place pose with the gripper closed before opening, then wait until
+  # the fingers actually reach the open width (up to the timeout) before RETREAT.
+  release_settle_steps: 10
+  release_open_timeout_steps: 40
   # MuJoCo position actuators need a few control ticks to settle after a plan.
   settle_steps: 6
   reached_tolerance_m: 0.02
@@ -56,6 +60,12 @@ state_timeouts_s:
   PLACE_DESCEND: 5.0
   RELEASE: 4.0
   RETREAT: 5.0
+
+# Abort with PHYSICS_INSTABILITY if a tracked object leaves the scene workspace
+# plus this margin, or if a joint/acceleration state is non-finite or huge.
+physics_guard:
+  workspace_margin_m: 0.25
+  max_abs_qacc: 10000.0
 
 staging:
   capture_images: false

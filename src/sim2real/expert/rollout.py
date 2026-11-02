@@ -99,6 +99,7 @@ class EpisodeRecord:
     transitions: list[dict[str, object]] = field(default_factory=list)
     randomization_report: dict[str, object] = field(default_factory=dict)
     success_metrics: dict[str, object] = field(default_factory=dict)
+    final_object_poses: dict[str, list[list[float]]] = field(default_factory=dict)
     started_at: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -260,6 +261,7 @@ class _EpisodeRunner:
         self._success = False
         self._success_reason = ""
         self._success_metrics: dict[str, object] = {}
+        self._physics_abort_reason: str | None = None
         self._initial_cube_pose: np.ndarray | None = None
         self._targets_map: dict[str, np.ndarray] | None = None
 
@@ -379,7 +381,45 @@ class _EpisodeRunner:
         self._record_step(observation, np.append(command, gripper), result.collision)
         self.step_index += 1
         self.machine.tick(self.dt)
+        self._check_physics(observation)
         return observation
+
+    def _check_physics(self, observation: Any) -> None:
+        """Abort on non-finite/huge state or an object outside the workspace."""
+        if self._physics_abort_reason is not None:
+            return
+        robot = observation.robot_state
+        q = np.asarray(robot.joint_positions, dtype=np.float64)
+        qd = np.asarray(robot.joint_velocities, dtype=np.float64)
+        if not (np.all(np.isfinite(q)) and np.all(np.isfinite(qd))):
+            self._physics_abort_reason = "PHYSICS_INSTABILITY: non-finite joint state"
+            return
+        data = getattr(self.backend, "data", None)
+        qacc = getattr(data, "qacc", None) if data is not None else None
+        if qacc is not None:
+            qacc = np.asarray(qacc, dtype=np.float64)
+            limit = self.config.physics_guard.max_abs_qacc
+            if not np.all(np.isfinite(qacc)) or float(np.max(np.abs(qacc))) > limit:
+                self._physics_abort_reason = (
+                    f"PHYSICS_INSTABILITY: qacc exceeds {limit:.1f} rad/s^2"
+                )
+                return
+        scene = self.backend.configs.scene
+        margin = self.config.physics_guard.workspace_margin_m
+        low = np.asarray(scene.workspace_min, dtype=np.float64) - margin
+        high = np.asarray(scene.workspace_max, dtype=np.float64) + margin
+        for name, pose in observation.object_poses.items():
+            position = np.asarray(pose, dtype=np.float64)[:3, 3]
+            if (
+                not np.all(np.isfinite(position))
+                or np.any(position < low)
+                or np.any(position > high)
+            ):
+                self._physics_abort_reason = (
+                    f"PHYSICS_INSTABILITY: {name} at "
+                    f"{np.round(position, 3).tolist()} outside workspace margin"
+                )
+                return
 
     def _apply_hesitation(self, command: np.ndarray, gripper: float) -> Any | None:
         if self.perturbation is None or self.perturbation.name != "hesitation":
@@ -474,7 +514,11 @@ class _EpisodeRunner:
         self.step_index = 1
         self.machine.fire("start", self.machine.context())
 
-        while not self.machine.terminal and self.step_index < self.max_steps:
+        while (
+            not self.machine.terminal
+            and self.step_index < self.max_steps
+            and self._physics_abort_reason is None
+        ):
             state = self.machine.state
             if state is ExpertState.GRASP:
                 observation = self._run_hold(
@@ -487,15 +531,27 @@ class _EpisodeRunner:
                     self.machine.fire("grasped", self.machine.context(grasp_confirmed=confirmed))
                 continue
             if state is ExpertState.RELEASE:
+                # Let the cube settle at the place pose with the gripper closed.
                 observation = self._run_hold(
                     observation,
-                    self.config.motion.gripper_open,
-                    self.config.motion.release_hold_steps,
+                    self.config.motion.gripper_closed,
+                    self.config.motion.release_settle_steps,
                 )
-                if not self.machine.terminal:
+                # Then open and wait until the fingers actually reach the open
+                # width, up to the timeout. The old fixed hold failed episodes
+                # where the position actuators needed more than 5 steps.
+                q = np.asarray(observation.robot_state.joint_positions, dtype=np.float64)
+                open_now = False
+                for open_step in range(self.config.motion.release_open_timeout_steps):
+                    if self.machine.terminal or self.step_index >= self.max_steps:
+                        break
+                    observation = self._step(q.copy(), self.config.motion.gripper_open)
                     open_now = float(observation.robot_state.gripper_position) >= (
                         self.config.motion.gripper_open - 0.005
                     )
+                    if open_now and open_step + 1 >= self.config.motion.release_hold_steps:
+                        break
+                if not self.machine.terminal:
                     self.machine.fire("released", self.machine.context(gripper_open=open_now))
                 continue
             if state is ExpertState.RETREAT and self._plan is None:
@@ -527,6 +583,9 @@ class _EpisodeRunner:
                 f"max_steps={self.max_steps} reached in {self.machine.state.value}"
             )
             self.record.outcome = contracts.OUTCOME_TIMEOUT
+        elif self._physics_abort_reason is not None:
+            self.record.outcome = contracts.OUTCOME_ABORTED
+            self.record.failure_reason = self._physics_abort_reason
         elif self.machine.state is ExpertState.DONE:
             self.record.outcome = contracts.OUTCOME_SUCCESS
             self.record.success_metrics = self._success_metrics
@@ -543,6 +602,10 @@ class _EpisodeRunner:
             )
 
         self.record.transitions = [entry.to_dict() for entry in self.machine.log]
+        self.record.final_object_poses = {
+            name: np.asarray(pose, dtype=np.float64).tolist()
+            for name, pose in observation.object_poses.items()
+        }
         if self._success_metrics:
             self.record.success_metrics = self._success_metrics
         if not self.record.success_metrics:
