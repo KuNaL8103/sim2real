@@ -40,6 +40,10 @@ from sim2real.sim.camera import (  # noqa: E402
     pose_from_pos_quat,
     quat_wxyz_to_matrix,
 )
+from sim2real.sim.collision import (  # noqa: E402
+    classify_contacts,
+    load_collision_config,
+)
 from sim2real.sim.config import SimConfigs, load_sim_configs  # noqa: E402
 
 if TYPE_CHECKING:
@@ -64,6 +68,8 @@ class MuJoCoBackend(SimBackend):
         self._mujoco = mujoco
         self.configs: SimConfigs = load_sim_configs(config_dir)
         self.config_dir = Path(config_dir).expanduser().resolve()
+        self._collision_config = load_collision_config(self.config_dir / "collision.yaml")
+        self._collision_target: str | None = None
         self.control_rate_hz = float(self.configs.scene.control_rate_hz)
         self.joint_names = tuple(self.configs.panda.joint_names)
         self.joint_limits = np.asarray(self.configs.panda.joint_limits, dtype=np.float64)
@@ -473,6 +479,10 @@ class MuJoCoBackend(SimBackend):
     def collision_report(self) -> CollisionInfo:
         return self._last_collision
 
+    def set_collision_context(self, target_object_id: str | None) -> None:
+        """Tell the backend which cube is the current grasp target."""
+        self._collision_target = target_object_id
+
     def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
         poses: dict[str, tuple[str | None, np.ndarray]] = {}
         previous: str | None = None
@@ -544,20 +554,24 @@ class MuJoCoBackend(SimBackend):
         return Observation(robot_state=state, object_poses=object_poses)
 
     def _contacts(self) -> CollisionInfo:
-        details: list[str] = []
+        contacts: list[tuple[str, str, float]] = []
         for index in range(self.data.ncon):
             contact = self.data.contact[index]
-            body1 = self._body_name(int(self.model.geom_bodyid[contact.geom1]))
-            body2 = self._body_name(int(self.model.geom_bodyid[contact.geom2]))
-            if body1 in self._robot_bodies and body2 in self._robot_bodies:
-                continue
-            if body1 == "world" or body2 == "world":
-                continue
-            if body1 == "table" or body2 == "table":
-                continue
-            if body1 in self._cube_bodies or body2 in self._cube_bodies:
-                details.append(f"{body1}<->{body2}")
-        return CollisionInfo(num_unintended_contacts=len(details), details=tuple(details))
+            contacts.append(
+                (
+                    self._geom_name(int(contact.geom1)),
+                    self._geom_name(int(contact.geom2)),
+                    float(contact.dist),
+                )
+            )
+        return classify_contacts(contacts, self._collision_config, self._collision_target)
+
+    def _geom_name(self, geom_id: int) -> str:
+        name = self._mujoco.mj_id2name(self.model, self._mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+        if name:
+            return name
+        body = self._body_name(int(self.model.geom_bodyid[geom_id]))
+        return f"{body}/geom{geom_id}"
 
     def _body_name(self, body_id: int) -> str:
         name = self._mujoco.mj_id2name(self.model, self._mujoco.mjtObj.mjOBJ_BODY, body_id)

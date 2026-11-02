@@ -41,6 +41,7 @@ from sim2real.sim.camera import (
     make_pose,
     pose_from_pos_quat,
 )
+from sim2real.sim.collision import classify_contacts, load_collision_config
 from sim2real.sim.config import SimConfigs, load_sim_configs
 from sim2real.sim.kinematics import forward_kinematics, hand_pose, tcp_pose
 
@@ -63,6 +64,8 @@ class FakeBackend(SimBackend):
     def __init__(self, config_dir: str | Path) -> None:
         self.configs: SimConfigs = load_sim_configs(config_dir)
         self.config_dir = Path(config_dir).expanduser().resolve()
+        self._collision_config = load_collision_config(self.config_dir / "collision.yaml")
+        self._collision_target: str | None = None
         self.control_rate_hz = float(self.configs.scene.control_rate_hz)
         self.joint_names = tuple(self.configs.panda.joint_names)
         self.joint_limits = np.asarray(self.configs.panda.joint_limits, dtype=np.float64)
@@ -367,6 +370,10 @@ class FakeBackend(SimBackend):
     def collision_report(self) -> CollisionInfo:
         return self._last_collision
 
+    def set_collision_context(self, target_object_id: str | None) -> None:
+        """Fake analogue: the target cube only affects which grasp is intended."""
+        self._collision_target = target_object_id
+
     def link_poses(self) -> dict[str, tuple[str | None, np.ndarray]]:
         return forward_kinematics(self._arm, self.configs.panda)
 
@@ -410,8 +417,14 @@ class FakeBackend(SimBackend):
 
     def _table_collision(self) -> CollisionInfo:
         table_top = self.configs.scene.table_position[2] + self.configs.scene.table_size[2] / 2.0
-        if float(self._tcp()[2, 3]) < table_top - FAKE_TABLE_CONTACT_MARGIN_M:
-            return CollisionInfo(1, ("tcp<->table",))
+        tcp_z = float(self._tcp()[2, 3])
+        if tcp_z < table_top - FAKE_TABLE_CONTACT_MARGIN_M:
+            penetration = tcp_z - (table_top - FAKE_TABLE_CONTACT_MARGIN_M)
+            return classify_contacts(
+                [("hand/geom_tcp", "table", penetration)],
+                self._collision_config,
+                self._collision_target,
+            )
         return CollisionInfo(0, ())
 
     # -- internals ---------------------------------------------------------

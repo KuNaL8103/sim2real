@@ -143,16 +143,9 @@ def derive_episode_seed(seed: int, episode_index: int) -> int:
 
 
 def _unintended_collision(collision: Any, target_object: str) -> bool:
-    details = getattr(collision, "details", ()) or ()
-    count = int(getattr(collision, "num_unintended_contacts", 0) or 0)
-    if count == 0 and not details:
-        return False
-    for detail in details:
-        parts = str(detail).split("<->")
-        if target_object in parts and any("finger" in part for part in parts):
-            continue
-        return True
-    return count > 0
+    """The backend already classified contacts; count only unintended ones."""
+    del target_object  # the target is applied via backend.set_collision_context
+    return bool(int(getattr(collision, "num_unintended_contacts", 0) or 0))
 
 
 def _grasp_confirmed(backend: Any, target_object: str, observation: Any) -> bool:
@@ -162,7 +155,9 @@ def _grasp_confirmed(backend: Any, target_object: str, observation: Any) -> bool
     collision = backend.collision_report()
     for detail in getattr(collision, "details", ()) or ():
         parts = str(detail).split("<->")
-        if target_object in parts and any("finger" in part for part in parts):
+        target_seen = any(target_object in part for part in parts)
+        finger_seen = any("finger" in part for part in parts)
+        if target_seen and finger_seen:
             return True
     return False
 
@@ -631,6 +626,10 @@ def run_episode(
             record.randomization_report = json.loads(outcome.applied_config_json)
         except (TypeError, ValueError):  # pragma: no cover - reset validates JSON
             record.randomization_report = {"raw": outcome.applied_config_json}
+
+        set_collision_context = getattr(backend, "set_collision_context", None)
+        if callable(set_collision_context):
+            set_collision_context(task.object_id)
 
         runner = _EpisodeRunner(
             backend=backend,

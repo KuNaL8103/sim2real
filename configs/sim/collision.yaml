@@ -1,0 +1,55 @@
+# Contact classification for the MuJoCo Panda tabletop.
+#
+# Runtime robot collision geoms are unnamed in the pinned Menagerie MJCF, so the
+# backend names them "<body>/geom<id>" (for example "left_finger/geom74").
+# Scene geoms are named (table, cube_*_geom, zone_*). Groups match an exact
+# name or a prefix.
+#
+# Evidence from clean episodes seeds 4000-4005:
+#   cube<->table, target_cube<->finger, and finger<->table (unintended).
+#   No arm/hand/robot-robot contacts appeared. Robot-robot contacts are treated
+#   as self-contacts and are reported but not counted; see the comment below.
+schema_version: 1
+
+collision:
+  groups:
+    arm_links:
+      - "link0/geom"
+      - "link1/geom"
+      - "link2/geom"
+      - "link3/geom"
+      - "link4/geom"
+      - "link5/geom"
+      - "link6/geom"
+      - "link7/geom"
+    hand:
+      - "hand/geom"
+    fingers:
+      - "left_finger/geom"
+      - "right_finger/geom"
+    cubes:
+      - "cube_red_geom"
+      - "cube_green_geom"
+      - "cube_blue_geom"
+    table:
+      - "table"
+    zones:
+      - "zone_left"
+      - "zone_right"
+
+  target_group: cubes
+  allowed_contacts:
+    - finger_target_grasp
+    - cube_table
+    - cube_zone
+
+  # Parent/child and neighbouring robot links can be reported by MuJoCo. They
+  # are not environment collisions; they are reported in details as "self" and
+  # not counted. No such contact appeared in the seeds above, so this exclusion
+  # is not hiding observed collisions.
+  ignore_robot_self: true
+
+  # Only actual penetration (contact.dist < 0) counts as unintended. Zero or
+  # positive distances are reported as "touch" in details and not counted, so
+  # a finger-cube grasp at exactly 0 still confirms a grasp.
+  penetration_only: true
