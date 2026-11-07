@@ -1,0 +1,71 @@
+# SmolVLA + PEFT LoRA fine-tuning (Task 8).
+#
+# Verified against LeRobot 0.6.1 and lerobot/smolvla_base revision
+# 5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6. The model card and config.json
+# confirm 450M parameters, Apache-2.0, tokenizer pad "max_length", chunk 50,
+# max_state_dim/max_action_dim 32, VISUAL IDENTITY / STATE MEAN_STD / ACTION
+# MEAN_STD, resize 512x512, empty_cameras 0, freeze_vision_encoder true,
+# train_expert_only true. See docs/TRAINING.md.
+#
+# The base model expects camera1..camera3. This dataset records two cameras, so
+# overhead -> camera1 and wrist -> camera2; camera3 is intentionally absent
+# (empty_cameras stays 0). This is recorded as a limitation, not hidden.
+schema_version: 1
+model:
+  family: smolvla
+  checkpoint: lerobot/smolvla_base
+  revision: 5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6
+  expected_cameras:
+    - observation.images.camera1
+    - observation.images.camera2
+  validated: true
+  max_state_dim: 32
+  max_action_dim: 32
+  empty_cameras: 0
+lora:
+  enabled: true
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  # Verified from SmolVLAPolicy._get_default_peft_targets() in LeRobot 0.6.1:
+  # q/v projections of the action expert plus the state/action projections.
+  # Scripts/list_lora_targets.py resolves this against the loaded model and
+  # fails if any alternative matches nothing.
+  target_modules:
+    - '(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))'
+  bias: none
+  method_type: LORA
+  init_type: null
+data:
+  dataset_root: data/lerobot/train_v1
+  val_fraction: 0.2
+  split_seed: 123
+  exclude_perturbed: false
+  mixture_path: null
+  rename_map:
+    observation.images.overhead: observation.images.camera1
+    observation.images.wrist: observation.images.camera2
+  action_representation: joint_position
+  decimation: 2
+  fps: 10.0
+training:
+  smoke_test: true
+  max_steps: 50
+  batch_size: 1
+  seed: 0
+  lr: 0.0001
+  grad_accum: 1
+  # fp32 is the only precision verified for this stack on this driver. bf16/fp16
+  # stay allowed by the validator but must be measured before use.
+  precision: fp32
+  gradient_checkpointing: false
+  save_every: 25
+  num_workers: 0
+  deterministic: true
+  # 50 steps at 10 Hz = 5.0 s, longer than a ~4.6 s episode. is_pad masks are
+  # mandatory; see DECISION B.
+  chunk_size: 50
+  n_action_steps: 50
+tracking:
+  backend: none
+  offline: true

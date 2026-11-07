@@ -1,0 +1,62 @@
+# OpenVLA-7B LoRA configuration.
+#
+# OPTIONAL AND NOT VALIDATED. This file is documentation of a future option, not
+# a working path. Before use:
+#   - verify the actual license (the OpenVLA weights are Llama-2-derived and
+#     carry additional terms; the repository's MIT license does not cover them);
+#   - verify the pinned revision and VRAM requirement (7B parameters do not fit
+#     a 6 GiB GPU without quantization/full offload);
+#   - verify the camera keys and action normalization from the model card.
+# The adapter raises AdapterUnavailable and Task 8 did not download the weights.
+schema_version: 1
+model:
+  family: openvla7b
+  checkpoint: openvla/openvla-7b
+  revision: null
+  expected_cameras:
+    - observation.images.camera1
+  validated: false
+  max_state_dim: 8
+  max_action_dim: 7
+  empty_cameras: 0
+lora:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # NOT verified: these are common Llama projection names only. The adapter
+  # refuses this family before resolving anything.
+  target_modules:
+    - q_proj
+    - v_proj
+  bias: none
+  method_type: LORA
+  init_type: null
+data:
+  dataset_root: data/lerobot/train_v1
+  val_fraction: 0.2
+  split_seed: 123
+  exclude_perturbed: false
+  mixture_path: null
+  rename_map:
+    observation.images.overhead: observation.images.camera1
+  action_representation: joint_position
+  decimation: 2
+  fps: 10.0
+training:
+  smoke_test: true
+  max_steps: 1
+  batch_size: 1
+  seed: 0
+  lr: 0.0005
+  grad_accum: 1
+  precision: fp32
+  gradient_checkpointing: false
+  save_every: 0
+  num_workers: 0
+  deterministic: true
+  chunk_size: 8
+  n_action_steps: 8
+tracking:
+  backend: none
+  offline: true
