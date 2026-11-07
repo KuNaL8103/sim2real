@@ -18,8 +18,10 @@ Tasks 1-7 implement scaffolding, contracts, fake and MuJoCo simulator backends,
 seeded domain randomization, a language-conditioned scripted pick-and-place
 expert with atomic rollout staging, trajectory filtering with quality metrics,
 versioned `curated_v1` output, RGB-D mapping, and a two-layer LeRobot v3 /
-Open X dataset builder. Training, inference, and safety logic are not
-implemented; Bridge real data and video encoding are not exercised.
+Open X dataset builder. Task 8 adds an offline SmolVLA + PEFT LoRA fine-tuning
+pipeline with a measured two-step GPU smoke run and offline L1 validation.
+Closed-loop inference and safety logic are not implemented; Bridge real data and
+video encoding are not exercised.
 
 ## Verified environment
 
@@ -79,9 +81,11 @@ Therefore:
   published requirements, not tested). No install is authorized; the guarded
   adapter and docs remain. WSL2 is documented only for external ROS nodes and
   is deprecated; "Isaac Sim runs inside WSL2" is **NOT ESTABLISHED**.
-- **SmolVLA fine-tuning feasibility: UNKNOWN** until measured in Task 8. The
-  6 GB GPU may be insufficient; cloud/Colab-style GPU runs are an alternative,
-  with checkpoints and provenance metadata brought back into the repo.
+- **SmolVLA fine-tuning feasibility is MEASURED for a two-step smoke run, not a
+  full run.** The 6 GB GPU fits batch 1 / chunk 50 with **1,117 MiB** peak VRAM
+  and **~3.7 GiB** host RSS (2026-11-07). A longer run or a larger batch was not
+  measured; cloud/GPU runs remain an option with checkpoints and provenance
+  metadata brought back into the repo.
 - **Task 2b measured MuJoCo limits (8 vCPU / 9.7 GiB):** with images off,
   `/joint_states` and `/tf` run at **~20 Hz**. With images on and software
   rendering, `/joint_states` and `/tf` run at **20.00/20.01 Hz**, while the
@@ -130,6 +134,17 @@ uv run --group sim python scripts/bench_render.py --frames 3
 # One-shot core verification
 ./scripts/run_core_tests.sh
 
+# Optional ML environment and tests (never created by CI)
+./scripts/setup_envs.sh --with-ml
+scripts/run_ml_tests.sh                  # markers: ml and not gpu
+scripts/run_ml_tests.sh --gpu            # only after explicit approval
+
+# Task 8 CLI (core-only fake path first)
+uv run python scripts/train_vla.py --config configs/training/smolvla_lora.yaml --fake --smoke
+uv run python scripts/validate_checkpoint.py --checkpoint outputs/task8/fake_smoke/checkpoint-00000005 --fake
+uv run python scripts/list_lora_targets.py --fake-tree
+.venv-ml/bin/python scripts/train_vla.py --config configs/training/smolvla_lora.yaml --smoke --max-steps 2
+
 # CI parity (core + ROS job, with scipy/open3d shadowed for the ROS half)
 ./scripts/ci_parity.sh
 
@@ -167,7 +182,7 @@ Never run ROS nodes with `.venv/bin/python`.
 | --- | --- | --- |
 | `.venv` | core library, lint, CPU tests, CI | no |
 | `.venv-ros` | ROS adapter tests and integration | yes, via `--system-site-packages` |
-| `.venv-ml` | torch / LeRobot / PEFT (Task 7/8); opt-in only | no; created 2026-11-02 |
+| `.venv-ml` | offline VLA fine-tuning: torch 2.11.0+cu126, LeRobot 0.6.1, PEFT, accelerate, transformers (Task 8); opt-in only | no; created 2026-11-02, GPU wheel added 2026-11-07 |
 
 `.venv-ros` must see the system `rclpy` and system NumPy 1.26.4. Do not install
 NumPy there; a venv copy would shadow the system version. `.venv` may use a
@@ -238,7 +253,7 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 6 — RGB-D workspace mapping, point cloud, TSDF, obstacle query
 - [x] Task 6b — collision classifier, release/physics guards, filter re-derivation, replay prototype, limit verification
 - [x] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler (complete with pending checks above)
-- [ ] Task 8 — SmolVLA + LoRA fine-tuning
+- [x] Task 8 — SmolVLA + LoRA fine-tuning (complete with pending checks above)
 - [ ] Task 9 — closed-loop evaluation
 - [ ] Task 10 — ROS 2 inference bridge
 - [ ] Task 11 — safety watchdog and e-stop
@@ -246,9 +261,10 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=368 failed=0 skipped=8 errors=0 | date=2026-11-02 | base_commit=ef975e4
-- Last verified ROS test run: passed=380 failed=0 skipped=1 errors=0 | date=2026-11-02 | base_commit=ef975e4
-- Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; CI for this push pending user confirmation in the Actions tab
+- Last verified test run: passed=441 failed=0 skipped=10 errors=0 | date=2026-11-07 | base_commit=e845a6c
+- Last verified ROS test run: passed=453 failed=0 skipped=3 errors=0 | date=2026-11-07 | base_commit=e845a6c
+- Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; CI for this push PENDING user confirmation in the Actions tab; OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
+- Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; **CI user-confirmed green, 2026-11-02** (no run id recorded)
 - Task 6b status: complete with pending checks: **CI user-confirmed green for the 6b push, 2026-11-02** (no run id recorded); RViz visual confirmation PENDING (no report in this session); expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
 - Task 6 status: complete with pending checks: **CI user-confirmed green for the Task 6 push (f8c77f2) and the CI fix (8207142), 2026-11-01** (no run id recorded); RViz mapping check was visually confirmed for the fake backend and the lean mapper config, but this session has no new user report; MuJoCo runtime measured but no rate/quality threshold asserted; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
 - Task 5 status: complete with pending checks: keyframe/Parquet manual inspection PENDING (user); CI for the Task 5 push and the follow-up import-guard fix is **user-confirmed green, 2026-11-01** (no run id recorded); MuJoCo expert success rate and the 40-episode failure census are measured but not tuned; collision flag over-reports intended grasps (Task 4 bug, expert code not changed); opencode permission rules are unenforced in this setup and the v2 migration is rolled back
@@ -333,6 +349,64 @@ Run breakdown (2026-11-02, Task 6b):
 - RViz: no new user report in this session. Task 6 established that the full
   `sim2real.rviz` Camera/Image displays plus MuJoCo EGL can drop the X11
   connection; the lean `mapper.rviz` plus the 8 s delay survived 165 s.
+
+Run breakdown (2026-11-07, Task 8):
+
+- Core ROS-free: **441 passed, 0 failed, 10 skipped, 0 errors** (was
+  368/8 before Task 8). 73 new passing tests; the two extra skips are the new
+  `ml` and `gpu` training test modules in the core environment.
+- ROS (`.venv-ros` after `colcon build --symlink-install --parallel-workers 2`):
+  **453 passed, 0 failed, 3 skipped, 0 errors** (was 380/1). `colcon
+  test-result --verbose`: **7 tests, 0 errors, 0 failures, 0 skipped**.
+- Ruff check and format check are clean. `scripts/ci_parity.sh` **passed**
+  end-to-end (core + ROS parity halves).
+- ML: `scripts/run_ml_tests.sh` reported **4 passed, 1 deselected** (`gpu`).
+  The tiny torch LoRA test measured a trainable fraction of **0.108108**; the
+  normalization parity test measured a maximum difference of **8.0e-08** versus
+  LeRobot's `NormalizerProcessorStep`.
+- Housekeeping (a): Task 7 CI is **user-confirmed green, 2026-11-02** (no run id
+  recorded). RViz mapping and the Task 7 viewer check remain **PENDING**.
+- Housekeeping (b): `scripts/run_ml_tests.sh` added (path-selected ML tests,
+  `PYTHONPATH=src`, markers `ml and not gpu`, clear failure if `.venv-ml` is
+  missing); a text test covers it and the opt-in CUDA setup lines.
+- Housekeeping (c): accepted episodes in `data/curated/train_v1` are **123 =
+  114 clean + 9 perturbed** (detour **4**, overspeed **3**, jitter **2**). The
+  first 40 accepted episodes contain **36 clean + 4 perturbed** (detour 3,
+  jitter 1).
+- Training dataset: **40 episodes, 1,849 frames, 10 fps, 92 MB**, episode split
+  **32 train / 8 val** (seed 123), **3,698 llvmpipe PNGs (103 MB)**, decimation
+  2, cameras overhead/wrist. The 38 newly rendered episodes produced **3,514
+  frames in 650.3 s (10.84 min)** with max joint **0.0 rad** and max object
+  **0.0 m** replay error. Subset accepted initial red-cube x: min **0.3630 m**,
+  median **0.4141 m**, max **0.5104 m**; full-run values remain
+  **0.3601 / 0.4351 / 0.5371 m**.
+- Stack: LeRobot **0.6.1**, torch **2.11.0+cu126** (CUDA runtime 12.6, driver
+  551.76), PEFT **0.21.2**, accelerate **1.15.0**, transformers **5.5.4**,
+  num2words **0.5.14**; `.venv-ml` is **6.7 GB** and the HF cache is **2.9 GB**.
+  The cu126 scratch-venv 2048x2048 CUDA matmul passed (sum **141957.375**,
+  40.1 MiB). cu124 has no CPython 3.12 torch satisfying LeRobot
+  `>=2.7,<2.12`; cu128 was not tested.
+- LoRA: the verified regex resolved to **37** modules (**32** action-expert
+  q/v projections + **5** state/action projections); **1,485,312 trainable of
+  451,531,488 total (0.329%)**; **450,046,176** base parameters frozen.
+- Real smoke run: **2 steps**, batch 1, chunk 50, 2 cameras. Losses
+  **2.277515411376953 -> 3.060152530670166**; step time **5.06 s** (warm-up)
+  then **0.66 s** (steady-state 0.43-0.66 s across runs); peak VRAM **1,117.21 MiB**; peak host RSS **3,807 MiB**
+  (`resource`) / **3,906 MiB** (`/usr/bin/time`); checkpoint
+  `outputs/task8/smolvla_smoke/checkpoint-00000002`; adapter
+  `adapter_model.safetensors` **5,952,536 B**. Two seeded runs produced
+  identical losses and peak VRAM.
+- Offline L1 on the smoke checkpoint: **8 held-out episodes, 366 windows,
+  8,561 valid steps**. Per-dimension L1 **0.0634 / 0.0973 / 0.1566 / 0.1931 /
+  0.0692 / 0.2032 / 0.1980 / 0.0194**; horizon L1 starts at **0.0580** and
+  grows to about **0.13**; normalized per-dimension 0.69-1.42. The
+  `hold_last_state` and `mean_action` baselines are recorded in
+  `docs/TRAINING.md`. After two steps the policy is comparable to, not better
+  than, the baselines; **no quality claim**.
+- Decisions A-C are recorded in `docs/TRAINING.md` and the decision log. What
+  was **NOT** run: OpenVLA-7B, bf16/fp16, gradient checkpointing, cu128, a
+  remote GPU, video/MP4, real Bridge data, policy quality, RViz/viewer checks;
+  wandb/mlflow were not installed or exercised (only the `none` tracker).
 
 Run breakdown (2026-11-02, Task 7):
 
@@ -626,9 +700,11 @@ Run breakdown (2026-10-31, Task 2b):
   histogram aggregation by up to 0.064. LeRobot `meta/stats.json` is
   authoritative for training; image stats here are per-channel frame means, not
   full pixel histograms.
-- **The `.venv-ml` full-suite pytest is path-limited.** That minimal CPU env has
-  no scipy/open3d/mujoco. The ml writer test passes when selected by path:
-  `.venv-ml/bin/python -m pytest -m ml -ra tests/test_dataset_writer_ml.py`.
+- **The `.venv-ml` full-suite pytest is path-limited.** That env lacks
+  scipy/open3d/mujoco, so the bare `-m ml` selector collects unrelated modules.
+  Use `scripts/run_ml_tests.sh`, which selects the ML test files by path and
+  sets `PYTHONPATH=src`. The GPU smoke remains opt-in (`--gpu` and
+  `SIM2REAL_RUN_GPU_SMOKE=1`).
 - **Replay rendering is a prototype, not wired into curation.** `render_replay.py`
   writes per-step PNGs and records path+sha256/renderer/fidelity in the staging
   sidecar/manifest, but `curated_v1` still records `images: none`; the Task 7
@@ -749,13 +825,33 @@ Run breakdown (2026-10-31, Task 2b):
   committed. A user-visible prompt test is required before retrying.
 - **`render_only_when_subscribed` defaults to false.** When enabled, a camera
   with no subscribers is skipped and counted.
-- **SmolVLA fine-tuning feasibility is UNKNOWN** until Task 8 measures it.
-  Cloud/Colab GPU runs are an alternative path with provenance metadata.
+- **SmolVLA fine-tuning fits a two-step smoke run on this GPU, not a full
+  run.** Measured peak VRAM **1,117 MiB** and host RSS **~3.7 GiB** at batch 1 /
+  chunk 50 (2026-11-07). A longer run, larger batch, bf16/fp16, and gradient
+  checkpointing were not measured. Remote GPU runs remain an option; see
+  `docs/REMOTE_TRAINING.md` (documentation only).
+- **Task 8 is offline training and offline L1 only.** It does not run a policy
+  in the simulator, does not claim policy quality, and does not implement
+  closed-loop evaluation (Task 9) or safety (Task 11).
+- **The base SmolVLA expects three cameras; this dataset supplies two.**
+  `overhead -> camera1`, `wrist -> camera2`; the third slot is absent because
+  `empty_cameras: 0`. This is a pretraining-distribution deviation.
+- **The smoke checkpoint was written from a dirty tree** (`git_dirty: true` in
+  `checkpoint_metadata.json`) because the Task 8 code was uncommitted at
+  creation. That is accurate provenance, not a failure.
+- **OpenVLA-7B is an unvalidated config.** `OpenVLAAdapter` raises
+  `AdapterUnavailable`; the license (Llama-derived) and VRAM were not verified
+  and no weights were downloaded.
+- **`collision_count` is not used by training and is not a safety signal.**
+  The accepted-data caveats (small sample, accepted-pose skew, 9 perturbed
+  accepted episodes) still apply.
 - RViz was re-confirmed after the Task 2b threading change on 2026-10-31.
 - Docker image not pulled or built; Docker Desktop's WSL integration for
   Ubuntu-24.04 is disabled.
-- `.venv-ml` now exists (1.5 GiB, CPU-only) and is opt-in via
-  `scripts/setup_envs.sh --with-ml`; CI never creates or installs it.
+- `.venv-ml` is now **6.7 GB** (torch 2.11.0+cu126, LeRobot 0.6.1, PEFT,
+  accelerate, transformers) and is opt-in via
+  `scripts/setup_envs.sh --with-ml`; CI never creates or installs it. The HF
+  cache is **2.9 GB**.
 - `hydra-core`/`omegaconf` are installed for later tasks but unused.
 - CI actions are pinned to tags (`actions/checkout@v7`,
   `astral-sh/setup-uv@v10.3.3`), not commit SHAs. Pinning policy is pending.
@@ -806,11 +902,18 @@ Run breakdown (2026-10-31, Task 2b):
   in this session; the lean mapper config and 8 s delay are established).
 - [x] Confirm the GitHub Actions tab for the Task 6b push — **user-confirmed
   green, 2026-11-02** (no run id invented).
-- [ ] Confirm the GitHub Actions tab for the Task 7 push (user confirms; no run
-  id invented).
+- [x] Confirm the GitHub Actions tab for the Task 7 push — **user-confirmed
+  green, 2026-11-02** (no run id invented).
 - [ ] Optional Task 7 viewer check: run the LeRobot dataset visualizer on
   `data/lerobot/train_v1_imagedemo` and open replayed PNGs in VS Code. **PENDING**;
   does not block the commit.
+- [ ] Task 8 manual checkpoint: inspect `outputs/task8/smolvla_smoke/losses.jsonl`,
+  `outputs/task8/smolvla_smoke/checkpoint-00000002/`, and its
+  `checkpoint_metadata.json`, then reply **"smoke confirmed"** or
+  **"smoke pending"**. The optional rendered PNGs are under
+  `data/lerobot/train_v1/` and `data/staging/train_v1/.../images/`.
+- [ ] Confirm the GitHub Actions tab for the Task 8 push (user confirms; no run
+  id invented).
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
   commit.

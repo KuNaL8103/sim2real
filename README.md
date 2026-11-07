@@ -4,12 +4,13 @@ End-to-end sim2real robotics data pipeline and VLA fine-tuning framework for a
 Franka Panda, built around ROS 2 Jazzy, MuJoCo (Isaac Sim optional), LeRobot,
 and SmolVLA + LoRA.
 
-**Task 7 status: LeRobot v3 / Open X dataset builder.** The workspace mapper,
-contact classifier, runner physics guard, re-derived filter thresholds,
+**Task 8 status: offline SmolVLA + PEFT LoRA fine-tuning.** The workspace
+mapper, contact classifier, runner physics guard, re-derived filter thresholds,
 replay-rendering path, verified Franka limits, official LeRobot writer,
-normalization statistics, episode split, deterministic mixture sampler, and
-fixture-first Bridge RLDS adapter are implemented. Training, inference, real
-Bridge data, video encoding, and safety are not implemented.
+normalization statistics, episode split, deterministic mixture sampler,
+fixture-first Bridge RLDS adapter, and the offline VLA training/validation
+pipeline are implemented. A two-step SmolVLA GPU smoke run passed. Closed-loop
+inference, real Bridge data, video encoding, and safety are not implemented.
 
 ## What exists today
 
@@ -19,15 +20,18 @@ Bridge data, video encoding, and safety are not implemented.
   pick-and-place expert (FK/IK/planner/state machine/perturbations/staging),
   trajectory filtering with `curated_v1` writing, RGB-D mapping
   (`TSDFMap`, robot self-filter, transform providers, vectorized obstacle
-  query), and the two-layer LeRobot/Open X dataset builder.
+  query), the two-layer LeRobot/Open X dataset builder, and offline VLA
+  training/validation (validated configs, LoRA targets, action chunks,
+  provenance checkpoints, offline L1).
 - **ROS 2 Jazzy adapters**: `sim_node`, `expert_collector_node`,
   `trajectory_filter_node`, and `workspace_mapper_node`.
 - `sim2real_msgs` interfaces, including the Task 5 measured `TrajectoryStep`
   fields.
 - Documentation, versioned YAML configs, scripts, CI, and hardware-free tests.
-- Verified on 2026-11-02: core **368 passed / 8 skipped**, ROS `.venv-ros`
-  **380 passed / 1 skipped**, `colcon test-result` **7 tests / 0 failures**.
-  Details and provenance are in `CLAUDE.md` and `docs/ARCHITECTURE.md`.
+- Verified on 2026-11-07: core **441 passed / 10 skipped**, ROS `.venv-ros`
+  **453 passed / 3 skipped**, `colcon test-result` **7 tests / 0 failures**;
+  ML suite **4 passed / 1 deselected**. Details and provenance are in
+  `CLAUDE.md`, `docs/ARCHITECTURE.md`, and `docs/TRAINING.md`.
 
 ## Quick start
 

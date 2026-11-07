@@ -1,15 +1,14 @@
 # Architecture
 
-Status: **Task 7.** Simulator backends, `sim_node`, seeded domain randomization,
+Status: **Task 8.** Simulator backends, `sim_node`, seeded domain randomization,
 a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
 a versioned `curated_v1` dataset writer, RGB-D workspace mapping, and the
-two-layer LeRobot/Open X dataset builder are implemented. Task 7 adds the
-official LeRobot v3 writer, replay-image integration, normalization statistics,
-episode-level train/val splitting, a deterministic mixture sampler, and a
-fixture-first Bridge RLDS adapter. Task 6b fixed the collision flag with a pure
-contact classifier, added a runner physics guard and a release guard, re-derived
-the MuJoCo filter thresholds, prototyped replay rendering, and verified the
-Franka limits.
+two-layer LeRobot/Open X dataset builder are implemented. Task 8 adds an offline
+SmolVLA + PEFT LoRA fine-tuning pipeline: validated configs, verified target
+modules, action-chunk padding/masks, LeRobot-consistent normalization, a
+deterministic trainer, provenance checkpoints, offline L1 validation, and
+optional offline tracking. A two-step GPU smoke run passed on this machine. Real
+Bridge data, closed-loop inference, and safety remain unimplemented.
 Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
 adds validated randomization profiles and reset-service integration; Task 4 adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
@@ -24,6 +23,24 @@ fixture adapter; real Bridge data, training, inference, and safety remain
 unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
 (requirements-based, not tested); MoveIt 2 is **not installed** and its planner
 adapter is an unexercised guard.
+
+## Scope of Task 8
+
+- `src/sim2real/training/`: validated config, LoRA target resolver, action-chunk
+  encode/decode with masks, LeRobot-consistent normalization for the fake path,
+  policy adapters, deterministic trainer, provenance checkpoints, offline L1
+  validation, optional offline tracking. NumPy-only imports at package level;
+  torch/LeRobot/PEFT are lazy and guarded.
+- `configs/training/smolvla_lora.yaml` (verified) and
+  `configs/training/openvla7b_lora.yaml` (explicitly not validated).
+- `scripts/train_vla.py`, `scripts/validate_checkpoint.py`,
+  `scripts/list_lora_targets.py`, `scripts/run_ml_tests.sh`.
+- A 40-episode `data/lerobot/train_v1` built from accepted MuJoCo episodes with
+  llvmpipe replay images at decimation 2 / 10 Hz.
+- A measured two-step SmolVLA GPU smoke run and an offline L1 report. No policy
+  quality claim.
+- `docs/TRAINING.md` (primary sources, decisions, measurements) and
+  `docs/REMOTE_TRAINING.md` (documentation only).
 
 ## Scope of Task 6b
 
@@ -176,9 +193,12 @@ Consequences:
 - **Isaac Sim high-fidelity tier: UNAVAILABLE on this machine**, based on
   published requirements rather than a local test. No install is authorized;
   the guarded adapter and documentation remain.
-- **SmolVLA fine-tuning feasibility: UNKNOWN** until Task 8 measures it. Cloud
-  or Colab-style GPU runs are an alternative, with checkpoints and provenance
-  metadata brought back into the repository.
+- **SmolVLA fine-tuning feasibility is MEASURED for a two-step smoke run, not
+  for a full training run.** On 2026-11-07 a 2-step LoRA run at batch 1 and
+  chunk 50 used **1,117 MiB peak VRAM** and **~3.7 GiB peak host RSS** on the
+  RTX 4050; losses were finite. This proves the pipeline fits, not that a long
+  run or a larger batch fits. Cloud/remote GPUs remain an option for longer
+  runs; see `docs/REMOTE_TRAINING.md`.
 - **MuJoCo rendering plus ROS is still constrained by software GL.** Task 2b
   uses 256x256 cameras, two colcon workers with the active 9.7 GiB / 8 vCPU
   limits, and measured peak RSS; state/TF reach 20 Hz, images 2.67 Hz. See below.
@@ -223,7 +243,7 @@ filter (Task 5)
 export (Task 7)
     -> curated_v1 + LeRobot v3 / Open X fixtures under data/  (ignored by git)
 training (Task 8)
-    -> LoRA adapter on disk            (ignored by git)
+    -> LoRA adapter + checkpoint metadata on disk   (ignored by git)
 inference (Tasks 9-10)
     -> /vla/raw_action                 (JointTrajectory)
 safety/control (Task 11)
@@ -1173,8 +1193,9 @@ The derived `ee_delta` is 7: world-axis translation delta, rotation vector of
 
 Default **decimation is 2**: state, action, and images are selected at the same
 20 Hz source steps and stored at 10 Hz. fps is always derived, never hardcoded.
-The consequence for Task 8 is recorded in the decision log: a 50-step chunk at
+The consequence for Task 8 was recorded in the decision log: a 50-step chunk at
 10 Hz spans 5 s, longer than a typical episode, so padding/masking is required.
+Task 8 kept chunk 50 and masks the tail (Decision B).
 
 ### Images and replay
 
@@ -1212,6 +1233,114 @@ Task 7 generated 200 MuJoCo episodes (seeds 10000-10199), accepted 123 (114 of
 `data/lerobot/train_v1_imagedemo`: 2 episodes, 92 frames, 10 fps, 4.7 MiB. The
 Bridge fixture produced 3 episodes/12 frames at 5 fps. Details and primary
 source URLs are in `docs/DATASETS.md`.
+
+## Offline VLA fine-tuning (Task 8)
+
+### Module layout and boundary
+
+```
+src/sim2real/training/
+  config.py         strict YAML schema + key-path validation; horizon seconds
+  lora.py           resolve patterns against observed module names; fraction
+  actions.py        chunk encode/decode, dimension padding, is_pad, seconds
+  normalization.py  mean_std/quantile for the fake path and tests
+  adapters.py       PolicyAdapter, FakePolicyAdapter, SmolVLAAdapter (lazy),
+                    OpenVLAAdapter (refusing stub)
+  trainer.py        deterministic loop, grad accumulation, resume, split guard
+  checkpoint.py     provenance metadata and refusal on mismatch
+  validation.py     offline L1, per-dimension/horizon, baselines
+  tracking.py       none|wandb|mlflow, offline only, lazy imports
+configs/training/{smolvla_lora,openvla7b_lora}.yaml
+scripts/{train_vla,validate_checkpoint,list_lora_targets}.py
+scripts/run_ml_tests.sh
+```
+
+Importing `sim2real.training` does **not** import torch, PEFT, LeRobot, wandb, or
+mlflow. The real adapter imports them inside `SmolVLAAdapter.__init__` and raises
+`AdapterUnavailable` with an install hint when `.venv-ml` is absent. The core
+suite and CI therefore keep running without the ML environment; a dedicated
+`ml` marker covers the torch-level tests, and `gpu` is a separate opt-in marker.
+
+### Decisions A-C (details in `docs/TRAINING.md`)
+
+- **A:** use LeRobot's library objects (`make_policy`, `wrap_with_peft`,
+  `make_pre_post_processors`, `LeRobotDataset`) inside a small loop. The CLI is
+  a draccus entrypoint with a different split and no Task 8 provenance.
+- **B:** `chunk_size=50`, `n_action_steps=50`, horizon **5.0 s** at 10 Hz.
+  `chunk_size` is weight-compatible (no learned per-chunk positional
+  embedding); `n_action_steps` is the inference replanning horizon. Short
+  episodes use `is_pad`.
+- **C:** the real path uses LeRobot's processors with the dataset's
+  authoritative stats; `normalization.py` is only for the fake adapter, offline
+  validation, and tests. The ML parity test measured a maximum difference of
+  **8.0e-08**.
+
+### Verified LoRA scope
+
+The verified target regex from LeRobot 0.6.1 resolves to **37** modules: 32
+action-expert `q_proj`/`v_proj` plus 5 state/action projections. With `r=32`,
+`alpha=64`, and `dropout=0.05`, the measured trainable count is **1,485,312 of
+451,531,488 (0.329%)**; the 450,046,176 base parameters stay frozen. PEFT
+converts a list of target modules to a set, so the adapter resolves the regex to
+exact names before wrapping.
+
+### Trainer and split
+
+The trainer owns a seeded NumPy RNG for epoch order, gradient accumulation,
+finite-loss checks, checkpoint cadence, exact resume (adapter weights +
+step/epoch/offset/order/RNG), and graceful stop. It receives the Task 7
+episode-level split and raises if any validation episode id appears in the
+training set or a batch. `exclude_perturbed` is opt-in and false by default
+because the accepted set intentionally includes perturbed episodes that passed
+the filter.
+
+### Checkpoint provenance
+
+`checkpoint_metadata.json` records the base id/revision, library versions, GPU,
+git commit/dirty flag, config hash and copy, dataset root/version/hash, split,
+mixture manifest, stats-file hash, seed, step, LoRA config, camera rename map,
+action representation, chunk/n_action, dims, fps, horizon, and creation time.
+Loading refuses a mismatched stats hash, action representation, rename map, or
+config hash. Adapter weights live under `adapter/`, not in git.
+
+### Offline validation and tracking
+
+`validation.py` computes per-dimension and horizon-wise L1 over non-padded
+positions, in native units and normalized by the action std, with
+`hold_last_state` and `mean_action` baselines. Different chunk lengths raise;
+an empty validation set returns explicit zero counts. Tracking defaults to
+`none`; `wandb`/`mlflow` are offline-only and imported lazily.
+
+### Measured smoke run (2026-11-07)
+
+| Quantity | Value |
+| --- | --- |
+| Stack | LeRobot 0.6.1, torch 2.11.0+cu126, PEFT 0.21.2, accelerate 1.15.0, transformers 5.5.4 |
+| Steps / batch / chunk | 2 / 1 / 50 |
+| Losses | 2.277515411376953 -> 3.060152530670166 (finite) |
+| Step time | 5.06 s first (warm-up), 0.66 s second; steady-state 0.43-0.66 s across runs |
+| Peak VRAM / host RSS | **1,117 MiB / ~3.7 GiB** |
+| Trainable / total | 1,485,312 / 451,531,488 |
+| Checkpoint | `outputs/task8/smolvla_smoke/checkpoint-00000002` |
+
+Two seeded runs produced identical losses and peak VRAM. The 40-episode
+`train_v1` has 1,849 frames at 10 Hz (32 train / 8 val) and 3,698 llvmpipe PNGs.
+Offline L1 on 8 held-out episodes (366 windows, 8,561 valid steps) was
+0.063-0.203 per dimension, comparable to the trivial baselines after two steps.
+**No policy-quality or generalisation claim is made.**
+
+### Known limitations (Task 8)
+
+- Only 40 episodes; accepted data skews toward easy cube poses.
+- Nine accepted episodes are perturbed (detour/overspeed/jitter); they are
+  included unless excluded.
+- The base expects three cameras; this dataset supplies two (third slot absent,
+  `empty_cameras: 0`).
+- A 50-step chunk at 10 Hz spans 5 s, longer than a ~4.6 s episode.
+- OpenVLA-7B is an unvalidated, refusing config; no weights were downloaded.
+- bf16/fp16, gradient checkpointing, and cu128 were not tested.
+- `collision_count` is not a safety signal and is not used by training.
+- The smoke checkpoint was created from a dirty tree (`git_dirty: true`).
 
 ## Deferred: joint-command subscription
 
@@ -1323,7 +1452,7 @@ was reverted. No test asserts a success rate.
 | --- | --- | --- | --- |
 | `.venv` | `uv sync` | core library + dev tools | ROS, torch, LeRobot |
 | `.venv-ros` | `scripts/setup_envs.sh` | system Python 3.12 + ROS Jazzy via `--system-site-packages`, editable core package, pytest/pyyaml/ruff, MuJoCo 3.17.0 + rendering deps, scipy 1.16.3, pyarrow 21.0.0 (all `--no-deps`) | numpy/torch installs that shadow system packages |
-| `.venv-ml` | `scripts/setup_envs.sh --with-ml` (opt-in; never CI) | Python 3.12, CPU-only torch 2.11.0+cpu, LeRobot 0.6.1, torchvision/torchcodec, av, datasets; editable core | ROS, system site-packages, CUDA torch |
+| `.venv-ml` | `scripts/setup_envs.sh --with-ml` (opt-in; never CI) | Python 3.12, torch 2.11.0+cu126, torchvision, LeRobot 0.6.1, PEFT 0.21.2, accelerate, transformers, num2words, torchcodec, av, datasets; editable core | ROS, system site-packages |
 
 Why the split:
 
@@ -1423,6 +1552,11 @@ Apache-2.0 LICENSE before copying.
 | 58 | 2026-11-02 | Bridge is an auxiliary, fixture-first source; official slug is `bridge`, not `bridge_orig`; real data stays git-ignored | The official Open X bucket and spreadsheet use `bridge`; BridgeData V2 is CC BY 4.0 and no real subset was downloaded |
 | 59 | 2026-11-02 | Stats are our exact/streaming cross-check; LeRobot `meta/stats.json` is authoritative for training | LeRobot aggregates per-episode histogram quantiles; mean/std agreed to ~1e-6 but q01/q99 differed by up to 0.064 on the demo |
 | 60 | 2026-11-02 | Train/val is an episode-level stable-hash split stored in `meta/sim2real_split.json`; mixtures are explicit manifests | The LeRobot loader sees all episodes; Task 8 must apply the split. The sampler returns references only, never concatenated cross-embodiment action columns |
+| 61 | 2026-11-07 | Decision A: wrap LeRobot's library objects (`make_policy`, `wrap_with_peft`, `make_pre_post_processors`, `LeRobotDataset`) in a small loop; do not spawn `lerobot_train.py` | The 0.6.1 CLI is a draccus entrypoint with `eval_split`, not our stored episode split, and it emits no Task 8 provenance/offline L1 report. The library objects are stable and still do the preprocessing/PEFT |
+| 62 | 2026-11-07 | Decision B: `chunk_size=50`, `n_action_steps=50`, horizon 5.0 s at 10 Hz; pad/mask short episodes | `chunk_size` is a runtime sequence length with no learned per-chunk positional embedding, so smaller values are weight-compatible. 50 matches pretraining and fits in 1.1 GiB. `n_action_steps` only controls inference replanning |
+| 63 | 2026-11-07 | Decision C: the real path uses LeRobot's processors and dataset stats; `training/normalization.py` is fake/test-only | One normalization path per tensor. The parity test measured a maximum difference of 8.0e-08 versus `NormalizerProcessorStep`; applying both would normalize twice |
+| 64 | 2026-11-07 | LoRA targets are resolved against the loaded model and passed to PEFT as exact module names | PEFT 0.21.2 turns a list into a set and loses regex matching; the verified 37-module scope is 1,485,312 trainable parameters (0.329%) |
+| 65 | 2026-11-07 | torch 2.11.0+cu126 is the verified GPU wheel for driver 551.76 | A scratch-venv 2048x2048 CUDA matmul passed (sum 141957.375); cu124 has no CPython 3.12 torch satisfying `>=2.7,<2.12`; cu128 was not tested |
 
 ## Interface changelog
 
