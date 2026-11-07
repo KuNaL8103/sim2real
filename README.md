@@ -9,8 +9,9 @@ mapper, contact classifier, runner physics guard, re-derived filter thresholds,
 replay-rendering path, verified Franka limits, official LeRobot writer,
 normalization statistics, episode split, deterministic mixture sampler,
 fixture-first Bridge RLDS adapter, and the offline VLA training/validation
-pipeline are implemented. A two-step SmolVLA GPU smoke run passed. Closed-loop
-inference, real Bridge data, video encoding, and safety are not implemented.
+pipeline are implemented. A 1,000-step SmolVLA LoRA run on `train_v1` produced a
+clean-provenance checkpoint for Task 9. Closed-loop inference, real Bridge data,
+video encoding, and safety are not implemented.
 
 ## What exists today
 
@@ -28,8 +29,8 @@ inference, real Bridge data, video encoding, and safety are not implemented.
 - `sim2real_msgs` interfaces, including the Task 5 measured `TrajectoryStep`
   fields.
 - Documentation, versioned YAML configs, scripts, CI, and hardware-free tests.
-- Verified on 2026-11-07: core **441 passed / 10 skipped**, ROS `.venv-ros`
-  **453 passed / 3 skipped**, `colcon test-result` **7 tests / 0 failures**;
+- Verified on 2026-11-07: core **442 passed / 10 skipped**, ROS `.venv-ros`
+  **454 passed / 3 skipped**, `colcon test-result` **7 tests / 0 failures**;
   ML suite **4 passed / 1 deselected**. Details and provenance are in
   `CLAUDE.md`, `docs/ARCHITECTURE.md`, and `docs/TRAINING.md`.
 

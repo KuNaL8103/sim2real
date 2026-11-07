@@ -261,8 +261,9 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 ## Current status
 
-- Last verified test run: passed=441 failed=0 skipped=10 errors=0 | date=2026-11-07 | base_commit=e845a6c
-- Last verified ROS test run: passed=453 failed=0 skipped=3 errors=0 | date=2026-11-07 | base_commit=e845a6c
+- Last verified test run: passed=442 failed=0 skipped=10 errors=0 | date=2026-11-07 | base_commit=bf74c84
+- Last verified ROS test run: passed=454 failed=0 skipped=3 errors=0 | date=2026-11-07 | base_commit=bf74c84
+- Task 8b status: complete: real 1,000-step LoRA run on train_v1 (batch 16, fp32, lr 1e-4, seed 0, save_every 250) stopped at 1,000 of the approved 2,000-step bound by user instruction; checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000` (`git_dirty=false`, metadata sha256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`); wall 28:53, peak VRAM 4,377 MiB, peak RSS 6,245,720 KiB; loss 3.544756 -> 0.320808 (50-step mean 1.833 -> 0.247); offline L1 beats both baselines on all 8 dims (hold-last is better only at horizon k=0,1); user checkpoint inspection and CI confirmation PENDING
 - Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; CI for this push PENDING user confirmation in the Actions tab; OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
 - Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; **CI user-confirmed green, 2026-11-02** (no run id recorded)
 - Task 6b status: complete with pending checks: **CI user-confirmed green for the 6b push, 2026-11-02** (no run id recorded); RViz visual confirmation PENDING (no report in this session); expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
@@ -407,6 +408,53 @@ Run breakdown (2026-11-07, Task 8):
   was **NOT** run: OpenVLA-7B, bf16/fp16, gradient checkpointing, cu128, a
   remote GPU, video/MP4, real Bridge data, policy quality, RViz/viewer checks;
   wandb/mlflow were not installed or exercised (only the `none` tracker).
+
+Run breakdown (2026-11-07, Task 8b):
+
+- Approved configuration: `configs/training/smolvla_lora_train_v1.yaml`,
+  batch **16**, lr **1e-4**, precision **fp32** (bf16 was not verified), seed
+  **0**, `save_every` **250**, chunk 50 / `n_action_steps` 50. The committed
+  config's `max_steps` is **2000**; the run was stopped at **1,000** by explicit
+  user instruction, so `checkpoint_metadata.json` records `step=1000` while the
+  config copy still shows the approved bound.
+- Batch measurement on the real model (20 full-data steps each): batch 4 ->
+  **1,733 MiB** VRAM, median **0.374 s**; batch 8 -> **2,547 MiB**, median
+  **0.492 s**; batch 16 -> **4,134 MiB**, median **1.176 s**. Batch 16 left
+  **2,007 MiB** free and was chosen. The realistic full-data 20-step batch-16
+  run measured median **1.176 s**, mean **1.741 s**, peak RSS **6,096 MiB**.
+- Training: **1,000 steps in 28:53.06** (median step **1.505 s**, mean
+  **1.474 s**; first step 5.234 s). Loss **3.544756 -> 0.320808**, min
+  **0.141453** at step 978, max 5.049912; the mean per 50-step block fell from
+  **1.833490** (steps 1-50) to **0.247039** (steps 951-1000). No NaN or abort.
+- GPU start 54 °C, 2130/7000 MHz, 12.66 W; end 73 °C, 2130/7000 MHz, 16.20 W.
+  During the run the sampled max temperature was **88 °C**, VRAM **4,377 MiB**,
+  SM clock median **1,185 MHz** (max sample 2,670 MHz), power median **24.0 W**
+  (max 79.6 W). This is consistent with power/thermal limiting; the exact
+  throttle reason was not instrumented.
+- Peak host RSS **6,245,720 KiB (5.96 GiB)** from `/usr/bin/time`; the 10 s
+  sampler saw 5,285 MiB.
+- Checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000`: `git_commit`
+  `bf74c84`, **`git_dirty=false`**, metadata 8,491 B (SHA-256
+  `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`), adapter
+  **5,952,536 B**, whole checkpoint **5.70 MiB**. Checkpoints at 250/500/750/1000.
+- Offline L1 on the same 8 val episodes (366 windows, 8,561 valid steps):
+  trained per-dimension **0.020793 / 0.027214 / 0.031092 / 0.078327 / 0.012209 /
+  0.057156 / 0.041395 / 0.007821**; smoke **0.063401 / 0.097294 / 0.156631 /
+  0.193076 / 0.069209 / 0.203211 / 0.197957 / 0.019423**. Trained beats
+  `hold_last_state` and `mean_action` on **all 8 dimensions**; the per-dimension
+  margins over hold-last are **0.0548 / 0.0796 / 0.1226 / 0.1586 / 0.0466 /
+  0.1002 / 0.1679 / 0.0145**. Horizon-wise (47 valid positions), trained mean
+  L1 **0.032904** vs hold-last **0.159288** and mean-action **0.104959**;
+  trained beats hold-last at **k=2..46 (45 positions)** but loses at **k=0 and
+  k=1**; it beats mean-action at every valid horizon. These are 8-episode
+  offline numbers, not a generalisation or closed-loop claim.
+- Verification after the run: core ROS-free **442 passed / 10 skipped**, ROS
+  `.venv-ros` **454 passed / 3 skipped**, `colcon test-result` **7 tests / 0
+  failures**, `scripts/ci_parity.sh` passed, ruff clean, ML **4 passed / 1
+  deselected**.
+- Not run: the remaining 1,000 steps of the approved bound, bf16/fp16,
+  gradient checkpointing, cu128, a remote GPU, closed-loop evaluation, policy
+  quality. CI for this push is pending user confirmation.
 
 Run breakdown (2026-11-02, Task 7):
 
@@ -845,6 +893,20 @@ Run breakdown (2026-10-31, Task 2b):
 - **`collision_count` is not used by training and is not a safety signal.**
   The accepted-data caveats (small sample, accepted-pose skew, 9 perturbed
   accepted episodes) still apply.
+- **Task 8b is a 1,000-step offline run, not the full approved 2,000-step
+  bound.** The run was stopped at checkpoint 1,000 by user instruction. The
+  committed config still records the approved 2,000-step bound; the checkpoint
+  metadata records the actual step. Do not describe this as a completed
+  2,000-step run.
+- **The 8b offline L1 comparison uses only 8 validation episodes (366 windows).**
+  The trained checkpoint beats both trivial baselines per dimension, but
+  `hold_last_state` is still better at chunk positions k=0 and k=1. There is no
+  closed-loop or generalisation result; Task 9 must measure that.
+- **The 8b GPU reached 88 °C** with a median training SM clock of 1,185 MHz
+  (max sample 2,670 MHz) and a 55 W board cap. This is consistent with
+  power/thermal limiting, but the exact throttle reason was not instrumented.
+- **The accepted-data caveats still apply to the 8b run:** 40 episodes, a skew
+  toward easier cube poses, and perturbed-but-accepted episodes.
 - RViz was re-confirmed after the Task 2b threading change on 2026-10-31.
 - Docker image not pulled or built; Docker Desktop's WSL integration for
   Ubuntu-24.04 is disabled.
@@ -912,7 +974,12 @@ Run breakdown (2026-10-31, Task 2b):
   `checkpoint_metadata.json`, then reply **"smoke confirmed"** or
   **"smoke pending"**. The optional rendered PNGs are under
   `data/lerobot/train_v1/` and `data/staging/train_v1/.../images/`.
-- [ ] Confirm the GitHub Actions tab for the Task 8 push (user confirms; no run
+- [ ] Task 8b manual checkpoint: inspect
+  `outputs/task8/train_v1_lora/losses.jsonl`,
+  `outputs/task8/train_v1_lora/checkpoint-00001000/`, and its
+  `checkpoint_metadata.json`; compare it with
+  `outputs/task8/analysis/val_trained.log` and `val_smoke.log`. **PENDING**.
+- [ ] Confirm the GitHub Actions tab for the Task 8b push (user confirms; no run
   id invented).
 - [ ] Optional RViz Task 3 checkpoint: call `reset_env` with different seeds and
   confirm cubes/lighting/camera TF change. Not confirmed; does not block the
