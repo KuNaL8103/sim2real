@@ -99,6 +99,22 @@ if [[ "$WITH_ML" == "1" ]]; then
     --extra-index-url https://download.pytorch.org/whl/cpu \
     --index-strategy unsafe-best-match
   uv pip install --python .venv-ml/bin/python "pytest>=8,<9"
+  # The SmolVLM processor imports num2words; without it model construction
+  # fails with "Package `num2words` is required to run SmolVLM processor".
+  uv pip install --python .venv-ml/bin/python "num2words>=0.5,<1"
+  # Optional CUDA path, opt-in only (CI never creates .venv-ml):
+  #   ML_TORCH_BACKEND=cu126 ./scripts/setup_envs.sh --with-ml
+  # cu126 is the closest published wheel index to the verified driver 551.76
+  # (CUDA 12.4). The scratch-venv result is recorded in docs/TRAINING.md; do not
+  # assume this path works on another driver.
+  if [[ "${ML_TORCH_BACKEND:-cpu}" == "cu126" ]]; then
+    echo "==> ML CUDA backend (cu126)"
+    uv pip install --python .venv-ml/bin/python \
+      --index-url https://download.pytorch.org/whl/cu126 \
+      "torch==2.11.0+cu126" "torchvision==0.26.0+cu126"
+    uv pip install --python .venv-ml/bin/python \
+      "peft>=0.18,<1" "accelerate>=1.14,<2" "transformers>=5.4,<5.6"
+  fi
   .venv-ml/bin/python -c \
     "import torch, lerobot; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'lerobot', lerobot.__version__)"
 fi
