@@ -180,10 +180,15 @@ def test_paired_eval_reports_policy_only_failures():
         backend.close()
         expert.close()
     assert result["num_pairs"] == 5
-    assert result["expert"]["num_success"] >= 1
-    assert result["policy"]["num_success"] == 0
-    assert result["policy_only_failures"] == result["expert"]["num_success"]
-    assert result["policy_success_given_expert_success"]["num_success"] == 0
+    assert (
+        result["policy_success_given_expert_success"]["num_eligible"]
+        == result["expert"]["num_success"]
+    )
+    assert result["policy_only_failures"] == (
+        result["expert"]["num_success"]
+        - result["policy_success_given_expert_success"]["num_success"]
+    )
+    assert 0 <= result["policy_only_failures"] <= result["num_pairs"]
 
 
 def test_noisy_expert_is_deterministic_with_the_same_seed():

@@ -197,3 +197,49 @@ def test_distribution_save_load_round_trip_and_hash_mismatch(tmp_path):
     tampered.write_text(data, encoding="utf-8")
     with pytest.raises(FailureDistributionError):
         FailureDistribution.load(tampered)
+
+
+def test_numpy_gmm_cross_check_against_sklearn():
+    """Optional cross-check: higher-level EM and scikit-learn select the same model.
+
+    Tolerance: both BIC argmins must select the same component count; BIC values
+    at the selected count must agree within 2% relative; matched component means
+    must agree within 0.05 in normalised feature units.  The test skips with a
+    reason when scikit-learn is not installed, so CI never requires it.
+    """
+    pytest.importorskip(
+        "sklearn", reason="scikit-learn is not installed in the core .venv (optional cross-check)"
+    )
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial.distance import cdist
+
+    from sim2real.evaluation.failure_analysis import _fit_gmm_numpy, _fit_gmm_sklearn
+
+    rng = np.random.default_rng(7)
+    centers = np.array(
+        [
+            [0.2] * FEATURE_DIM,
+            [0.8, 0.2, 0.8, 0.2, 0.8, 0.2, 0.8, 0.2],
+            [0.5, 0.8, 0.5, 0.8, 0.5, 0.8, 0.5, 0.8],
+        ]
+    )
+    features = np.vstack(
+        [center + rng.normal(0.0, 0.03, size=(40, FEATURE_DIM)) for center in centers]
+    )
+    features = np.clip(features, 0.0, 1.0)
+    reg_covar = 1.0e-4
+    seed = 0
+    numpy_fits = [_fit_gmm_numpy(features, k, reg_covar, seed) for k in (1, 2, 3)]
+    sklearn_fits = [_fit_gmm_sklearn(features, k, reg_covar, seed) for k in (1, 2, 3)]
+    best_numpy = min(numpy_fits, key=lambda fit: fit["bic"])
+    best_sklearn = min(sklearn_fits, key=lambda fit: fit["bic"])
+
+    assert best_numpy["components"] == best_sklearn["components"]
+    relative_bic = abs(best_numpy["bic"] - best_sklearn["bic"]) / max(1.0, abs(best_sklearn["bic"]))
+    assert relative_bic <= 0.02
+
+    numpy_means = np.asarray(best_numpy["means"], dtype=np.float64)
+    sklearn_means = np.asarray(best_sklearn["means"], dtype=np.float64)
+    rows, columns = linear_sum_assignment(cdist(numpy_means, sklearn_means))
+    max_mean_difference = float(np.max(np.abs(numpy_means[rows] - sklearn_means[columns])))
+    assert max_mean_difference <= 0.05

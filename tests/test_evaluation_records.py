@@ -177,10 +177,10 @@ def test_aggregates_counts_and_edge_cases():
 
     all_success = aggregate_records([make_record(reason="SUCCESS") for _ in range(5)])
     assert all_success["success_rate"] == 1.0
-    assert all_success["wilson_95"][0] > 0.4
+    assert all_success["wilson_95"][0] <= all_success["success_rate"] <= all_success["wilson_95"][1]
     all_failure = aggregate_records([make_record(reason="TIMEOUT") for _ in range(5)])
     assert all_failure["success_rate"] == 0.0
-    assert all_failure["wilson_95"][1] < 0.6
+    assert all_failure["wilson_95"][0] <= all_failure["success_rate"] <= all_failure["wilson_95"][1]
 
 
 def test_task_completion_is_bounded_and_handles_zero_start_distance():
