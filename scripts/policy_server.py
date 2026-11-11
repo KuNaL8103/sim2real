@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,6 +42,8 @@ from sim2real.evaluation.policy_protocol import (  # noqa: E402
     write_packet,
 )
 from sim2real.training.checkpoint import METADATA_NAME, load_checkpoint  # noqa: E402
+
+_PROTOCOL_OUT = None
 
 
 def _sha256(path: Path) -> str:
@@ -82,6 +84,9 @@ class FakeModel:
         self.chunk_size = int(metadata.get("chunk_size", 50))
         self.fps = float(metadata.get("fps", 10.0))
 
+    def reset(self) -> None:
+        return None
+
     def act(self, header: dict[str, Any], blobs: list[bytes]) -> np.ndarray:
         del blobs
         state = np.asarray(header.get("state", []), dtype=np.float64)
@@ -98,19 +103,34 @@ class FakeModel:
 class RealModel:
     def __init__(self, checkpoint: Path, metadata: dict[str, Any], device: str | None) -> None:
         import torch
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
         from sim2real.training.adapters import SmolVLAAdapter
 
         self.torch = torch
         config = _namespace(metadata["config"])
-        stats_path = Path(metadata["dataset_root"]) / "meta" / "stats.json"
-        stats = json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.is_file() else None
-        self.adapter = SmolVLAAdapter(config, device=device, dataset_stats=stats)
+        # The adapter expects this one field to stay a plain dict.
+        config.data.rename_map = dict(
+            (metadata["config"].get("data") or {}).get("rename_map") or {}
+        )
+        dataset_root = Path(metadata["dataset_root"])
+        if not dataset_root.is_absolute():
+            dataset_root = (Path.cwd() / dataset_root).resolve()
+        dataset = LeRobotDataset(repo_id=dataset_root.name, root=dataset_root)
+        self.adapter = SmolVLAAdapter(
+            config,
+            device=device,
+            dataset_stats=dataset.meta.stats,
+            dataset_meta=dataset.meta,
+        )
         self.adapter.load_adapter(checkpoint / "adapter")
         self.adapter.policy.eval()
         self.chunk_size = int(metadata.get("chunk_size", config.training.chunk_size))
         self.fps = float(metadata.get("fps", 10.0))
         self.metadata = metadata
+
+    def reset(self) -> None:
+        self.adapter.policy.reset()
 
     def act(self, header: dict[str, Any], blobs: list[bytes]) -> np.ndarray:
         torch = self.torch
@@ -174,13 +194,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default=None)
     args = parser.parse_args(argv)
 
+    global _PROTOCOL_OUT
+    protocol_fd = os.dup(sys.stdout.fileno())
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    _PROTOCOL_OUT = os.fdopen(protocol_fd, "wb", buffering=0)
+    sys.stdout = sys.stderr
+
     checkpoint = Path(args.checkpoint).expanduser().resolve()
     metadata_path = checkpoint / METADATA_NAME
     try:
         metadata = load_checkpoint(checkpoint)
     except Exception as exc:  # noqa: BLE001 - the client must see a clear refusal
         write_packet(
-            sys.stdout.buffer,
+            _PROTOCOL_OUT,
             {"type": "hello", "ok": False, "protocol": PROTOCOL_VERSION, "reason": str(exc)},
         )
         return 2
@@ -188,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     hello, _ = read_packet(sys.stdin.buffer)
     if hello.get("type") != "hello":
         write_packet(
-            sys.stdout.buffer,
+            _PROTOCOL_OUT,
             {
                 "type": "hello",
                 "ok": False,
@@ -199,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if int(hello.get("protocol", -1)) != PROTOCOL_VERSION:
         write_packet(
-            sys.stdout.buffer,
+            _PROTOCOL_OUT,
             {
                 "type": "hello",
                 "ok": False,
@@ -214,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         args.expected_hash,
         model="fake" if args.fake_model else "smolvla_lora",
     )
-    write_packet(sys.stdout.buffer, reply)
+    write_packet(_PROTOCOL_OUT, reply)
     if not reply["ok"]:
         return 3
 
@@ -223,38 +249,53 @@ def main(argv: list[str] | None = None) -> int:
             FakeModel(metadata) if args.fake_model else RealModel(checkpoint, metadata, args.device)
         )
     except Exception as exc:  # noqa: BLE001 - report through the protocol
+        import traceback
+
+        traceback.print_exc()
         write_packet(
-            sys.stdout.buffer,
+            _PROTOCOL_OUT,
             {"type": "error", "message": f"model load failed: {type(exc).__name__}: {exc}"},
         )
         return 4
+    write_packet(_PROTOCOL_OUT, {"type": "ready", "ok": True})
 
     while True:
         try:
             header, blobs = read_packet(sys.stdin.buffer)
         except ProtocolError as exc:
-            write_packet(sys.stdout.buffer, {"type": "error", "message": str(exc)})
+            write_packet(_PROTOCOL_OUT, {"type": "error", "message": str(exc)})
             return 5
         kind = header.get("type")
         if kind == "close":
             return 0
+        if kind == "reset":
+            try:
+                reset = getattr(model, "reset", None)
+                if reset is not None:
+                    reset()
+            except Exception as exc:  # noqa: BLE001 - one bad reset must not kill the server
+                write_packet(_PROTOCOL_OUT, {"type": "error", "message": f"reset failed: {exc}"})
+                continue
+            write_packet(_PROTOCOL_OUT, {"type": "reset", "ok": True})
+            continue
         if kind != "act":
-            write_packet(
-                sys.stdout.buffer, {"type": "error", "message": f"unknown packet {kind!r}"}
-            )
+            write_packet(_PROTOCOL_OUT, {"type": "error", "message": f"unknown packet {kind!r}"})
             continue
         try:
             actions = np.asarray(model.act(header, blobs), dtype=np.float32)
             if actions.ndim != 2 or actions.shape[1] != 8 or not np.all(np.isfinite(actions)):
                 raise ProtocolError(f"model returned an invalid chunk {actions.shape}")
         except Exception as exc:  # noqa: BLE001 - one bad request must not kill the server
+            import traceback
+
+            traceback.print_exc()
             write_packet(
-                sys.stdout.buffer,
+                _PROTOCOL_OUT,
                 {"type": "error", "message": f"{type(exc).__name__}: {exc}"},
             )
             continue
         write_packet(
-            sys.stdout.buffer,
+            _PROTOCOL_OUT,
             {
                 "type": "act",
                 "actions_shape": [int(actions.shape[0]), int(actions.shape[1])],

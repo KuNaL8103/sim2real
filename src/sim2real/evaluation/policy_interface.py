@@ -24,6 +24,8 @@ import os
 import select
 import subprocess
 import sys
+import threading
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -397,6 +399,8 @@ class CheckpointPolicy:
         self._timeout_s = float(timeout_s)
         self._fake_model = bool(fake_model)
         self._process: subprocess.Popen[bytes] | None = None
+        self._ready = False
+        self._stderr_lines: deque[str] = deque(maxlen=200)
         self._chunk_size = int(self.metadata.get("chunk_size", 50))
         self._state_dim = int(self.metadata.get("state_dim", 8))
         self._image_keys: list[str] = []
@@ -436,6 +440,21 @@ class CheckpointPolicy:
             )
         except OSError as exc:
             raise PolicyError(f"could not start policy server: {exc}") from exc
+        thread = threading.Thread(
+            target=self._drain_stderr, name="policy_server_stderr", daemon=True
+        )
+        thread.start()
+
+    def _drain_stderr(self) -> None:
+        process = self._process
+        if process is None or process.stderr is None:
+            return
+        for line in iter(process.stderr.readline, b""):
+            self._stderr_lines.append(line.decode("utf-8", errors="replace").rstrip())
+        process.stderr.close()
+
+    def stderr_tail(self, lines: int = 20) -> str:
+        return "\n".join(list(self._stderr_lines)[-lines:])
 
     def _alive(self) -> bool:
         return self._process is not None and self._process.poll() is None
@@ -498,13 +517,27 @@ class CheckpointPolicy:
                 "image_keys": list(self._image_keys),
             }
         )
+        ready, _ = self._recv()
+        if ready.get("type") == "error":
+            raise PolicyError(f"policy server model load failed: {ready.get('message')}")
+        if ready.get("type") != "ready":
+            raise PolicyError(f"expected ready, got {ready.get('type')!r}")
 
     def reset(self, task_instruction: str, seed: int) -> None:
         del seed
-        if self._process is not None:
-            self.close()
-        self._start()
-        self._handshake()
+        if self._process is not None and self._process.poll() is None and self._ready:
+            self._send({"type": "reset"})
+            reply, _ = self._recv()
+            if reply.get("type") == "error":
+                raise PolicyError(f"policy server reset failed: {reply.get('message')}")
+            if not reply.get("ok"):
+                raise PolicyError("policy server refused the reset")
+        else:
+            if self._process is not None:
+                self.close()
+            self._start()
+            self._handshake()
+            self._ready = True
         self._task_instruction = task_instruction
 
     def act(self, observation: PolicyObservation) -> ActionChunk:
@@ -544,6 +577,7 @@ class CheckpointPolicy:
     def close(self) -> None:
         process = self._process
         self._process = None
+        self._ready = False
         if process is None:
             return
         try:

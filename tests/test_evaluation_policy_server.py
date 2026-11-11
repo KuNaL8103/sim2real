@@ -79,6 +79,9 @@ def test_fake_model_handshake_and_chunk(tmp_path):
     try:
         policy.reset("pick", 20000)
         assert policy.info["server_protocol"] == PROTOCOL_VERSION
+        pid = policy._process.pid
+        policy.reset("pick", 20001)
+        assert policy._process.pid == pid  # a live server is reused, not reloaded
         chunk = policy.act(_observation())
         assert chunk.actions.shape == (4, 8)
         assert np.all(np.isfinite(chunk.actions))
