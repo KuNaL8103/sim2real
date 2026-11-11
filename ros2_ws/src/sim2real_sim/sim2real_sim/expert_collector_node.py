@@ -111,6 +111,7 @@ class ExpertCollectorNode(Node):
         self.declare_parameter("output_dir", "data/staging")
         self.declare_parameter("max_rollouts_per_call", 64)
         self.declare_parameter("perturbed_fraction", -1.0)
+        self.declare_parameter("evaluation_config", "")
 
         config_dir = config_dir or str(self.get_parameter("config_dir").value)
         from ament_index_python.packages import get_package_share_directory
@@ -132,6 +133,13 @@ class ExpertCollectorNode(Node):
         self._output_dir = output_dir or str(self.get_parameter("output_dir").value)
         self._max_rollouts = int(self.get_parameter("max_rollouts_per_call").value)
         self._perturbed_fraction_override = float(self.get_parameter("perturbed_fraction").value)
+        evaluation_config = str(self.get_parameter("evaluation_config").value)
+        if not evaluation_config:
+            if _bootstrap_root is not None:
+                evaluation_config = str(_bootstrap_root / "configs" / "evaluation" / "default.yaml")
+            else:
+                evaluation_config = "configs/evaluation/default.yaml"
+        self._evaluation_config = evaluation_config
         if self._max_rollouts < 1:
             raise ValueError("max_rollouts_per_call must be >= 1")
 
@@ -179,7 +187,49 @@ class ExpertCollectorNode(Node):
             return response
         mode = int(request.sampling_mode)
         if mode == contracts.SAMPLING_FAILURE_TARGETED:
-            response.message = "FAILURE_TARGETED not implemented until Task 9"
+            if not str(request.failure_distribution_ref).strip():
+                response.message = "failure_distribution_ref must not be empty"
+                return response
+            if not self._batch_lock.acquire(blocking=False):
+                response.message = "collector is busy with another batch"
+                return response
+            try:
+                done = threading.Event()
+                holder: dict[str, Any] = {}
+
+                def worker() -> None:
+                    try:
+                        holder["result"] = self._run_targeted_batch(request)
+                    except Exception as exc:  # noqa: BLE001 - reported by the callback
+                        holder["error"] = exc
+                    finally:
+                        done.set()
+
+                thread = threading.Thread(target=worker, name="targeted_batch", daemon=True)
+                thread.start()
+                timeout_s = max(60.0, float(request.num_rollouts) * 30.0)
+                if not done.wait(timeout_s):
+                    response.message = (
+                        f"batch did not finish within {timeout_s:.0f} s; "
+                        "episodes written so far remain staged"
+                    )
+                    return response
+                if "error" in holder:
+                    raise holder["error"]
+                result = holder["result"]
+                response.success = bool(result["success"])
+                response.num_generated = int(result["num_generated"])
+                response.num_failed = int(result["num_failed"])
+                response.message = str(result["message"])
+                response.result_metadata_json = str(result["result_metadata_json"])
+            except Exception as exc:  # noqa: BLE001 - report, do not kill the node
+                self.get_logger().error(f"targeted generation failed: {exc}")
+                response.message = f"targeted generation failed: {type(exc).__name__}: {exc}"
+                response.result_metadata_json = json.dumps(
+                    {"error": response.message}, sort_keys=True, allow_nan=False
+                )
+            finally:
+                self._batch_lock.release()
             return response
         if mode != contracts.SAMPLING_UNIFORM:
             response.message = f"unknown sampling_mode={mode}; only UNIFORM (0) is supported"
@@ -322,6 +372,65 @@ class ExpertCollectorNode(Node):
             "success": True,
             "num_generated": generated,
             "num_failed": num_failed,
+            "message": message,
+            "result_metadata_json": text,
+        }
+
+    def _run_targeted_batch(self, request: Any) -> dict[str, Any]:
+        from sim2real.evaluation import FailureDistributionError, load_evaluation_config
+        from sim2real.evaluation.targeted import (
+            TargetedGenerationError,
+            result_metadata_json,
+            run_targeted_rollouts,
+            summarize_result,
+        )
+
+        config = load_expert_config(self._expert_config_dir)
+        backend = self._get_backend()
+        instruction = str(request.task_instruction).strip()
+        if not instruction:
+            return self._failure("task_instruction must not be empty")
+        try:
+            parse_instruction(instruction, backend.configs.scene, config.instructions_file)
+        except UnparseableInstructionError as exc:
+            return self._failure(f"unparseable instruction: {exc}")
+        try:
+            evaluation_config = load_evaluation_config(self._evaluation_config)
+        except Exception as exc:  # noqa: BLE001 - config errors are reported, not raised
+            return self._failure(f"evaluation config error: {exc}")
+
+        def publish(record: Any) -> None:
+            try:
+                self._episode_publisher.publish(self._to_message(record))
+            except Exception as exc:  # noqa: BLE001 - a bad record must not stop the batch
+                self.get_logger().warning(
+                    f"episode {record.episode_id} staged but not published: {exc}"
+                )
+
+        try:
+            result = run_targeted_rollouts(
+                backend,
+                failure_distribution_path=str(request.failure_distribution_ref),
+                num_rollouts=int(request.num_rollouts),
+                seed=int(request.seed),
+                task_instruction=instruction,
+                output_dir=self._output_dir,
+                evaluation_config=evaluation_config,
+                expert_config=config,
+                randomization_dir=self._randomization_dir,
+                max_rollouts_per_call=self._max_rollouts,
+                on_episode=publish,
+            )
+        except (TargetedGenerationError, FailureDistributionError, ValueError, OSError) as exc:
+            return self._failure(str(exc))
+        text = result_metadata_json(result)
+        validate_metadata_json(text)
+        message = summarize_result(result)
+        self.get_logger().info(message)
+        return {
+            "success": True,
+            "num_generated": int(result["num_generated"]),
+            "num_failed": int(result["num_failed"]),
             "message": message,
             "result_metadata_json": text,
         }

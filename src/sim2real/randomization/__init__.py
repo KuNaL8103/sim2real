@@ -42,6 +42,14 @@ from sim2real.randomization.config import (
     load_profile,
     scene_defaults,
 )
+from sim2real.randomization.features import (
+    FEATURE_DIM,
+    FEATURE_NAMES,
+    FeatureSpaceError,
+    feature_bounds,
+    from_feature_vector,
+    to_feature_vector,
+)
 from sim2real.randomization.sampler import (
     GROUP_ORDER,
     CameraSample,
@@ -70,6 +78,9 @@ __all__ = [
     "CameraSample",
     "DistractorConfig",
     "DistractorSample",
+    "FEATURE_DIM",
+    "FEATURE_NAMES",
+    "FeatureSpaceError",
     "FrictionConfig",
     "GroupStatus",
     "LightingConfig",
@@ -86,9 +97,12 @@ __all__ = [
     "TextureConfig",
     "TextureSample",
     "apply_randomization",
+    "feature_bounds",
+    "from_feature_vector",
     "kelvin_to_rgb",
     "load_config_file",
     "load_profile",
     "sample",
     "scene_defaults",
+    "to_feature_vector",
 ]

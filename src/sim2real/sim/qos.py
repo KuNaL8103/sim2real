@@ -28,3 +28,6 @@ MAP_QOS = QosSpec(reliability="reliable", durability="volatile", depth=1)
 # The mapper subscribes to the sim's reliable keep-last 5 camera topics.
 MAP_CAMERA_SUB_QOS = QosSpec(reliability="reliable", durability="volatile", depth=5)
 MAP_STATIC_TF_QOS = QosSpec(reliability="reliable", durability="transient_local", depth=1)
+# Evaluation summaries are published on request; keep the last few so a late
+# subscriber can still see the most recent run.
+EVAL_SUMMARY_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)

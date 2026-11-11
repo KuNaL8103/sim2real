@@ -66,6 +66,7 @@ setup(
             "sim_node = sim2real_sim.sim_node:main",
             "expert_collector_node = sim2real_sim.expert_collector_node:main",
             "trajectory_filter_node = sim2real_sim.trajectory_filter_node:main",
+            "closed_loop_eval_node = sim2real_sim.closed_loop_eval_node:main",
         ]
     },
 )

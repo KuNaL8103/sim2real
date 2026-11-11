@@ -1,2 +1,58 @@
-# Closed-loop evaluation settings. Filled by Task 9.
+# Closed-loop evaluation, failure analysis and flywheel guards (Task 9).
+#
+# Timing contract: the dataset is 10 Hz (decimation 2 of the 20 Hz control
+# loop). One policy action is executed for `n_action_steps` policy steps and
+# each policy step is HELD for `control_rate_hz * policy_step_period_s = 2`
+# backend control steps. The default n_action_steps is 10 (1.0 s), NOT the
+# training value 50 (5.0 s, longer than an episode).
 schema_version: 1
+
+evaluation:
+  n_action_steps: 10
+  control_rate_hz: 20.0
+  policy_step_period_s: 0.1
+  max_control_steps: 600
+  collision_terminate: false
+  terminate_on_limit: true
+  render_images: false
+  # One renderer per dataset: training images were produced with llvmpipe.
+  # D3D12/MESA D3D12 adapter settings are opt-in and are recorded, never used
+  # silently.
+  renderer: llvmpipe
+  output_dir: data/eval
+  randomization_profile: default
+  task_instruction: "pick up the red cube and place it in the left zone"
+  eval_seed: 20000
+  num_episodes: 60
+  seeds:
+    # Reserved for evaluation only; never training data.
+    evaluation: [20000, 20999]
+    # Reserved for targeted regeneration from failures (training data).
+    targeted_generation: [30000, 30999]
+
+failure_analysis:
+  # Failures are seeds where the expert succeeded but the policy failed.
+  # `any_failure` would also target regions where the EXPERT fails, producing
+  # demonstrations the filter rejects.
+  failure_definition: policy_only
+  min_failures_gmm: 30
+  min_failures_kde: 10
+  max_components: 5
+  reg_covar: 1.0e-4
+  bandwidth_floor: 0.05
+  neighbor_sigma_fraction: 0.05
+  targeted_fraction: 0.7
+  max_rejection_tries: 1000
+  random_state: 0
+  output_dir: data/failure_distributions
+
+flywheel:
+  ledger_path: data/flywheel/ledger.jsonl
+  stop_file: data/flywheel/STOP
+  max_cycles: 10
+  max_total_rollouts: 200
+  min_failures_to_trigger: 3
+  min_success_improvement: 0.05
+  max_consecutive_no_improvement: 3
+  cooldown_s: 0.0
+  max_rollouts_per_request: 32

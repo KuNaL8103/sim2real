@@ -45,6 +45,7 @@ WORKSPACE_TSDF_MESH_TOPIC: Final = "/workspace/tsdf_mesh"
 VLA_RAW_ACTION_TOPIC: Final = "/vla/raw_action"
 CONTROLLER_TRAJECTORY_TOPIC: Final = "/joint_trajectory_controller/joint_trajectory"
 SAFETY_STATUS_TOPIC: Final = "/safety/status"
+EVAL_SUMMARY_TOPIC: Final = "/sim2real/eval_summary"
 
 TOPICS: Final[dict[str, str]] = {
     JOINT_STATES_TOPIC: JOINT_STATE_TYPE,
@@ -65,6 +66,7 @@ TOPICS: Final[dict[str, str]] = {
     VLA_RAW_ACTION_TOPIC: JOINT_TRAJECTORY_TYPE,
     CONTROLLER_TRAJECTORY_TOPIC: JOINT_TRAJECTORY_TYPE,
     SAFETY_STATUS_TOPIC: SAFETY_STATUS_TYPE,
+    EVAL_SUMMARY_TOPIC: STRING_TYPE,
 }
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ RESET_ENV_SERVICE: Final = "/sim2real/reset_env"
 GENERATE_ROLLOUTS_SERVICE: Final = "/sim2real/generate_rollouts"
 FINALIZE_DATASET_SERVICE: Final = "/sim2real/finalize_dataset"
 WORKSPACE_RESET_MAP_SERVICE: Final = "/workspace/reset_map"
+RUN_EVAL_SERVICE: Final = "/sim2real/run_eval"
 
 SERVICES: Final[dict[str, str]] = {
     ESTOP_SERVICE: TRIGGER_TYPE,
@@ -84,6 +87,7 @@ SERVICES: Final[dict[str, str]] = {
     GENERATE_ROLLOUTS_SERVICE: GENERATE_ROLLOUTS_TYPE,
     FINALIZE_DATASET_SERVICE: TRIGGER_TYPE,
     WORKSPACE_RESET_MAP_SERVICE: TRIGGER_TYPE,
+    RUN_EVAL_SERVICE: TRIGGER_TYPE,
 }
 
 # ---------------------------------------------------------------------------

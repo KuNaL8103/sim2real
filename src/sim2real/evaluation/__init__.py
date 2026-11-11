@@ -1,0 +1,126 @@
+"""Closed-loop evaluation, failure analysis, targeted generation and flywheel.
+
+The package is pure Python and imports no ``rclpy``.  Torch/LeRobot are only
+reached by the out-of-process policy server, never by this package.
+"""
+
+from sim2real.evaluation.config import (
+    DECISIONS,
+    FAILURE_DEFINITIONS,
+    SCHEMA_VERSION,
+    EvaluationConfig,
+    EvaluationConfigError,
+    EvaluationSettings,
+    FailureAnalysisConfig,
+    FlywheelConfig,
+    load_evaluation_config,
+)
+from sim2real.evaluation.episode_runner import (
+    EVAL_CAMERAS,
+    EvalResult,
+    renderer_label,
+    run_eval,
+    run_eval_episode,
+    run_paired_eval,
+)
+from sim2real.evaluation.failure_analysis import (
+    DISTRIBUTION_TYPES,
+    FailureDistribution,
+    FailureDistributionError,
+    TargetedSampler,
+    failure_feature_vectors,
+    fit_failure_distribution,
+    load_profile_config,
+)
+from sim2real.evaluation.flywheel import (
+    CycleRecord,
+    FlywheelController,
+    FlywheelError,
+)
+from sim2real.evaluation.policy_interface import (
+    ActionChunk,
+    CheckpointPolicy,
+    NoisyExpertPolicy,
+    Policy,
+    PolicyError,
+    PolicyObservation,
+    RandomPolicy,
+    ScriptedExpertPolicy,
+    ZeroPolicy,
+)
+from sim2real.evaluation.policy_protocol import PROTOCOL_VERSION, ProtocolError
+from sim2real.evaluation.records import (
+    TERMINATION_REASONS,
+    EvalEpisodeRecord,
+    EvalRecordError,
+    EvalRun,
+    EvalStep,
+    aggregate_records,
+    derive_eval_seeds,
+    metrics_for_record,
+    task_completion,
+    wilson_interval,
+)
+from sim2real.evaluation.targeted import (
+    TargetedGenerationError,
+    load_targeted_distribution,
+    result_metadata_json,
+    run_targeted_rollouts,
+    summarize_result,
+    targeted_seeds,
+)
+
+__all__ = [
+    "DECISIONS",
+    "DISTRIBUTION_TYPES",
+    "EVAL_CAMERAS",
+    "FAILURE_DEFINITIONS",
+    "PROTOCOL_VERSION",
+    "SCHEMA_VERSION",
+    "TERMINATION_REASONS",
+    "ActionChunk",
+    "CheckpointPolicy",
+    "CycleRecord",
+    "EvalEpisodeRecord",
+    "EvalRecordError",
+    "EvalResult",
+    "EvalRun",
+    "EvalStep",
+    "EvaluationConfig",
+    "EvaluationConfigError",
+    "EvaluationSettings",
+    "FailureAnalysisConfig",
+    "FailureDistribution",
+    "FailureDistributionError",
+    "FlywheelConfig",
+    "FlywheelController",
+    "FlywheelError",
+    "NoisyExpertPolicy",
+    "Policy",
+    "PolicyError",
+    "PolicyObservation",
+    "ProtocolError",
+    "RandomPolicy",
+    "ScriptedExpertPolicy",
+    "TargetedGenerationError",
+    "TargetedSampler",
+    "ZeroPolicy",
+    "aggregate_records",
+    "derive_eval_seeds",
+    "failure_feature_vectors",
+    "fit_failure_distribution",
+    "load_evaluation_config",
+    "load_profile_config",
+    "load_targeted_distribution",
+    "metrics_for_record",
+    "renderer_label",
+    "result_metadata_json",
+    "run_eval",
+    "run_eval_episode",
+    "run_paired_eval",
+    "run_targeted_rollouts",
+    "summarize_result",
+    "targeted_seeds",
+    "task_completion",
+    "wilson_interval",
+]

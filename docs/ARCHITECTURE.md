@@ -1,14 +1,15 @@
 # Architecture
 
-Status: **Task 8.** Simulator backends, `sim_node`, seeded domain randomization,
+Status: **Task 9.** Simulator backends, `sim_node`, seeded domain randomization,
 a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
-a versioned `curated_v1` dataset writer, RGB-D workspace mapping, and the
-two-layer LeRobot/Open X dataset builder are implemented. Task 8 adds an offline
-SmolVLA + PEFT LoRA fine-tuning pipeline: validated configs, verified target
-modules, action-chunk padding/masks, LeRobot-consistent normalization, a
-deterministic trainer, provenance checkpoints, offline L1 validation, and
-optional offline tracking. A two-step GPU smoke run passed on this machine. Real
-Bridge data, closed-loop inference, and safety remain unimplemented.
+a versioned `curated_v1` dataset writer, RGB-D workspace mapping, the
+two-layer LeRobot/Open X dataset builder, and an offline SmolVLA + PEFT LoRA
+fine-tuning pipeline are implemented. Task 9 adds closed-loop policy
+evaluation with reserved seeds, rich per-episode records, paired expert
+comparison, failure-mode sampling (GMM/KDE/neighbour), failure-targeted rollout
+generation, and flywheel guards with a persistent ledger. Task 9 never trains.
+Real Bridge data, physical safety, and Task 10 inference bridging remain
+unimplemented.
 Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
 adds validated randomization profiles and reset-service integration; Task 4 adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
@@ -23,6 +24,21 @@ fixture adapter; real Bridge data, training, inference, and safety remain
 unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
 (requirements-based, not tested); MoveIt 2 is **not installed** and its planner
 adapter is an unexercised guard.
+
+## Scope of Task 9
+
+- `src/sim2real/evaluation/`: policy interface and reference/test policies,
+  closed-loop episode runner, JSON records and manifests, failure analysis,
+  targeted generation, flywheel guards, and the policy-server protocol.
+- `src/sim2real/randomization/features.py`: normalised failure-space vectors and
+  the inverse mapping to a full valid `RandomizationSample`.
+- `configs/evaluation/default.yaml`: timing contract, failure thresholds,
+  reserved seed ranges, and every flywheel guard.
+- `closed_loop_eval_node` (`/sim2real/run_eval`, `/sim2real/eval_summary`),
+  `launch/eval.launch.py`, and `SAMPLING_FAILURE_TARGETED` in the collector.
+- `scripts/run_eval.py`, `scripts/fit_failure_distribution.py`,
+  `scripts/flywheel_status.py`, `scripts/policy_server.py`.
+- `docs/EVALUATION.md`: timing contract, failure definitions, guards, ledger.
 
 ## Scope of Task 8
 
@@ -290,7 +306,9 @@ left as `TBD` where no decision has been made.
 | `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | TBD (task 11) | Defined in Task 11. Must only clear the latch after an explicit operator action. |
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
 | `/sim2real/finalize_dataset` | `std_srvs/srv/Trigger` | operator/UI | filter | on request | reliable | Writes the buffered accepted episodes as a new `curated_v1` minor version. Returns `success=false` when nothing is buffered or the write fails; an existing version is never overwritten. |
-| `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` only (`FAILURE_TARGETED` returns `success=false` until Task 9). A batch runs on one worker thread and a concurrent call is rejected. |
+| `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` and `SAMPLING_FAILURE_TARGETED` are supported. A targeted call needs a hash-valid `failure_distribution_ref` and a seed in 30000-30999. A batch runs on one worker thread and a concurrent call is rejected. |
+| `/sim2real/run_eval` | `std_srvs/srv/Trigger` | operator/UI | closed-loop evaluator | on request | reliable | Runs the evaluation on a worker thread; a concurrent request is rejected. The node runs the backend in-process and does **not** publish `/joint_states`; a failed evaluation returns `success=false`. |
+| `/sim2real/eval_summary` | `std_msgs/msg/String` | closed-loop evaluator | operator/UI, recorder | per evaluation | reliable, keep-last 10 | JSON run manifest plus aggregates (success rate, Wilson 95%, termination counts). Reporting only; never a safety signal. |
 | `/workspace/reset_map` | `std_srvs/srv/Trigger` | operator/UI, orchestrator | perception | on request | reliable | Clears the TSDF and coverage. Required after `/sim2real/reset_env` when camera extrinsics did not jitter, because `/tf_static` did not change. |
 
 QoS is now explicit in code (`src/sim2real/sim/qos.py`) and covered by a test
@@ -810,8 +828,125 @@ spinning, stages each episode, and publishes each completed `RolloutEpisode` on
 `/sim2real/staging_episode` (reliable, transient-local, depth 10). A second
 concurrent call is rejected rather than queued. `result_metadata_json` contains
 `run_id`, seeds, requested/generated/failed counts, per-outcome counts, perturbed
-count, profile, fraction, and the staging path. `FAILURE_TARGETED` returns
-`success=false` with "FAILURE_TARGETED not implemented until Task 9".
+count, profile, fraction, and the staging path. `FAILURE_TARGETED` loads a
+hash-valid failure distribution, samples feature vectors from the seeded mixture,
+maps each to a full valid `RandomizationSample`, and runs the expert with that
+sample applied directly; staged episode metadata carries the distribution id and
+every seed is inside 30000-30999.
+
+## Closed-loop evaluation (Task 9)
+
+### Module layout
+
+```
+src/sim2real/evaluation/
+  config.py            validated config, guards, seed ranges
+  policy_interface.py  Policy protocol, zero/random/scripted/noisy/checkpoint
+  episode_runner.py    closed loop, terminations, run_eval, run_paired_eval
+  records.py           EvalEpisodeRecord, EvalRun, Wilson, aggregates
+  failure_analysis.py  feature space, GMM/KDE/neighbour, artifact, sampler
+  flywheel.py          guards + append-only ledger
+  targeted.py          FAILURE_TARGETED generation library
+  policy_protocol.py   length-prefixed JSON + raw-array frames (no pickle)
+src/sim2real/randomization/features.py
+configs/evaluation/default.yaml
+```
+
+The package is ROS-free and torch-free. `run_eval.py`, the ROS node, and the
+collector call the same functions.
+
+### Timing contract
+
+The dataset is **10 Hz** (decimation 2 of the 20 Hz control loop). One policy
+action is held for `control_rate_hz * policy_step_period_s = 2` backend control
+steps. A chunk is re-planned every `eval.n_action_steps` policy steps; the
+default is **10** (1.0 s), deliberately not the training value 50 (5.0 s, longer
+than an episode). Fake/noisy policies were compared at 5/10/25 and the measured
+numbers are in `docs/EVALUATION.md`. Real-model sweeps were not run.
+
+### Terminations and records
+
+Every episode ends as one of `SUCCESS`, `TIMEOUT`, `COLLISION`,
+`LIMIT_VIOLATION`, `POLICY_ERROR`, `BACKEND_ERROR`, or `PHYSICS_INSTABILITY`.
+A raising, NaN, or wrong-shape policy is a `POLICY_ERROR`; the batch continues.
+Success uses the **same** definition and thresholds as the expert runner
+(`_success_check`), so the paired comparison is meaningful. `collision_count` is
+a run count, not a safety signal.
+
+`EvalEpisodeRecord` (`schema_version: 1`) stores the seed, profile, full
+flattened randomization sample, initial object pose, friction/mass/lighting/
+camera values, task instruction, success, `task_completion` in [0,1], collision
+count, termination reason, Task 5 trajectory metrics (DEGENERATE handled), the
+terminal state and last policy info, policy/checkpoint/config/git provenance,
+`n_action_steps`, the renderer, and every control step. `EvalRun` stores the
+seed list derived with `SeedSequence`, the policy info, and aggregates with a
+Wilson 95% interval, termination counts, and mean completion.
+
+### Paired reference
+
+The MuJoCo expert fails a large fraction of clean episodes. `run_paired_eval`
+evaluates the **same seeds** with `ScriptedExpertPolicy` and the candidate, and
+reports expert success, policy success, policy success on expert-success seeds,
+and policy-only failures. A policy trained on filtered demonstrations is not
+expected to beat the expert.
+
+### Failure analysis
+
+The feature space is `object_x, object_y, object_yaw, friction_sliding,
+object_mass, light_intensity, color_temperature, camera_jitter_norm`, normalised
+to [0,1] from the profile bounds. `from_feature_vector` rebuilds a complete
+sample: groups outside the space come from the normal seeded sampler, and
+out-of-range inputs or a too-close target cube are clipped/repaired and
+**reported**, never silently accepted.
+
+`failure_definition` defaults to `policy_only` (expert succeeded, policy failed).
+`any_failure` would also target regions where the expert fails, producing
+demonstrations the filter rejects. `policy_only` without paired data is refused.
+
+Fitting chain: at least `min_failures_gmm` (30) uses a Gaussian mixture with BIC
+selection over `max_components`, a `reg_covar` floor, and a fixed seed; at least
+`min_failures_kde` (10) uses a Gaussian KDE with a bandwidth floor; 1-9 uses a
+bounded neighbour perturbation; zero failures is `NO_TARGETING` and no
+generation. NaN/wrong-dimension rows are rejected with a report; duplicates are
+collapsed and the covariance fallback is recorded. The sampler is a mixture of
+`targeted_fraction` (0.7) model draws and uniform exploration, rejection-sampled
+with a clip fallback that is counted. The JSON artifact carries the type,
+parameters, counts, feature names/bounds, seed, source run, failure definition,
+config hash, and a content hash; the collector refuses a missing, malformed, or
+hash-mismatched reference.
+
+### Flywheel guards and ledger
+
+`data/flywheel/ledger.jsonl` is append-only. Each cycle links `cycle_id`,
+`parent_cycle_id`, config hash, source dataset versions, episode ids/hash,
+checkpoint hash, eval run id, failure distribution id, rollouts
+requested/generated, decision, reason, and the measured success rates. Guards:
+`max_cycles`, `max_total_rollouts`, `max_rollouts_per_request`,
+`min_failures_to_trigger`, `min_success_improvement`,
+`max_consecutive_no_improvement`, `cooldown_s`, a `STOP` file kill switch, and
+refusing the same `eval_run_id` twice. Decisions are
+`REQUEST_TARGETED_GENERATION`, `REQUEST_RETRAIN` (reserved; Task 9 never trains),
+or `STOP`. Corrupt/partial lines are reported and skipped.
+
+### Policy server (T4)
+
+The real model needs torch (`.venv-ml`), while the simulator needs
+mujoco/scipy (core `.venv`). `scripts/policy_server.py` runs in `.venv-ml` and
+serves the checkpoint over stdin/stdout using 4-byte length-prefixed JSON
+headers plus raw array blobs (images, action chunk). There is no pickle. The
+core `CheckpointPolicy` spawns it, handshakes on protocol version, checkpoint
+hash, chunk size, fps, cameras, state/action dimensions, and refuses a mismatch.
+LeRobot's preprocessor/postprocessor run inside the server so nothing is
+normalised twice. A fake-model mode is tested without torch. Real-checkpoint
+latency was not measured because the bounded real evaluation was not run.
+
+### Rendering
+
+Evaluation records the renderer string (`fake-analytic` for the fake backend;
+`llvmpipe` for MuJoCo by default). The opt-in D3D12 path is recorded as
+`d3d12...-OPT_IN` and is never selected silently. Images are rendered only when
+the policy needs them, with the same cameras and 256x256 settings as the
+training dataset.
 
 ## Trajectory filtering and curated datasets (Task 5)
 

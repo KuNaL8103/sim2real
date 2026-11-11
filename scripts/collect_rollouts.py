@@ -53,6 +53,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--capture-images", action="store_true")
     parser.add_argument("--allow-large", action="store_true")
+    parser.add_argument(
+        "--failure-distribution",
+        default=None,
+        help="generate FAILURE_TARGETED rollouts from this distribution JSON",
+    )
+    parser.add_argument("--evaluation-config", default="configs/evaluation/default.yaml")
+    parser.add_argument("--max-rollouts-per-call", type=int, default=None)
+    parser.add_argument("--randomization-dir", default="configs/randomization")
     args = parser.parse_args(argv)
 
     if args.num <= 0:
@@ -95,6 +103,26 @@ def main(argv: list[str] | None = None) -> int:
 
     backend = create_backend(args.backend, args.config_dir)
     try:
+        if args.failure_distribution:
+            from sim2real.evaluation import load_evaluation_config
+            from sim2real.evaluation.targeted import run_targeted_rollouts
+
+            evaluation_config = load_evaluation_config(args.evaluation_config)
+            result = run_targeted_rollouts(
+                backend,
+                failure_distribution_path=args.failure_distribution,
+                num_rollouts=args.num,
+                seed=args.seed,
+                task_instruction=args.instruction,
+                output_dir=args.out,
+                evaluation_config=evaluation_config,
+                expert_config=config,
+                randomization_dir=args.randomization_dir,
+                max_rollouts_per_call=args.max_rollouts_per_call,
+                run_id=args.run_id,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
+            return 0
         task = parse_instruction(args.instruction, backend.configs.scene, config.instructions_file)
         run_id = args.run_id or f"cli_{args.backend}_{args.seed}_{int(time.time())}"
         buffer = StagingBuffer(args.out, run_id)

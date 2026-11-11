@@ -149,9 +149,12 @@ class TestExpertCollector(unittest.TestCase):
             targeted.sampling_mode = contracts.SAMPLING_FAILURE_TARGETED
             targeted_response = call(targeted)
             self.assertFalse(targeted_response.success)
-            self.assertIn(
-                "FAILURE_TARGETED not implemented until Task 9", targeted_response.message
-            )
+            self.assertIn("failure_distribution_ref", targeted_response.message)
+
+            targeted.failure_distribution_ref = "/nonexistent/failure_distribution.json"
+            targeted_response = call(targeted)
+            self.assertFalse(targeted_response.success)
+            self.assertIn("not found", targeted_response.message)
         finally:
             executor.shutdown()
             node.destroy_node()
