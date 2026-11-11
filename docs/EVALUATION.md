@@ -389,6 +389,156 @@ The ROS suite delta (+52 vs core +51) is exactly one extra test:
 `ros2_ws/src/sim2real_sim/test/test_closed_loop_eval.py::test_run_eval_publishes_a_summary`,
 which is ROS-marked and therefore skipped in the core-only run.
 
+## Task 9c policy diagnosis (2026-11-11)
+
+Goal: explain why the real checkpoint scored 1/30 in closed loop. No training,
+no new rollout seeds. Existing train episodes were reused with their recorded
+seeds.
+
+### A. Observation parity (3 train-split episodes, no GPU)
+
+Replayed the staged 20 Hz actions through the same reset/step/render path used by
+the evaluator (llvmpipe, same cameras, 256x256) and compared every dataset frame.
+
+| episode (dataset index) | frames | initial state max abs | max state abs per dim (7 joints + gripper) |
+| --- | --- | --- | --- |
+| 0 (`ep0000`) | 47 | 5.24e-8 | 3.7e-9 … 1.18e-7 |
+| 1 (`ep0004`) | 45 | 5.24e-8 | 7.2e-9 … 1.14e-7 |
+| 2 (`ep0008`) | 49 | 5.24e-8 | 7.4e-9 … 1.17e-7 |
+
+State layout is the same 8-D order (`panda_joint1..7` + measured finger opening),
+gripper units are metres, and the maximum difference over all dimensions is
+**1.18e-7** (float32 storage precision).
+
+Images are **byte-identical** for every compared frame: overhead **46/46,
+44/44, 48/48** and wrist **46/46, 44/44, 48/48**, max pixel difference **0**.
+Swapping RGB→BGR raises the mean absolute difference to ~27-35, so channel order
+is correct. No orientation flip was needed.
+
+Decimation phase: dataset frame `t` matches control step **2t** (max abs
+**1.18e-7**), while control step `2t-1` differs by up to **0.0829 rad** (median
+0.0164). There is **no off-by-one**.
+
+Camera/rename mapping: the checkpoint metadata maps
+`observation.images.overhead -> observation.images.camera1` and
+`...wrist -> ...camera2`; the server handshake advertises `overhead`/`wrist` and
+maps them to those model keys.
+
+### B. Server-input parity (GPU, 3 frames)
+
+For train episode 0, frames t = 0, 10, 20, the dataset observation and the
+runner-built observation have identical state (max abs 5.24e-8, 4.85e-8,
+9.59e-9) and identical images (max pixel 0). The returned chunks differ by at
+most 0.260/0.431/0.170, but two calls with the **same** dataset input differ by
+0.269/0.223/0.305: the difference is the model's flow-matching sampling noise,
+not an input mismatch. A test that needs deterministic chunks must fix the noise
+seed.
+
+Teacher-forced one-shot error against the recorded dataset actions (physical
+radians, executed steps only):
+
+| frame | first-step L1 mean | first-10-step L1 mean | per-dim first step |
+| --- | --- | --- | --- |
+| 0 | 0.0567 | 0.1189 | 0.0315, 0.1175, 0.0929, 0.0199, 0.0039, 0.0647, 0.1211, 0.0023 |
+| 10 | 0.0118 | 0.0304 | 0.0059, 0.0074, 0.0004, 0.0069, 0.0074, 0.0140, 0.0354, 0.0172 |
+| 20 | 0.0567 | 0.0581 | 0.0318, 0.0345, 0.0809, 0.0880, 0.0231, 0.0194, 0.1685, 0.0072 |
+
+This is model action error, not an observation-pipeline error.
+
+### C. Oracle-hold test (no GPU, no model)
+
+An oracle policy returned the recorded 10 Hz dataset actions; the closed-loop
+runner held each for 2 control steps with `n_action_steps=10`.
+
+- Recorded 20 Hz expert outcome: **32/32 success** (all accepted train episodes;
+  30 clean + 2 detour-perturbed).
+- Oracle hold: **24/32 = 0.750**, Wilson [0.5789, 0.8675]; **8 TIMEOUTs**
+  (6 clean, 2 detour-perturbed).
+- Clean subset: **24/30 = 0.800**; one of those (dataset index 39, seed 10071)
+  started with the cube within the 0.06 m success tolerance (`completion=0.0`),
+  so effective manipulation success is **23/30**.
+- Same truncation, independent replay: **hold 20/32**, **linear interpolation
+  between consecutive 10 Hz actions 30/32**, **next-action 22/32**. The runner's
+  24/32 is higher than the independent hold replay because it repeats the last
+  action after the recorded actions run out.
+
+So the 10 Hz decimation + zero-order hold **loses the odd 20 Hz action** and
+fails 6 clean episodes the 20 Hz expert completed. Linear interpolation recovers
+most of them in this comparison. This is an evaluation-side information loss,
+not an observation-parity bug.
+
+### D. Train-seed closed loop (real checkpoint, GPU, llvmpipe)
+
+Four train-split episodes (seeds 10000, 10004, 10008, 10009; indices 0, 1, 2, 3),
+recorded profile, live llvmpipe:
+
+| n_action_steps | success | termination | completion | joint max abs vs dataset | joint mean abs |
+| --- | --- | --- | --- | --- | --- |
+| 10 | **0/4** | 4 TIMEOUT | 0 / 0.0594 / 0 / 0 | 0.437-0.538 | 0.068-0.093 |
+| 50 | **0/4** | 4 TIMEOUT | ~0 | 0.350-0.426 | 0.049-0.067 |
+
+Policy call median was 1.35-1.45 s. The policy fails on **training** seeds at both
+the 1 s and the training 5 s chunk horizon, so the 1/30 evaluation result is not
+a generalisation gap: it is a policy that does not reproduce its training
+actions.
+
+### E. Frames and gripper traces
+
+Under `log/task9c/` (git-ignored):
+
+- `train_seed10000_n10/` — 30 policy steps x overhead+wrist, `gripper_trace.csv`,
+  `policy_calls.csv`
+- `eval_seed600278683/` — failed 9b episode (index 0), same files
+- `eval_seed132083934/` — the 9b "success" (index 10), one frame set
+- `gripper_summary.csv` — selected calls across the three episodes
+
+Observed behaviour from the produced frames and numbers: in the train-seed and
+failed-eval episodes the arm moves from home to the lower-left, parks over the
+left (yellow) zone, and **stalls**; the cubes remain at their initial positions.
+The wrist view shows the gripper over the empty zone, not around a cube. The
+gripper opens and closes (train seed 10000 measured range 0.0001-0.0399 m) but
+never grasps, and frames 15 and 29 of the train episode are visually almost
+identical. It does not approach the target cube.
+
+The 9b "success" is a **false positive**: the cube starts 0.0565 m from the zone
+centre (success tolerance 0.06 m), the arm is still at home, and the episode
+ends after 4 control steps with `task_completion=0.0`. The policy only opened
+the gripper enough to satisfy `gripper_open`; it did not pick or place anything.
+The policy's effective manipulation success on 20000-20029 is therefore **0/30**,
+not 1/30.
+
+### F. Gripper range check
+
+- Dataset action dimension 8 is an **absolute gripper target in metres**
+  (0 = closed, 0.04 = open). Dataset state dimension 8 is the **measured finger
+  opening in metres**.
+- Dataset stats: action min 0.0, max 0.04, mean 0.01752, std 0.01985, q01 ≈ 0,
+  q99 ≈ 0.04; state max 0.04 (min -2.2e-5 is numerical).
+- Both backends clip the target to `[0, 0.04]`; MuJoCo maps it to actuator
+  0..255. The observed policy output range [-0.010464, 0.063410] is outside by
+  0.0105 below and 0.0234 above (≈0.53σ / 1.18σ), plausible as regression error
+  at 1,000 steps but not physically valid; the simulator clips it.
+
+### G. Inference latency vs simulation time
+
+Closed-loop simulation evaluation is **synchronous**: `policy.act` blocks the
+runner, and simulation time does not advance while the GPU inference runs. A
+1.3 s policy call therefore costs wall time only, not simulated time. A live ROS
+node will **not** pause the robot while it waits. Task 10 must therefore run
+inference asynchronously, buffer action chunks with observation timestamps,
+reject stale or late chunks, keep the control loop non-blocking, define a
+safe fallback when no fresh action is available, and monitor end-to-end latency.
+
+### Decision table (recorded, not acted on)
+
+| observation | row that applies | action |
+| --- | --- | --- |
+| A/B state/image parity | **no mismatch** | Nothing to fix in the observation path. |
+| C oracle hold 24/32 vs 20 Hz 32/32 | **parity/contract mismatch** | Evaluation-side information loss from the 10 Hz zero-order hold. Proposed: interpolate between consecutive 10 Hz actions (30/32 in the variant replay) or retain odd 20 Hz commands; requires approval and a 30-seed rerun. Not changed today. |
+| D real policy 0/4 train at n=10 and 0/4 at n=50 | **under-training** (not generalisation) | Propose: complete the 2,000-step bound, add an LR schedule, more episodes/diversity, and verify gripper calibration. Do not retrain today. |
+| 9b 1/30 "success" | **success-definition false positive** | Initial cube within 0.06 m of the zone. Effective policy success is 0/30. Proposed: require displacement or start outside the success radius in evaluation-only success accounting. Expert code unchanged. |
+| everything else | next hypotheses | gripper range/clipping, chunk open-loop at n=50, and model action accuracy. Image scale/normalization is not implicated: inputs are exact and the server uses LeRobot pre/post with dataset stats. |
+
 ## CLI
 
 ```bash
@@ -410,22 +560,34 @@ disable) because `policy_only` failure analysis needs paired data in
 
 - Only simulation; no physical robot and no safety claim.
 - The fake backend is kinematic; success rates there are not MuJoCo numbers.
-- **Task 9b real-checkpoint result is one bounded run.** 30 seeds, one task
-  instruction, `n_action_steps=10`, 1,000 training steps on 40 episodes with
-  accepted-data skew: policy **1/30**, expert **24/30**, policy-only failures
-  **23**. No policy-quality claim beyond these counts and no generalisation
-  claim.
+- **Task 9c diagnosis:** observation parity is exact (state ≤1.18e-7; images
+  byte-identical; frame t = control step 2t). The 10 Hz zero-order hold loses
+  the odd 20 Hz action: the dataset-action oracle succeeds **24/32** (6 clean
+  failures) while the 20 Hz expert succeeds 32/32; linear interpolation reaches
+  30/32 in the variant replay. The real policy also fails **0/4 train-seed
+  episodes at both n_action_steps 10 and 50**, so under-training dominates; this
+  is not a generalisation gap.
+- **The 9b 1/30 "success" is a success-definition false positive.** The cube
+  starts 0.0565 m from the zone centre (tolerance 0.06 m), the arm stays near
+  home, and the episode ends after 4 steps with `task_completion=0.0`. Effective
+  policy manipulation success on 20000-20029 is **0/30**.
 - **The real policy's gripper output is outside the physical range.** Across 50
-  chunks the eighth dimension ranged [-0.010464, 0.063410] against [0, 0.04];
-  the simulator clips it. This is a calibration observation, not a safety claim.
+  chunks the eighth dimension ranged [-0.010464, 0.063410] against
+  dataset/backend [0, 0.04]; the simulator clips it. The dataset action is an
+  absolute finger target in metres and state is measured opening.
 - **The real server is slow to load and relatively slow per call.** First
   process load measured **39.8 s**; 50-call median **1.331 s**, p95 **2.237 s**.
-  A 30-episode paired run took **26.5 min** with llvmpipe rendering. Reusing the
-  live server across episodes is required for bounded runs.
+  A 30-episode paired run took **26.5 min** with llvmpipe rendering. A live
+  server is reused across resets.
+- **Closed-loop sim pauses the world during inference.** The evaluator is
+  synchronous, so 1.3 s calls cost wall time, not sim time. A live ROS node will
+  not pause; Task 10 must use asynchronous inference, timestamped chunk
+  buffering, staleness rejection and a safe fallback.
 - **scikit-learn is a core `.venv`-only, optional cross-check dependency.** It is
   not in `pyproject.toml`/`uv.lock`; CI skips the cross-check with a reason.
   Installed size is ~33 MiB for sklearn plus `joblib`/`threadpoolctl`/`cloudpickle`.
-- **Rendered episode frames were not saved** for Task 9b (optional item not run).
+- **Rendered episode frames for Task 9b were not saved.** Task 9c saved frames
+  for only 2 eval and 1 train episode under `log/task9c/`.
 - `REQUEST_RETRAIN` is a reserved decision; Task 12 will orchestrate any
   retraining.
 - The checkpoint used for the pipeline test is a LoRA run that stopped at 1,000

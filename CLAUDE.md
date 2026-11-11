@@ -258,16 +258,18 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 8 — SmolVLA + LoRA fine-tuning (complete with pending checks above)
 - [x] Task 9 — closed-loop evaluation (complete with pending checks: manual flywheel confirmation PENDING; CI pending user confirmation)
 - [x] Task 9b — real-checkpoint verification (complete: policy server, 30-episode paired run, failure fit, sklearn cross-check)
+- [x] Task 9c — policy diagnosis (complete: observation parity exact; oracle-hold and under-training findings)
 - [ ] Task 10 — ROS 2 inference bridge
 - [ ] Task 11 — safety watchdog and e-stop
 - [ ] Task 12 — orchestration
 
 ## Current status
 
-- Last verified test run: passed=494 failed=0 skipped=11 errors=0 | date=2026-11-11 | base_commit=1b9fa1d
-- Last verified ROS test run: passed=506 failed=0 skipped=4 errors=0 | date=2026-11-11 | base_commit=1b9fa1d
+- Last verified test run: passed=494 failed=0 skipped=11 errors=0 | date=2026-11-11 | base_commit=01833f5
+- Last verified ROS test run: passed=506 failed=0 skipped=4 errors=0 | date=2026-11-11 | base_commit=01833f5
 - Task 9 status: complete with pending checks: manual flywheel confirmation PENDING; CI pending user confirmation. Timing contract: dataset/policy period 0.1 s, 2 control steps held, `n_action_steps` default **10** (1.0 s, not the training 50); fake sweep 5/10/25 -> 13/10/8 of 30. Failure chain: GMM >=30 (BIC <=5 components), KDE >=10, neighbour 1-9, none = NO_TARGETING; `failure_definition=policy_only` by default. Guards: `max_cycles=10`, `max_total_rollouts=200`, `max_rollouts_per_request=32`, `min_failures_to_trigger=3`, `min_success_improvement=0.05`, `max_consecutive_no_improvement=3`, `cooldown_s=0`, idempotent eval ids, `STOP` file. Policy server: stdin/stdout length-prefixed JSON + raw arrays, no pickle; torch stays in `.venv-ml`. Seeds: eval 20000-20999 only, targeted 30000-30999 only.
-- Task 9b status: complete. Real policy server verified: hash `b87f5094…22e3`, chunk 50, fps 10, cameras overhead/wrist -> camera1/camera2, state/action dim 8; 50-call median **1.331 s**, p95 **2.237 s**, max **3.247 s**, warm-up 4.229 s, first load **39.8 s**, peak VRAM **1,077 MiB**, server `VmHWM` **3,841,184 KiB**. Chunk (50,8), finite; 7 arm dims inside Panda limits, gripper dim outside [0,0.04] ([-0.010464, 0.063410], simulator clips). Wrong hash refused; killed-server and timeout paths handled. Cost: overhead **0.193 s**/frame, wrist **0.154 s**/frame, 2-episode combined 179.1 s -> 44.8 min estimate; approved 30-episode run took **26.5 min**. 30 seeds 20000-20029, n_action_steps 10, llvmpipe: expert **24/30** (Wilson [0.6269, 0.9050], exactly the earlier baseline), policy **1/30** (0.0333, [0.00591, 0.16671]), policy on expert-success **1/24** ([0.00739, 0.20242]), policy-only failures **23**, terminations SUCCESS 1 / TIMEOUT 29, mean completion **0.01686**; ZeroPolicy **0/30** ([0.0, 0.1135]). Failure fit on 23 policy-only failures = **KDE**, id `64f51eb905e0e941`; no targeted generation. scikit-learn 1.9.1 installed in core `.venv` only (not CI): cross-check selects 3 components in both, matched means differ **8.3e-17**, BIC differs **0.76%**. No policy-quality claim.
+- Task 9b status: complete; **CI user-confirmed green, 2026-11-11** (no run ids). Real policy server verified: hash `b87f5094…22e3`, chunk 50, fps 10, cameras overhead/wrist -> camera1/camera2, state/action dim 8; 50-call median **1.331 s**, p95 **2.237 s**, max **3.247 s**, warm-up 4.229 s, first load **39.8 s**, peak VRAM **1,077 MiB**, server `VmHWM` **3,841,184 KiB**. Chunk (50,8), finite; 7 arm dims inside Panda limits, gripper dim outside [0,0.04] ([-0.010464, 0.063410], simulator clips). Wrong hash refused; killed-server and timeout paths handled. Cost: overhead **0.193 s**/frame, wrist **0.154 s**/frame, 2-episode combined 179.1 s -> 44.8 min estimate; approved 30-episode run took **26.5 min**. 30 seeds 20000-20029, n_action_steps 10, llvmpipe: expert **24/30** (Wilson [0.6269, 0.9050], exactly the earlier baseline), policy **1/30** (0.0333, [0.00591, 0.16671]), policy on expert-success **1/24** ([0.00739, 0.20242]), policy-only failures **23**, terminations SUCCESS 1 / TIMEOUT 29, mean completion **0.01686**; ZeroPolicy **0/30** ([0.0, 0.1135]). Failure fit on 23 policy-only failures = **KDE**, id `64f51eb905e0e941`; no targeted generation. scikit-learn 1.9.1 installed in core `.venv` only (not CI): cross-check selects 3 components in both, matched means differ **8.3e-17**, BIC differs **0.76%**. No policy-quality claim.
+- Task 9c status: complete (diagnostic, no code changes, no retraining). A: state parity max abs **1.18e-7** and images **byte-identical** on 3 train episodes (46/46, 44/44, 48/48 per camera); frame t = control step **2t** (2t-1 differs up to 0.0829 rad). B: server inputs identical (state ≤5.24e-8, pixels 0); chunk differences are flow-matching noise (0.260/0.431/0.170 vs repeat noise 0.269/0.223/0.305); teacher-forced first-step L1 **0.0118-0.0567 rad**, first-10 **0.0304-0.1189**. C: oracle hold **24/32** (Wilson [0.5789,0.8675], 8 TIMEOUT; 6 clean + 2 detour) vs 20 Hz expert 32/32; linear-interpolation replay 30/32 vs hold 20/32 under the same truncation. D: real policy **0/4 train seeds at n_action_steps 10 and 0/4 at 50**, all TIMEOUT, completion ~0, joint max 0.437-0.538 / 0.350-0.426 rad. The 9b 1/30 "success" is a **false positive**: cube starts 0.0565 m from the zone (tolerance 0.06), arm near home, 4 steps, completion 0.0; effective 0/30. Gripper: dataset action/state dimension 8 in metres [0,0.04]; backend clips; observed [-0.0105,0.0634] is regression error. Decision row: **under-training dominates**, plus a real 10 Hz-hold information loss (evaluation-side) and a success-definition false positive. No policy-quality claim.
 - Task 8b status: complete: real 1,000-step LoRA run on train_v1 (batch 16, fp32, lr 1e-4, seed 0, save_every 250) stopped at 1,000 of the approved 2,000-step bound by user instruction; checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000` (`git_dirty=false`, metadata sha256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`); wall 28:53, peak VRAM 4,377 MiB, peak RSS 6,245,720 KiB; loss 3.544756 -> 0.320808 (50-step mean 1.833 -> 0.247); offline L1 beats both baselines on all 8 dims (hold-last is better only at horizon k=0,1); **CI user-confirmed green, 2026-11-07** (no run ids); **Task 8 smoke inspection PENDING** (loss log, checkpoint folder and metadata were never confirmed by the user); checkpoint metadata confirms `chunk_size=50`, `n_action_steps=50`, `fps=10.0`, rename map overhead/wrist -> camera1/camera2, stats hash `a25f62abd51f0d9c1cbe5aee240273a186e45e711562de51f77f2b919af21dd5`, and a **constant** learning rate (`training.lr=1e-4`; no scheduler in `trainer.py`), so stopping at 1,000 of the 2,000-step config bound is a step-bound truncation, not a mid-schedule decay
 - Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; **CI user-confirmed green, 2026-11-07** (no run ids); OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
 - Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; **CI user-confirmed green, 2026-11-02** (no run id recorded)
@@ -281,8 +283,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 The first line records the **core** suite (`.venv`, ROS-free,
 `env -u PYTHONPATH -u AMENT_PREFIX_PATH`). The second line records the
-ROS-enabled suite separately. Task 9b suites ran on the tree committed as
-`1b9fa1d`; the docs-only commit follows it.
+ROS-enabled suite separately. Task 9c suites ran on the tree based on
+`01833f5`; the docs-only commit follows it.
 
 Run breakdown (2026-11-02, Task 6b):
 
@@ -554,6 +556,67 @@ Run breakdown (2026-11-11, Task 9b):
   skips there; it was reinstalled afterwards for the recorded core run). Ruff
   check and format check clean. CI for this push is pending user confirmation.
 
+Run breakdown (2026-11-11, Task 9c):
+
+- Pre-edit baselines: core ROS-free **494 passed / 11 skipped** (sklearn
+  present; the optional cross-check passed); `.venv-ros` **506 passed / 4
+  skipped**; `scripts/run_ml_tests.sh` **4 passed / 1 deselected**. `colcon
+  test` first attempt had the known timing-sensitive rate test at **8.33 Hz**
+  (require 16 Hz); an immediate rerun passed **7 tests / 0 failures**. This is a
+  flaky rate test, not a Task 9c regression.
+- A. Observation parity (3 train episodes, no GPU): state max abs **1.18e-7**
+  (per-dim max 3.7e-9 … 1.18e-7); initial state **5.24e-8**. Images
+  **byte-identical** on 46/46, 44/44, 48/48 frames per camera (max pixel 0);
+  RGB→BGR raises mean abs to ~27-35. Frame t = control step **2t**
+  (max 1.18e-7); step 2t-1 differs by up to **0.0829 rad** (median 0.0164).
+  Rename map overhead→camera1, wrist→camera2 confirmed.
+- B. Server-input parity (GPU): dataset vs runner state max abs
+  **5.24e-8 / 4.85e-8 / 9.59e-9** at frames 0/10/20, images max pixel **0**.
+  Chunk max abs differences **0.260 / 0.431 / 0.170** vs repeat-call noise
+  **0.269 / 0.223 / 0.305**: flow-matching sampling noise, not input mismatch.
+  Teacher-forced first-step L1 mean **0.0567 / 0.0118 / 0.0567 rad**; first-10
+  mean **0.1189 / 0.0304 / 0.0581 rad**.
+- C. Oracle hold (no GPU): recorded 20 Hz expert **32/32 success**; oracle hold
+  **24/32 = 0.750**, Wilson [0.5789, 0.8675], **8 TIMEOUT** (6 clean + 2
+  detour-perturbed). Clean oracle 24/30, including one initial-in-zone false
+  positive (index 39), so effective clean manipulation 23/30. Same-truncation
+  replay variants: hold **20/32**, linear interpolation **30/32**, next-action
+  **22/32**. The 10 Hz zero-order hold loses the odd 20 Hz action.
+- D. Train-seed real policy (GPU, llvmpipe): seeds 10000/10004/10008/10009,
+  n_action_steps **10 -> 0/4 success**, all TIMEOUT, completion 0 / 0.0594 / 0 /
+  0, joint max **0.437-0.538 rad**, mean **0.068-0.093**; n_action_steps **50 ->
+  0/4**, all TIMEOUT, completion ~0, joint max **0.350-0.426 rad**, mean
+  **0.049-0.067**. Call median 1.35-1.45 s. Under-training, not a generalisation
+  gap.
+- E. Frames/traces under `log/task9c/`: `train_seed10000_n10/`,
+  `eval_seed600278683/`, `eval_seed132083934/`, `gripper_summary.csv`. The arm
+  moves to the lower-left over the left zone and stalls; cubes stay put; wrist
+  view has no cube between the fingers. The 9b "success" starts at 0.0565 m from
+  the zone (tolerance 0.06), ends after 4 steps with completion 0.0: a **false
+  positive**, effective 0/30.
+- F. Gripper: action 8 = absolute finger target in m [0,0.04]; state 8 =
+  measured opening; stats action min/max 0/0.04, mean 0.01752, std 0.01985; both
+  backends clip; observed [-0.0105,0.0634] is regression error.
+- G. Latency: simulated evaluation pauses the world during `policy.act`;
+  1.3 s calls cost wall time only. A live ROS node will not pause; Task 10 must
+  handle asynchronous inference, stale/late chunks and a safe fallback.
+- Decision table: A/B **no mismatch**; C **evaluation-side hold information
+  loss** (proposed interpolation; not changed today; rerun needs approval);
+  D **under-training** (propose more steps/LR schedule/data; not run); 9b
+  1/30 **success-definition false positive** (effective 0/30). Not run:
+  retraining, any new 30-seed eval, a hold/interpolation code fix, targeted
+  generation, rendered frames beyond the 3 diagnostic episodes.
+- Final Task 9c suites (tree based on `01833f5`): core ROS-free **494 passed /
+  11 skipped** (optional sklearn cross-check passing); `.venv-ros` **506 passed
+  / 4 skipped** (cross-check skips; sklearn is core-`.venv`-only);
+  `colcon test-result --verbose` **7 tests / 0 failures**;
+  `scripts/run_ml_tests.sh` **4 passed / 1 deselected**;
+  `scripts/ci_parity.sh` **passed**. Its `uv sync` removes core-only sklearn,
+  so the cross-check skips there; it was reinstalled afterwards for the recorded
+  core run. Ruff check and format check clean. CI for the 9b push is
+  **user-confirmed green, 2026-11-11**; CI for this 9c docs push is pending user
+  confirmation.
+
 Run breakdown (2026-11-02, Task 7):
 
 - Core ROS-free: **368 passed, 0 failed, 8 skipped, 0 errors** (was 333/7
@@ -799,18 +862,33 @@ Run breakdown (2026-10-31, Task 2b):
 
 ## Known limitations
 
-- **Task 9b is one bounded real-checkpoint run.** 30 seeds 20000-20029, one task
-  instruction, `n_action_steps=10`, 1,000 training steps on 40 episodes with
-  accepted-data skew: expert **24/30**, policy **1/30** (Wilson
-  [0.00591, 0.16671]), policy on expert-success **1/24**, policy-only failures
-  **23**. No policy-quality or generalisation claim beyond these counts.
+- **Task 9c diagnosis: observation parity is exact, but the policy is
+  under-trained and the success definition has a false positive.** State parity
+  max abs **1.18e-7** and images **byte-identical**; frame t = control step 2t.
+  The 10 Hz zero-order hold loses the odd 20 Hz action: the recorded-action
+  oracle succeeds **24/32** (6 clean + 2 detour failures) while the 20 Hz expert
+  succeeds 32/32; linear interpolation reaches 30/32 in the variant replay. The
+  real policy fails **0/4 train-seed episodes at both n_action_steps 10 and 50**
+  (all TIMEOUT, completion ~0, joint max 0.437-0.538 / 0.350-0.426 rad), so
+  under-training dominates and this is not a generalisation gap.
+- **The 9b 1/30 "success" is a success-definition false positive.** The cube
+  starts 0.0565 m from the zone centre (tolerance 0.06 m), the arm stays near
+  home, and the episode ends after 4 steps with `task_completion=0.0`. Effective
+  policy manipulation success on 20000-20029 is **0/30**. A future success check
+  should require displacement or start outside the success radius; expert code
+  was not changed.
 - **The real policy's gripper dimension is outside the physical range.** Over 50
   chunks it ranged [-0.010464, 0.063410] against [0, 0.04]; the simulator clips
-  it. The seven arm dimensions were inside the Panda limits.
+  it. Dataset action 8 is an absolute finger target in metres and state 8 is the
+  measured opening (action stats min 0, max 0.04, mean 0.01752, std 0.01985).
 - **Real policy-server cost.** First process load **39.8 s**; 50-call median
   **1.331 s**, p95 **2.237 s**; the 30-episode paired run took **26.5 min** with
   llvmpipe. A live server is now reused across resets (not reloaded per
   episode).
+- **Closed-loop sim pauses the world during inference.** The synchronous
+  evaluator costs wall time only. A live ROS node will not pause; Task 10 must
+  use asynchronous inference, timestamped chunk buffering, staleness rejection
+  and a safe fallback.
 - **scikit-learn is a core `.venv`-only optional cross-check.** Installed
   `1.9.1` (~33 MiB, plus joblib/threadpoolctl/cloudpickle) after approval; it is
   not in `pyproject.toml`/`uv.lock`, so CI skips the cross-check with a reason.
