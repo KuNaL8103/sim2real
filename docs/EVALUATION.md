@@ -222,10 +222,15 @@ never trains), `STOP`. Corrupt or partial ledger lines are reported and skipped.
 
 - Runs `scripts/policy_server.py` in `.venv-ml` with `PYTHONPATH=src`.
 - Protocol: 4-byte big-endian length prefix + UTF-8 JSON header; raw array blobs
-  follow in the same packet. No pickle.
+  follow in the same packet. No pickle. File descriptor 1 is redirected to
+  stderr and a duplicated descriptor carries only protocol frames, so library
+  progress output cannot corrupt the stream.
 - Handshake: protocol version, checkpoint metadata SHA-256, chunk size, fps,
   expected cameras, state/action dimensions. A mismatch is refused before any
-  model is loaded.
+  model is loaded. After the model is loaded the server sends an explicit
+  `ready` frame; the client does not send observations before it arrives.
+- A live server is reused across episodes (a `reset` frame calls the policy's
+  reset); it is not reloaded per episode.
 - Observation: 8-D state, the named uint8 images, and the task string. Reply:
   action chunk shape/dtype plus the policy step period.
 - Timeouts, malformed frames, and server death are detected and reported as
@@ -246,6 +251,143 @@ The training dataset was rendered with **llvmpipe**. Evaluation records
 `renderer` in every episode and in the run manifest: `fake-analytic` for the
 fake backend, `llvmpipe` for MuJoCo by default, and `d3d12...-OPT_IN` if the
 opt-in D3D12 environment is present. Opt-in settings are never used silently.
+
+## Task 9b real-checkpoint verification (2026-11-11)
+
+Test subject: `outputs/task8/train_v1_lora/checkpoint-00001000` (LoRA, 1,000
+steps, constant LR 1e-4, `git_commit=bf74c84`, `git_dirty=false`, chunk 50,
+`n_action_steps=50`, fps 10, metadata SHA-256
+`b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`).
+
+### Policy server on the real checkpoint
+
+Handshake: protocol 1, checkpoint hash `b87f5094…22e3`, `chunk_size=50`,
+`fps=10.0`, state dim 8, action dim 8, cameras `overhead`/`wrist` (renamed to
+`observation.images.camera1` / `camera2`). First process load took **39.82 s**
+(HF cache warm). A later `reset` reuses the live server.
+
+50 calls with real-shaped observations (8-D state, two 256x256 uint8 images,
+task string), warm-up excluded:
+
+| quantity | value |
+| --- | --- |
+| warm-up call | 4.229 s |
+| median | **1.331 s** |
+| mean | 1.457 s |
+| p95 | **2.237 s** |
+| max | 3.247 s |
+| min | 1.255 s |
+| peak VRAM | **1,077 MiB** (before: 0 MiB) |
+| peak server RSS | **2,455,672 KiB**; `VmHWM` 3,841,184 KiB (3.66 GiB) |
+
+Returned chunk: **(50, 8)**, wire dtype float32, client dtype float64 after
+conversion, all values finite. Per-dimension min/max over 50 chunks:
+
+| dim | min | max | Panda limit |
+| --- | --- | --- | --- |
+| 0 | -0.208128 | 0.078293 | [-2.8973, 2.8973] |
+| 1 | -0.483027 | -0.034547 | [-1.7628, 1.7628] |
+| 2 | -0.351209 | 0.114082 | [-2.8973, 2.8973] |
+| 3 | -2.255185 | -1.471933 | [-3.0718, -0.0698] |
+| 4 | -0.144063 | 0.024904 | [-2.8973, 2.8973] |
+| 5 | 1.383635 | 1.854236 | [-0.0175, 3.7525] |
+| 6 | -1.260738 | -0.665998 | [-2.8973, 2.8973] |
+| 7 (gripper) | **-0.010464** | **0.063410** | [0.0, 0.04] |
+
+The seven arm dimensions are inside the Panda limits. The eighth (gripper) is
+outside `[0, 0.04]`; the simulator clips it before stepping. This is a
+calibration observation on one synthetic observation, not a safety or quality
+claim.
+
+Failure paths on the real server: a wrong checkpoint hash is **refused**; a
+server killed mid-call is **detected** (`policy server is not running`); a
+1 ms client timeout is **handled** (`policy server timed out`).
+
+### Cost
+
+Live llvmpipe rendering, `n_action_steps=10`, 256x256 cameras:
+
+| quantity | measurement |
+| --- | --- |
+| overhead render | **0.193 s/frame** mean (0.195 median, 0.203 max) |
+| wrist render | **0.154 s/frame** mean (0.152 median, 0.159 max) |
+| policy latency in eval | median **1.295 s/call** |
+| 2-episode combined | 179.1 s (includes one 39.8 s model load) |
+| straight 30-episode estimate | **44.8 min** |
+| actual 30-episode wall | **1,592.6 s = 26.5 min** |
+
+The 2-episode estimate was above 10 minutes, so the 30-episode run was started
+only after explicit approval. It ran alone (no colcon, no other GPU work).
+
+### 30-episode paired result
+
+Seeds 20000-20029 (the same seeds as the earlier no-model MuJoCo baseline),
+`n_action_steps=10`, renderer **`llvmpipe`**:
+
+| metric | value |
+| --- | --- |
+| expert success | **24/30 = 0.800**, Wilson [0.6269, 0.9050] |
+| policy success | **1/30 = 0.0333**, Wilson [0.00591, 0.16671] |
+| policy success on expert-success seeds | **1/24 = 0.0417**, Wilson [0.00739, 0.20242] |
+| policy-only failures | **23** |
+| policy termination reasons | `SUCCESS` 1, `TIMEOUT` 29 |
+| mean policy task completion | **0.01686** |
+| expert termination reasons | `SUCCESS` 24, `TIMEOUT` 6 |
+
+The expert result **exactly matches** the earlier no-model baseline (24/30),
+which is the expected consistency check. The policy's single success was
+episode index 10 (seed 132083934), an expert-success seed. Policy calls during
+the run: 871, median 1.323 s, p95 1.480 s, max 12.409 s.
+
+ZeroPolicy context on the same 30 seeds (no model, no rendering): **0/30**,
+Wilson [0.0, 0.1135], all `TIMEOUT`, mean completion 0.00173 — matching the
+earlier baseline.
+
+**No policy-quality claim is made beyond these counts.** The policy was trained
+for 1,000 of a 2,000-step bound on 40 episodes with accepted-data skew; 30
+seeds and one task instruction cannot support a generalisation claim.
+
+### Failure analysis on the real result
+
+`failure_definition=policy_only` on the 23 policy-only failures selected the
+**KDE** path (below the 30-failure GMM minimum, at or above the 10-failure KDE
+minimum); no fallback reason was recorded. Artifact id
+`64f51eb905e0e941`, `n_failures=23`. No targeted rollouts were generated.
+
+### scikit-learn cross-check
+
+`scikit-learn 1.9.1` was installed into core `.venv` only (dry-run: 4 packages,
+~9.1 MiB download; 33 MiB installed for sklearn). It is not in `pyproject.toml`
+or `uv.lock`, so CI does not require it. One optional test fits the NumPy EM and
+sklearn `GaussianMixture` on the same seeded 3-cluster fixture (120 points,
+8 features):
+
+- both BIC argmins selected **3 components**;
+- matched-component mean maximum absolute difference **8.3e-17**
+  (tolerance 0.05);
+- BIC relative difference **0.76%** (tolerance 2%).
+
+The test skips with a reason when sklearn is absent.
+
+### Test-claim audit
+
+Task 9 tests were searched for success-rate/threshold assertions. Two groups
+were relaxed (no policy-quality threshold is asserted anywhere):
+
+- `tests/test_evaluation_policies.py` asserted `expert num_success >= 1`,
+  `policy num_success == 0`, and zero policy-on-expert success. These were
+  replaced with definitional identities: `num_eligible == expert num_success`,
+  `policy_only == expert num_success - policy_on_expert`, and
+  `0 <= policy_only <= num_pairs`.
+- `tests/test_evaluation_records.py` had arbitrary Wilson thresholds
+  (`wilson_95[0] > 0.4`, `wilson_95[1] < 0.6`). These were replaced by
+  interval-membership checks on the synthetic aggregate fixtures. The exact
+  `success_rate` values there are arithmetic checks of the aggregate function,
+  not policy claims.
+
+The ROS suite delta (+52 vs core +51) is exactly one extra test:
+`ros2_ws/src/sim2real_sim/test/test_closed_loop_eval.py::test_run_eval_publishes_a_summary`,
+which is ROS-marked and therefore skipped in the core-only run.
 
 ## CLI
 
@@ -268,8 +410,22 @@ disable) because `policy_only` failure analysis needs paired data in
 
 - Only simulation; no physical robot and no safety claim.
 - The fake backend is kinematic; success rates there are not MuJoCo numbers.
-- Real-checkpoint evaluation was **NOT RUN** in Task 9; policy quality is not
-  claimed.
+- **Task 9b real-checkpoint result is one bounded run.** 30 seeds, one task
+  instruction, `n_action_steps=10`, 1,000 training steps on 40 episodes with
+  accepted-data skew: policy **1/30**, expert **24/30**, policy-only failures
+  **23**. No policy-quality claim beyond these counts and no generalisation
+  claim.
+- **The real policy's gripper output is outside the physical range.** Across 50
+  chunks the eighth dimension ranged [-0.010464, 0.063410] against [0, 0.04];
+  the simulator clips it. This is a calibration observation, not a safety claim.
+- **The real server is slow to load and relatively slow per call.** First
+  process load measured **39.8 s**; 50-call median **1.331 s**, p95 **2.237 s**.
+  A 30-episode paired run took **26.5 min** with llvmpipe rendering. Reusing the
+  live server across episodes is required for bounded runs.
+- **scikit-learn is a core `.venv`-only, optional cross-check dependency.** It is
+  not in `pyproject.toml`/`uv.lock`; CI skips the cross-check with a reason.
+  Installed size is ~33 MiB for sklearn plus `joblib`/`threadpoolctl`/`cloudpickle`.
+- **Rendered episode frames were not saved** for Task 9b (optional item not run).
 - `REQUEST_RETRAIN` is a reserved decision; Task 12 will orchestrate any
   retraining.
 - The checkpoint used for the pipeline test is a LoRA run that stopped at 1,000

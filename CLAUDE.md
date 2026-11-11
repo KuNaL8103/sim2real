@@ -256,16 +256,18 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 6b — collision classifier, release/physics guards, filter re-derivation, replay prototype, limit verification
 - [x] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler (complete with pending checks above)
 - [x] Task 8 — SmolVLA + LoRA fine-tuning (complete with pending checks above)
-- [x] Task 9 — closed-loop evaluation (complete with pending checks: real-checkpoint evaluation NOT RUN; scikit-learn not installed; manual flywheel check PENDING; CI pending user confirmation)
+- [x] Task 9 — closed-loop evaluation (complete with pending checks: manual flywheel confirmation PENDING; CI pending user confirmation)
+- [x] Task 9b — real-checkpoint verification (complete: policy server, 30-episode paired run, failure fit, sklearn cross-check)
 - [ ] Task 10 — ROS 2 inference bridge
 - [ ] Task 11 — safety watchdog and e-stop
 - [ ] Task 12 — orchestration
 
 ## Current status
 
-- Last verified test run: passed=493 failed=0 skipped=11 errors=0 | date=2026-11-11 | base_commit=96d832c
-- Last verified ROS test run: passed=506 failed=0 skipped=3 errors=0 | date=2026-11-11 | base_commit=96d832c
-- Task 9 status: complete with pending checks: real-checkpoint closed-loop evaluation **NOT RUN**; scikit-learn **not installed** (NumPy full-covariance EM is the GMM path; no `setup_envs.sh` change); manual flywheel confirmation PENDING; CI pending user confirmation. Timing contract: dataset/policy period 0.1 s, 2 control steps held, `n_action_steps` default **10** (1.0 s, not the training 50); fake sweep 5/10/25 -> 13/10/8 of 30. Failure chain: GMM >=30 (BIC <=5 components), KDE >=10, neighbour 1-9, none = NO_TARGETING; `failure_definition=policy_only` by default. Guards: `max_cycles=10`, `max_total_rollouts=200`, `max_rollouts_per_request=32`, `min_failures_to_trigger=3`, `min_success_improvement=0.05`, `max_consecutive_no_improvement=3`, `cooldown_s=0`, idempotent eval ids, `STOP` file. Policy server: stdin/stdout length-prefixed JSON + raw arrays, no pickle; torch stays in `.venv-ml`. Seeds: eval 20000-20999 only, targeted 30000-30999 only.
+- Last verified test run: passed=494 failed=0 skipped=11 errors=0 | date=2026-11-11 | base_commit=1b9fa1d
+- Last verified ROS test run: passed=506 failed=0 skipped=4 errors=0 | date=2026-11-11 | base_commit=1b9fa1d
+- Task 9 status: complete with pending checks: manual flywheel confirmation PENDING; CI pending user confirmation. Timing contract: dataset/policy period 0.1 s, 2 control steps held, `n_action_steps` default **10** (1.0 s, not the training 50); fake sweep 5/10/25 -> 13/10/8 of 30. Failure chain: GMM >=30 (BIC <=5 components), KDE >=10, neighbour 1-9, none = NO_TARGETING; `failure_definition=policy_only` by default. Guards: `max_cycles=10`, `max_total_rollouts=200`, `max_rollouts_per_request=32`, `min_failures_to_trigger=3`, `min_success_improvement=0.05`, `max_consecutive_no_improvement=3`, `cooldown_s=0`, idempotent eval ids, `STOP` file. Policy server: stdin/stdout length-prefixed JSON + raw arrays, no pickle; torch stays in `.venv-ml`. Seeds: eval 20000-20999 only, targeted 30000-30999 only.
+- Task 9b status: complete. Real policy server verified: hash `b87f5094…22e3`, chunk 50, fps 10, cameras overhead/wrist -> camera1/camera2, state/action dim 8; 50-call median **1.331 s**, p95 **2.237 s**, max **3.247 s**, warm-up 4.229 s, first load **39.8 s**, peak VRAM **1,077 MiB**, server `VmHWM` **3,841,184 KiB**. Chunk (50,8), finite; 7 arm dims inside Panda limits, gripper dim outside [0,0.04] ([-0.010464, 0.063410], simulator clips). Wrong hash refused; killed-server and timeout paths handled. Cost: overhead **0.193 s**/frame, wrist **0.154 s**/frame, 2-episode combined 179.1 s -> 44.8 min estimate; approved 30-episode run took **26.5 min**. 30 seeds 20000-20029, n_action_steps 10, llvmpipe: expert **24/30** (Wilson [0.6269, 0.9050], exactly the earlier baseline), policy **1/30** (0.0333, [0.00591, 0.16671]), policy on expert-success **1/24** ([0.00739, 0.20242]), policy-only failures **23**, terminations SUCCESS 1 / TIMEOUT 29, mean completion **0.01686**; ZeroPolicy **0/30** ([0.0, 0.1135]). Failure fit on 23 policy-only failures = **KDE**, id `64f51eb905e0e941`; no targeted generation. scikit-learn 1.9.1 installed in core `.venv` only (not CI): cross-check selects 3 components in both, matched means differ **8.3e-17**, BIC differs **0.76%**. No policy-quality claim.
 - Task 8b status: complete: real 1,000-step LoRA run on train_v1 (batch 16, fp32, lr 1e-4, seed 0, save_every 250) stopped at 1,000 of the approved 2,000-step bound by user instruction; checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000` (`git_dirty=false`, metadata sha256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`); wall 28:53, peak VRAM 4,377 MiB, peak RSS 6,245,720 KiB; loss 3.544756 -> 0.320808 (50-step mean 1.833 -> 0.247); offline L1 beats both baselines on all 8 dims (hold-last is better only at horizon k=0,1); **CI user-confirmed green, 2026-11-07** (no run ids); **Task 8 smoke inspection PENDING** (loss log, checkpoint folder and metadata were never confirmed by the user); checkpoint metadata confirms `chunk_size=50`, `n_action_steps=50`, `fps=10.0`, rename map overhead/wrist -> camera1/camera2, stats hash `a25f62abd51f0d9c1cbe5aee240273a186e45e711562de51f77f2b919af21dd5`, and a **constant** learning rate (`training.lr=1e-4`; no scheduler in `trainer.py`), so stopping at 1,000 of the 2,000-step config bound is a step-bound truncation, not a mid-schedule decay
 - Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; **CI user-confirmed green, 2026-11-07** (no run ids); OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
 - Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; **CI user-confirmed green, 2026-11-02** (no run id recorded)
@@ -279,8 +281,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 The first line records the **core** suite (`.venv`, ROS-free,
 `env -u PYTHONPATH -u AMENT_PREFIX_PATH`). The second line records the
-ROS-enabled suite separately. Task 9 suites ran on the tree committed as
-`96d832c`; the docs-only commit follows it.
+ROS-enabled suite separately. Task 9b suites ran on the tree committed as
+`1b9fa1d`; the docs-only commit follows it.
 
 Run breakdown (2026-11-02, Task 6b):
 
@@ -497,6 +499,60 @@ Run breakdown (2026-11-11, Task 9):
 - Not run: real-checkpoint closed-loop evaluation/T5 (**NOT RUN**, cost approval
   required); real SmolVLA server mode (fake-model protocol only); no
   scikit-learn install (NumPy GMM fallback); manual flywheel inspection PENDING.
+
+Run breakdown (2026-11-11, Task 9b):
+
+- Pre-edit baselines re-verified before any change: core ROS-free **493 passed /
+  11 skipped**; `.venv-ros` **506 passed / 3 skipped**; `colcon test-result`
+  **7 tests / 0 failures**; `scripts/run_ml_tests.sh` **4 passed / 1 deselected**.
+  All matched the Task 9 record.
+- Test-claim audit: no policy-quality threshold assertion exists. Relaxed
+  `tests/test_evaluation_policies.py` (`expert num_success >= 1`,
+  `policy num_success == 0`, zero policy-on-expert success) to definitional
+  identities, and replaced two arbitrary Wilson thresholds in
+  `tests/test_evaluation_records.py` with interval-membership checks. The ROS
+  delta (+52) is the single extra ROS-marked test
+  `test_closed_loop_eval.py::test_run_eval_publishes_a_summary` (skipped in core).
+- scikit-learn: dry-run 4 packages (~9.1 MiB download). Installed `1.9.1`
+  (`joblib 1.6.0`, `threadpoolctl 3.8.0`, `cloudpickle 3.1.2`) into core `.venv`
+  only (`sklearn` 33 MiB on disk); not in `pyproject.toml`/`uv.lock`. One
+  optional cross-check test on a seeded 3-cluster fixture: both select
+  **3 components**, matched means differ **8.3e-17** (tolerance 0.05), BIC
+  differs **0.76%** (tolerance 2%). CI skips it when sklearn is absent.
+- Policy server (real checkpoint, GPU): handshake hash `b87f5094…22e3`, chunk
+  **50**, fps **10**, cameras overhead/wrist -> camera1/camera2, state/action
+  dim **8**; first load **39.8 s**. 50 calls: median **1.331 s**, mean 1.457 s,
+  p95 **2.237 s**, max **3.247 s**, warm-up 4.229 s; peak VRAM **1,077 MiB**;
+  server peak RSS **2,455,672 KiB**, `VmHWM` **3,841,184 KiB**. Chunk **(50, 8)**,
+  wire float32/client float64, finite; 7 arm dims inside Panda limits, gripper
+  dim **[-0.010464, 0.063410]** against [0, 0.04] (simulator clips). Wrong hash
+  refused; killed server and 1 ms timeout detected/handled. Fixed the server so
+  stdout is protocol-only, added an explicit `ready` frame after model load, and
+  reuse a live server across resets.
+- Cost (live llvmpipe, n_action_steps 10): overhead **0.193 s/frame** mean,
+  wrist **0.154 s/frame** mean; policy median **1.295 s/call**; 2-episode combined
+  **179.1 s** -> **44.8 min** estimate. The estimate exceeded 10 min, approval was
+  requested and given; the 30-episode run took **1,592.6 s = 26.5 min**.
+- 30-episode paired run (seeds 20000-20029, n_action_steps 10, renderer
+  **llvmpipe**): expert **24/30** = 0.800, Wilson [0.6269, 0.9050] (exactly the
+  earlier baseline); policy **1/30** = 0.0333, Wilson [0.00591, 0.16671]; policy
+  on expert-success **1/24** = 0.0417, Wilson [0.00739, 0.20242]; policy-only
+  failures **23**; policy terminations SUCCESS 1 / TIMEOUT 29; mean completion
+  **0.01686**; 871 policy calls, median 1.323 s, p95 1.480 s, max 12.409 s. The
+  single success was episode index 10 (seed 132083934). ZeroPolicy context on the
+  same seeds: **0/30**, Wilson [0.0, 0.1135], all TIMEOUT, mean completion
+  0.00173.
+- Failure analysis: 23 policy-only failures -> **KDE**, id
+  `64f51eb905e0e941`; no targeted rollouts generated.
+- Not run: rendered frames for one success/failure episode (optional).
+- Final Task 9b suites (tree `1b9fa1d`): core ROS-free **494 passed / 11
+  skipped** (optional sklearn cross-check passing); `.venv-ros` **506 passed /
+  4 skipped** (the cross-check skips because sklearn is core-`.venv`-only);
+  `colcon test-result --verbose` **7 tests / 0 failures**; `scripts/run_ml_tests.sh`
+  **4 passed / 1 deselected**; `scripts/ci_parity.sh` **passed** (its
+  `uv sync --locked --group sim` removes core-only sklearn, so the cross-check
+  skips there; it was reinstalled afterwards for the recorded core run). Ruff
+  check and format check clean. CI for this push is pending user confirmation.
 
 Run breakdown (2026-11-02, Task 7):
 
@@ -743,16 +799,23 @@ Run breakdown (2026-10-31, Task 2b):
 
 ## Known limitations
 
-- **Task 9 real-checkpoint evaluation is NOT RUN.** The policy server's
-  real-model mode (SmolVLA + LoRA, LeRobot pre/post inside the server) is
-  implemented but only the torch-free fake-model protocol is tested here. No
-  closed-loop policy-quality claim is made. The bounded T5 run with
-  `outputs/task8/train_v1_lora/checkpoint-00001000` (1,000 of the 2,000-step
-  constant-LR bound) requires the user's cost approval.
-- **scikit-learn is not installed.** The GMM path uses a NumPy full-covariance EM
-  with BIC selection; installing scikit-learn into the core `.venv` remains an
-  approved-to-ask action and is pending size/dry-run and `.venv-ros` import
-  evidence. KDE and neighbour fallbacks are NumPy-only.
+- **Task 9b is one bounded real-checkpoint run.** 30 seeds 20000-20029, one task
+  instruction, `n_action_steps=10`, 1,000 training steps on 40 episodes with
+  accepted-data skew: expert **24/30**, policy **1/30** (Wilson
+  [0.00591, 0.16671]), policy on expert-success **1/24**, policy-only failures
+  **23**. No policy-quality or generalisation claim beyond these counts.
+- **The real policy's gripper dimension is outside the physical range.** Over 50
+  chunks it ranged [-0.010464, 0.063410] against [0, 0.04]; the simulator clips
+  it. The seven arm dimensions were inside the Panda limits.
+- **Real policy-server cost.** First process load **39.8 s**; 50-call median
+  **1.331 s**, p95 **2.237 s**; the 30-episode paired run took **26.5 min** with
+  llvmpipe. A live server is now reused across resets (not reloaded per
+  episode).
+- **scikit-learn is a core `.venv`-only optional cross-check.** Installed
+  `1.9.1` (~33 MiB, plus joblib/threadpoolctl/cloudpickle) after approval; it is
+  not in `pyproject.toml`/`uv.lock`, so CI skips the cross-check with a reason.
+  Cross-check: both select 3 components, matched means differ **8.3e-17**, BIC
+  differs **0.76%** (tolerances 0.05 and 2%).
 - **The flywheel manual check is PENDING.** `data/flywheel/ledger.jsonl` is
   append-only and guard-tested, but the user has not inspected a live ledger yet.
   Task 9 never retrains; `REQUEST_RETRAIN` is a reserved decision for Task 12.
@@ -760,6 +823,7 @@ Run breakdown (2026-10-31, Task 2b):
   succeeded 60/60 on seeds 20000-20059 and targeted rollouts yielded 10/10; the
   MuJoCo expert succeeded 24/30 on 20000-20029, so the documented ~40% MuJoCo
   failure rate still governs real targeted yield.
+- **Rendered episode frames were not saved for Task 9b** (optional item not run).
 - **The evaluator re-renders only when a policy needs images.** llvmpipe is the
   default and is recorded in every record; the opt-in D3D12 path is recorded as
   `...-OPT_IN` and must not be selected silently.
