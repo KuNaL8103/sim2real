@@ -20,8 +20,10 @@ expert with atomic rollout staging, trajectory filtering with quality metrics,
 versioned `curated_v1` output, RGB-D mapping, and a two-layer LeRobot v3 /
 Open X dataset builder. Task 8 adds an offline SmolVLA + PEFT LoRA fine-tuning
 pipeline with a measured two-step GPU smoke run and offline L1 validation.
-Closed-loop inference and safety logic are not implemented; Bridge real data and
-video encoding are not exercised.
+Task 9 adds closed-loop policy evaluation with reserved seeds, paired expert
+comparison, rich records, failure-mode sampling, failure-targeted rollout
+generation, and flywheel guards. Closed-loop inference (Task 10) and safety
+logic are not implemented; Bridge real data and video encoding are not exercised.
 
 ## Verified environment
 
@@ -254,17 +256,18 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 - [x] Task 6b — collision classifier, release/physics guards, filter re-derivation, replay prototype, limit verification
 - [x] Task 7 — LeRobot v3 export, Open-X adapter, normalization stats, mixing sampler (complete with pending checks above)
 - [x] Task 8 — SmolVLA + LoRA fine-tuning (complete with pending checks above)
-- [ ] Task 9 — closed-loop evaluation
+- [x] Task 9 — closed-loop evaluation (complete with pending checks: real-checkpoint evaluation NOT RUN; scikit-learn not installed; manual flywheel check PENDING; CI pending user confirmation)
 - [ ] Task 10 — ROS 2 inference bridge
 - [ ] Task 11 — safety watchdog and e-stop
 - [ ] Task 12 — orchestration
 
 ## Current status
 
-- Last verified test run: passed=442 failed=0 skipped=10 errors=0 | date=2026-11-07 | base_commit=bf74c84
-- Last verified ROS test run: passed=454 failed=0 skipped=3 errors=0 | date=2026-11-07 | base_commit=bf74c84
-- Task 8b status: complete: real 1,000-step LoRA run on train_v1 (batch 16, fp32, lr 1e-4, seed 0, save_every 250) stopped at 1,000 of the approved 2,000-step bound by user instruction; checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000` (`git_dirty=false`, metadata sha256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`); wall 28:53, peak VRAM 4,377 MiB, peak RSS 6,245,720 KiB; loss 3.544756 -> 0.320808 (50-step mean 1.833 -> 0.247); offline L1 beats both baselines on all 8 dims (hold-last is better only at horizon k=0,1); user checkpoint inspection and CI confirmation PENDING
-- Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; CI for this push PENDING user confirmation in the Actions tab; OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
+- Last verified test run: passed=493 failed=0 skipped=11 errors=0 | date=2026-11-11 | base_commit=96d832c
+- Last verified ROS test run: passed=506 failed=0 skipped=3 errors=0 | date=2026-11-11 | base_commit=96d832c
+- Task 9 status: complete with pending checks: real-checkpoint closed-loop evaluation **NOT RUN**; scikit-learn **not installed** (NumPy full-covariance EM is the GMM path; no `setup_envs.sh` change); manual flywheel confirmation PENDING; CI pending user confirmation. Timing contract: dataset/policy period 0.1 s, 2 control steps held, `n_action_steps` default **10** (1.0 s, not the training 50); fake sweep 5/10/25 -> 13/10/8 of 30. Failure chain: GMM >=30 (BIC <=5 components), KDE >=10, neighbour 1-9, none = NO_TARGETING; `failure_definition=policy_only` by default. Guards: `max_cycles=10`, `max_total_rollouts=200`, `max_rollouts_per_request=32`, `min_failures_to_trigger=3`, `min_success_improvement=0.05`, `max_consecutive_no_improvement=3`, `cooldown_s=0`, idempotent eval ids, `STOP` file. Policy server: stdin/stdout length-prefixed JSON + raw arrays, no pickle; torch stays in `.venv-ml`. Seeds: eval 20000-20999 only, targeted 30000-30999 only.
+- Task 8b status: complete: real 1,000-step LoRA run on train_v1 (batch 16, fp32, lr 1e-4, seed 0, save_every 250) stopped at 1,000 of the approved 2,000-step bound by user instruction; checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000` (`git_dirty=false`, metadata sha256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`); wall 28:53, peak VRAM 4,377 MiB, peak RSS 6,245,720 KiB; loss 3.544756 -> 0.320808 (50-step mean 1.833 -> 0.247); offline L1 beats both baselines on all 8 dims (hold-last is better only at horizon k=0,1); **CI user-confirmed green, 2026-11-07** (no run ids); **Task 8 smoke inspection PENDING** (loss log, checkpoint folder and metadata were never confirmed by the user); checkpoint metadata confirms `chunk_size=50`, `n_action_steps=50`, `fps=10.0`, rename map overhead/wrist -> camera1/camera2, stats hash `a25f62abd51f0d9c1cbe5aee240273a186e45e711562de51f77f2b919af21dd5`, and a **constant** learning rate (`training.lr=1e-4`; no scheduler in `trainer.py`), so stopping at 1,000 of the 2,000-step config bound is a step-bound truncation, not a mid-schedule decay
+- Task 8 status: complete with pending checks: real SmolVLA smoke ran **2 steps** on the RTX 4050 (losses 2.277515 -> 3.060153, peak VRAM **1,117 MiB**, peak host RSS **~3.7 GiB**, checkpoint `outputs/task8/smolvla_smoke/checkpoint-00000002`); user **"smoke confirmed" reply PENDING**; **CI user-confirmed green, 2026-11-07** (no run ids); OpenVLA-7B not validated; bf16/fp16, gradient checkpointing and cu128 not run; no policy-quality claim; RViz mapping and Task 7 viewer checks PENDING
 - Task 7 status: complete with pending checks: LeRobot 0.6.1 / format v3.0 used; `.venv-ml` exists (CPU torch 2.11.0+cpu); renderer llvmpipe; decimation 2 / 10 Hz; 200 generated, 131 successful, 123 accepted (114/117 clean); real images only for a 2-episode/92-frame demo; no real Bridge data downloaded; Bridge license CC BY 4.0 and slug `bridge` (not official `bridge_orig`); viewer check PENDING; video/MP4 path not exercised; `.venv-ml` full-suite pytest is path-limited because that minimal env lacks scipy/open3d; **CI user-confirmed green, 2026-11-02** (no run id recorded)
 - Task 6b status: complete with pending checks: **CI user-confirmed green for the 6b push, 2026-11-02** (no run id recorded); RViz visual confirmation PENDING (no report in this session); expert improvement is small and not material (26/40 dev baseline -> 28/40 final dev, 36/60 one-time confirmation); Open3D 0.20.0 `ScalableTSDFVolume` remains broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; OctoMap deferred; opencode permission rules are unenforced
 - Task 6 status: complete with pending checks: **CI user-confirmed green for the Task 6 push (f8c77f2) and the CI fix (8207142), 2026-11-01** (no run id recorded); RViz mapping check was visually confirmed for the fake backend and the lean mapper config, but this session has no new user report; MuJoCo runtime measured but no rate/quality threshold asserted; OctoMap deferred; Open3D 0.20.0 `ScalableTSDFVolume` is broken upstream (#7592) and the mapper uses a bounded `UniformTSDFVolume`; opencode permission rules are unenforced in this setup
@@ -276,8 +279,8 @@ Detailed rationale is in `docs/ARCHITECTURE.md`. Summary:
 
 The first line records the **core** suite (`.venv`, ROS-free,
 `env -u PYTHONPATH -u AMENT_PREFIX_PATH`). The second line records the
-ROS-enabled suite separately. Task 6b tests ran on the working tree based on
-`8207142`.
+ROS-enabled suite separately. Task 9 suites ran on the tree committed as
+`96d832c`; the docs-only commit follows it.
 
 Run breakdown (2026-11-02, Task 6b):
 
@@ -455,6 +458,45 @@ Run breakdown (2026-11-07, Task 8b):
 - Not run: the remaining 1,000 steps of the approved bound, bf16/fp16,
   gradient checkpointing, cu128, a remote GPU, closed-loop evaluation, policy
   quality. CI for this push is pending user confirmation.
+
+Run breakdown (2026-11-11, Task 9):
+
+- Pre-edit baselines (verified before any change): core ROS-free **442 passed /
+  10 skipped**; `.venv-ros` **454 passed / 3 skipped**; `colcon test-result`
+  **7 tests / 0 failures**; `scripts/run_ml_tests.sh` **4 passed / 1 deselected**;
+  `sim2real.training` imports with torch absent; `scripts/ci_parity.sh` passed.
+  All matched the recorded Task 8b numbers.
+- Post-change core ROS-free: **493 passed / 11 skipped** (51 new passing tests;
+  the extra skip is the new ros-marked closed-loop node test). `.venv-ros`
+  **506 passed / 3 skipped**; `colcon test-result --verbose` **7 tests /
+  0 failures / 0 skipped**; `ruff check` and `ruff format --check` clean; ML
+  **4 passed / 1 deselected**.
+- Timing contract verified: each policy action held for exactly **2** control
+  steps; `n_action_steps=10` re-plans every 10 policy steps (20 control ticks).
+  Fake `noisy_expert` sweep (30 seeds 20000-20029, expert 30/30 each):
+  n=5 **13/30** (Wilson [0.274, 0.608]), n=10 **10/30** ([0.192, 0.512]),
+  n=25 **8/30** ([0.142, 0.445]).
+- Fake development run: 60 seeds 20000-20059, `noisy_expert`, n_action_steps 10
+  -> policy **18/60** (0.30, Wilson [0.199, 0.425]), expert **60/60**
+  ([0.940, 1.000]), **42 policy-only failures**, mean completion 0.305.
+- Failure fit on those 60 records: **GMM**, 42 failures, id
+  `1ac33171af13bd1c`; 7 targeted / 3 uniform draws, 0 clip fallbacks, 8 rejection
+  tries. Targeted generation (fake, 10 rollouts, seed 30000) -> **10/10**
+  expert success, all seeds 30000-30999, distribution id in every staged
+  sidecar.
+- MuJoCo baseline (physics only, **no rendering**, 30 seeds 20000-20029):
+  expert **24/30** (0.80, Wilson [0.627, 0.905]); `ZeroPolicy` **0/30**
+  ([0.000, 0.138], 24 policy-only failures); `NoisyExpertPolicy` (sigma 0.01,
+  dropout 0.05) **2/30** ([0.018, 0.213]), **2/24** on expert-success seeds
+  ([0.023, 0.258]), 22 policy-only failures; mean completion 0.056.
+- Live ROS runtime (fake, no rendering): `closed_loop_eval_node` 20 episodes ->
+  service `success=True`, **4/20** policy success, summary published on
+  `/sim2real/eval_summary`; `expert_collector_node` FAILURE_TARGETED with 3
+  rollouts -> `success=True`, **3/3** generated, expert yield 1.00, distribution
+  `1ac33171af13bd1c`, seeds [30723, 30177, 30086].
+- Not run: real-checkpoint closed-loop evaluation/T5 (**NOT RUN**, cost approval
+  required); real SmolVLA server mode (fake-model protocol only); no
+  scikit-learn install (NumPy GMM fallback); manual flywheel inspection PENDING.
 
 Run breakdown (2026-11-02, Task 7):
 
@@ -700,6 +742,27 @@ Run breakdown (2026-10-31, Task 2b):
 - License and spec provenance remain as recorded for Task 2.
 
 ## Known limitations
+
+- **Task 9 real-checkpoint evaluation is NOT RUN.** The policy server's
+  real-model mode (SmolVLA + LoRA, LeRobot pre/post inside the server) is
+  implemented but only the torch-free fake-model protocol is tested here. No
+  closed-loop policy-quality claim is made. The bounded T5 run with
+  `outputs/task8/train_v1_lora/checkpoint-00001000` (1,000 of the 2,000-step
+  constant-LR bound) requires the user's cost approval.
+- **scikit-learn is not installed.** The GMM path uses a NumPy full-covariance EM
+  with BIC selection; installing scikit-learn into the core `.venv` remains an
+  approved-to-ask action and is pending size/dry-run and `.venv-ros` import
+  evidence. KDE and neighbour fallbacks are NumPy-only.
+- **The flywheel manual check is PENDING.** `data/flywheel/ledger.jsonl` is
+  append-only and guard-tested, but the user has not inspected a live ledger yet.
+  Task 9 never retrains; `REQUEST_RETRAIN` is a reserved decision for Task 12.
+- **Fake-backend evaluation numbers do not transfer.** The kinematic fake expert
+  succeeded 60/60 on seeds 20000-20059 and targeted rollouts yielded 10/10; the
+  MuJoCo expert succeeded 24/30 on 20000-20029, so the documented ~40% MuJoCo
+  failure rate still governs real targeted yield.
+- **The evaluator re-renders only when a policy needs images.** llvmpipe is the
+  default and is recorded in every record; the opt-in D3D12 path is recorded as
+  `...-OPT_IN` and must not be selected silently.
 
 - **Task 6 mapping is a surface map, not a free-space map.** The TSDF only
   updates voxels within `sdf_trunc_m` of a measured surface; there is no
