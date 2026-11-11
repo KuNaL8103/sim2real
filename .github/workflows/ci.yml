@@ -48,7 +48,10 @@ jobs:
           apt-get install -y --no-install-recommends \
             git python3-colcon-common-extensions python3-rosdep
           rosdep update
-          rosdep install --from-paths ros2_ws/src --ignore-src -y
+          # Headless CI does not use RViz. Installing rviz2 pulls Qt packages
+          # from the Ubuntu archive, which can be unreachable on a runner even
+          # when the ROS package repository is available.
+          rosdep install --from-paths ros2_ws/src --ignore-src -y --skip-keys rviz2
       - name: Build
         shell: bash
         run: |
