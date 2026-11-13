@@ -15,6 +15,7 @@ from sim2real.status import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_MD = ROOT / "CLAUDE.md"
+pytestmark = pytest.mark.skipif(not CLAUDE_MD.is_file(), reason="local CLAUDE.md is not tracked")
 
 
 def claude_text() -> str:

@@ -27,7 +27,6 @@ REQUIRED_DIRS = [
 ]
 
 REQUIRED_FILES = [
-    "CLAUDE.md",
     "README.md",
     "pyproject.toml",
     "uv.lock",
