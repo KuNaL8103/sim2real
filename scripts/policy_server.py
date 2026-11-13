@@ -83,18 +83,28 @@ class FakeModel:
     def __init__(self, metadata: dict[str, Any]) -> None:
         self.chunk_size = int(metadata.get("chunk_size", 50))
         self.fps = float(metadata.get("fps", 10.0))
+        self._sample_seed: int | None = None
+        self._call_index = 0
+
+    def set_sample_seed(self, seed: int | None) -> None:
+        self._sample_seed = None if seed is None else int(seed)
+        self._call_index = 0
 
     def reset(self) -> None:
-        return None
+        self._call_index = 0
 
     def act(self, header: dict[str, Any], blobs: list[bytes]) -> np.ndarray:
         del blobs
         state = np.asarray(header.get("state", []), dtype=np.float64)
         if state.shape != (8,) or not np.all(np.isfinite(state)):
             raise ProtocolError("fake model received an invalid state")
-        task = str(header.get("task", ""))
-        seed = int(hashlib.sha256(task.encode("utf-8")).hexdigest()[:8], 16)
-        rng = np.random.default_rng([seed, int(header.get("stamp_ns", 0))])
+        if self._sample_seed is not None:
+            rng = np.random.default_rng([self._sample_seed, self._call_index])
+        else:
+            task = str(header.get("task", ""))
+            seed = int(hashlib.sha256(task.encode("utf-8")).hexdigest()[:8], 16)
+            rng = np.random.default_rng([seed, int(header.get("stamp_ns", 0))])
+        self._call_index += 1
         offsets = rng.normal(0.0, 1.0e-4, size=(self.chunk_size, 8))
         actions = np.tile(state, (self.chunk_size, 1)) + offsets
         return actions.astype(np.float32)
@@ -128,12 +138,22 @@ class RealModel:
         self.chunk_size = int(metadata.get("chunk_size", config.training.chunk_size))
         self.fps = float(metadata.get("fps", 10.0))
         self.metadata = metadata
+        self._sample_seed: int | None = None
+        self._call_index = 0
+
+    def set_sample_seed(self, seed: int | None) -> None:
+        self._sample_seed = None if seed is None else int(seed)
+        self._call_index = 0
 
     def reset(self) -> None:
         self.adapter.policy.reset()
+        self._call_index = 0
 
     def act(self, header: dict[str, Any], blobs: list[bytes]) -> np.ndarray:
         torch = self.torch
+        if self._sample_seed is not None:
+            torch.manual_seed(int(self._sample_seed) + self._call_index)
+        self._call_index += 1
         key_names = [str(key) for key in header.get("image_keys", [])]
         shapes = [tuple(int(v) for v in shape) for shape in header.get("image_shapes", [])]
         if len(key_names) != len(blobs) or len(shapes) != len(blobs):
@@ -192,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-hash", default=None)
     parser.add_argument("--fake-model", action="store_true")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--sample-seed", type=int, default=None)
     args = parser.parse_args(argv)
 
     global _PROTOCOL_OUT
@@ -257,7 +278,11 @@ def main(argv: list[str] | None = None) -> int:
             {"type": "error", "message": f"model load failed: {type(exc).__name__}: {exc}"},
         )
         return 4
-    write_packet(_PROTOCOL_OUT, {"type": "ready", "ok": True})
+    model.set_sample_seed(args.sample_seed)
+    write_packet(
+        _PROTOCOL_OUT,
+        {"type": "ready", "ok": True, "sample_seed": args.sample_seed},
+    )
 
     while True:
         try:
@@ -273,10 +298,15 @@ def main(argv: list[str] | None = None) -> int:
                 reset = getattr(model, "reset", None)
                 if reset is not None:
                     reset()
+                if "sample_seed" in header:
+                    model.set_sample_seed(header.get("sample_seed"))
             except Exception as exc:  # noqa: BLE001 - one bad reset must not kill the server
                 write_packet(_PROTOCOL_OUT, {"type": "error", "message": f"reset failed: {exc}"})
                 continue
-            write_packet(_PROTOCOL_OUT, {"type": "reset", "ok": True})
+            write_packet(
+                _PROTOCOL_OUT,
+                {"type": "reset", "ok": True, "sample_seed": model._sample_seed},
+            )
             continue
         if kind != "act":
             write_packet(_PROTOCOL_OUT, {"type": "error", "message": f"unknown packet {kind!r}"})

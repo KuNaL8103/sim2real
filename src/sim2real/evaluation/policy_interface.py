@@ -385,6 +385,7 @@ class CheckpointPolicy:
         repo_root: str | Path | None = None,
         timeout_s: float = 30.0,
         fake_model: bool = False,
+        deterministic_sampling: bool = True,
     ) -> None:
         root = Path(repo_root or Path(__file__).resolve().parents[3]).resolve()
         self._repo_root = root
@@ -398,6 +399,7 @@ class CheckpointPolicy:
         self._server_script = Path(server_script or (root / "scripts" / "policy_server.py"))
         self._timeout_s = float(timeout_s)
         self._fake_model = bool(fake_model)
+        self._deterministic_sampling = bool(deterministic_sampling)
         self._process: subprocess.Popen[bytes] | None = None
         self._ready = False
         self._stderr_lines: deque[str] = deque(maxlen=200)
@@ -410,6 +412,7 @@ class CheckpointPolicy:
             "checkpoint": str(self._checkpoint),
             "checkpoint_hash": self.checkpoint_hash,
             "fake_model": self._fake_model,
+            "deterministic_sampling": self._deterministic_sampling,
         }
 
     def _start(self) -> None:
@@ -524,20 +527,31 @@ class CheckpointPolicy:
             raise PolicyError(f"expected ready, got {ready.get('type')!r}")
 
     def reset(self, task_instruction: str, seed: int) -> None:
-        del seed
         if self._process is not None and self._process.poll() is None and self._ready:
-            self._send({"type": "reset"})
+            reset: dict[str, Any] = {"type": "reset"}
+            if self._deterministic_sampling:
+                reset["sample_seed"] = int(seed)
+            self._send(reset)
             reply, _ = self._recv()
             if reply.get("type") == "error":
                 raise PolicyError(f"policy server reset failed: {reply.get('message')}")
             if not reply.get("ok"):
                 raise PolicyError("policy server refused the reset")
+            self.info["sample_seed"] = reply.get("sample_seed")
         else:
             if self._process is not None:
                 self.close()
             self._start()
             self._handshake()
             self._ready = True
+            if self._deterministic_sampling:
+                self._send({"type": "reset", "sample_seed": int(seed)})
+                reply, _ = self._recv()
+                if reply.get("type") == "error":
+                    raise PolicyError(f"policy server reset failed: {reply.get('message')}")
+                if not reply.get("ok"):
+                    raise PolicyError("policy server refused the reset")
+                self.info["sample_seed"] = reply.get("sample_seed")
         self._task_instruction = task_instruction
 
     def act(self, observation: PolicyObservation) -> ActionChunk:

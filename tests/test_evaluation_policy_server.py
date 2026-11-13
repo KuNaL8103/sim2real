@@ -160,3 +160,26 @@ def test_protocol_round_trip_and_no_pickle():
         assert "pickle.loads" not in source
         assert "pickle.dumps" not in source
     time.sleep(0)
+
+
+def test_deterministic_sample_seed_reproduces_and_varies(tmp_path):
+    policy = CheckpointPolicy(
+        _checkpoint(tmp_path),
+        server_python=sys.executable,
+        repo_root=ROOT,
+        fake_model=True,
+        timeout_s=10.0,
+    )
+    observation = _observation()
+    try:
+        policy.reset("pick", 20000)
+        first = policy.act(observation).actions
+        policy.reset("pick", 20000)
+        second = policy.act(observation).actions
+        policy.reset("pick", 20001)
+        third = policy.act(observation).actions
+        assert np.array_equal(first, second)
+        assert not np.array_equal(first, third)
+        assert policy.info["sample_seed"] in {20000, 20001}
+    finally:
+        policy.close()
