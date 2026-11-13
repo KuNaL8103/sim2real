@@ -79,6 +79,28 @@ def file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def adapter_tree_sha256(path: str | Path) -> str:
+    """SHA-256 over every adapter file, addressing relative paths and bytes.
+
+    Adapters may contain one safetensors file or several PEFT sidecars, so the
+    hash covers the whole directory in sorted order rather than a fixed name.
+    """
+    target = Path(path)
+    if not target.is_dir():
+        raise CheckpointError(f"{target}: adapter directory not found")
+    digest = hashlib.sha256()
+    files = sorted(item for item in target.rglob("*") if item.is_file())
+    if not files:
+        raise CheckpointError(f"{target}: adapter directory is empty")
+    for item in files:
+        relative = item.relative_to(target).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def dataset_fingerprint(root: str | Path) -> dict[str, Any]:
     """Hash the dataset metadata files that determine training semantics."""
     dataset_root = Path(root)
@@ -251,6 +273,8 @@ def save_checkpoint(
     if missing:
         raise CheckpointError(f"checkpoint metadata is missing required fields: {missing}")
     adapter.save_adapter(checkpoint_dir / "adapter")
+    metadata = dict(metadata)
+    metadata["adapter_hash"] = adapter_tree_sha256(checkpoint_dir / "adapter")
     (checkpoint_dir / METADATA_NAME).write_text(
         json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
@@ -308,6 +332,7 @@ __all__ = [
     "METADATA_NAME",
     "REQUIRED_FIELDS",
     "CheckpointError",
+    "adapter_tree_sha256",
     "build_metadata",
     "canonical_json",
     "config_hash",

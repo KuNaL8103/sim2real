@@ -15,11 +15,20 @@ from sim2real.status import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_MD = ROOT / "CLAUDE.md"
-pytestmark = pytest.mark.skipif(not CLAUDE_MD.is_file(), reason="local CLAUDE.md is not tracked")
+STATUS_MD = ROOT / "docs" / "STATUS.md"
+pytestmark = pytest.mark.skipif(
+    not (CLAUDE_MD.is_file() or STATUS_MD.is_file()),
+    reason="neither local CLAUDE.md nor tracked docs/STATUS.md is present",
+)
+
+
+def status_source() -> Path:
+    """Prefer the local CLAUDE.md; CI and clones use the tracked STATUS.md."""
+    return CLAUDE_MD if CLAUDE_MD.is_file() else STATUS_MD
 
 
 def claude_text() -> str:
-    return CLAUDE_MD.read_text(encoding="utf-8")
+    return status_source().read_text(encoding="utf-8")
 
 
 def test_last_verified_line_is_parseable():
@@ -74,3 +83,15 @@ def test_parser_splits_pending_checks():
     )
     assert status.complete is False
     assert status.pending == ("ROS 2 build", "CI run")
+
+
+@pytest.mark.skipif(not STATUS_MD.is_file(), reason="docs/STATUS.md is absent")
+def test_tracked_status_md_lines_are_parseable():
+    text = STATUS_MD.read_text(encoding="utf-8")
+    status = parse_last_verified(text)
+    assert status.passed >= 0 and status.failed >= 0
+    assert len(status.date) == 10
+    ros = parse_last_verified_ros(text)
+    assert ros is not None and ros.passed >= 0
+    task1 = parse_task1_status(text)
+    assert task1.complete or task1.pending

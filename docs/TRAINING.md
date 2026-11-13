@@ -544,3 +544,168 @@ verify instruction conditioning explicitly before multi-instruction training.
 Do not start the next real training run until the GPU clock/power issue is
 fixed and a true overfit (mean last-20-step loss below 0.1) is achieved. Task
 10 remains blocked pending that evidence.
+
+## 15. Remote overfit protocol (Task 9f; document only, not run)
+
+This is the exact protocol to execute on a remote GPU that passes the bundle's
+clock/memory gate. It is the pipeline-health test before Task 10, not a policy
+quality experiment. No part of it ran in the Task 9f session.
+
+**Config.** `configs/training/smolvla_lora_overfit_remote.yaml`:
+
+| Setting | Value |
+| --- | --- |
+| Episodes | dataset indices **0 and 1** (`ep0000` seed **10000**, `ep0004` seed **10004**) |
+| Batch / steps | **4** / **1000** |
+| LR / precision | **1e-4 constant** / **fp32** |
+| Chunk / `n_action_steps` | 50 / 50 (training), evaluation uses 10 |
+| LoRA | r **32**, alpha **64**, dropout **0.05**, unchanged targets |
+| Checkpoints | every **100** steps: 100, 200, ..., end (1000) |
+| Seed | 0 |
+
+**Convergence, defined before the run.** Converged means the **mean training
+loss of the last 20 steps is below 0.1**. The training loss is the
+flow-matching objective, not an L1 distance in radians. The Task 9d 250-step run
+ended at **0.49675** and was still falling; 0.1 is about **5x lower** and is a
+clear "the model can fit two episodes" signal. It is pre-registered here and
+must not be redefined after seeing the curve.
+
+**Batch and step arithmetic (healthy-GPU measurements, not remote guesses).**
+The measured healthy-GPU step times were: batch 1 **0.43-0.66 s**, batch 4
+median **0.374 s** (20-step full-data measurement), batch 16 median **1.176 s**
+(20 steps) / **1.505 s** (1,000-step run). Peak VRAM was 1,733 MiB at batch 4
+and 4,377 MiB at batch 16. Choose batch 4 and 1,000 steps:
+
+- compute estimate: `1,000 x 0.374 s = 374 s = 6.2 min`;
+- batch 16 would be `1,000 x 1.505 s = 1,505 s = 25.1 min`;
+- batch 4 keeps VRAM near 1.7 GiB and is the faster total run.
+
+Remote step time is **unknown until measured**. `RUN_REPORT.json` records it;
+do not substitute the local 210 MHz 9d median (2.992 s/step), which would make
+1,000 steps ~50 min and is explicitly a throttled figure.
+
+**Execution.** Follow `docs/REMOTE_TRAINING.md`:
+
+1. build/upload the bundle from the pushed commit (no upload in this session);
+2. on the remote host, extract it at the repository root, clone the public repo
+   at the manifest commit, and run `scripts/remote_train.sh` with the bundle
+   config;
+3. return `outputs/remote/<run_name>/RUN_REPORT.json` and the checkpoint
+   folder(s) under `outputs/remote/<run_name>/`;
+4. verify locally with `scripts/verify_remote_checkpoint.py`.
+
+**Local verification (refuses a mismatch).**
+
+```bash
+scripts/verify_remote_checkpoint.py \
+  --checkpoint outputs/remote/overfit_remote/checkpoint-00001000 \
+  --config configs/training/smolvla_lora_overfit_remote.yaml \
+  --run-report outputs/remote/overfit_remote/RUN_REPORT.json
+```
+
+The default handshake is CPU (`CUDA_VISIBLE_DEVICES` empty), so the result is
+not a throttled GPU timing. Use `--handshake cuda` only for a short diagnostic;
+label it throttled.
+
+**Local closed-loop evaluation after verification.** Use the two training
+seeds, linear execution, `n_action_steps=10`, deterministic sampling, and
+**3 repeats per seed**. The runner resets with seed 10000 and 10004 and episode
+index 0 (the 9d convention; dataset indices 0 and 1 are `ep0000`/`ep0004`).
+
+```bash
+.venv/bin/python - <<'PY'
+from dataclasses import replace
+from pathlib import Path
+
+from sim2real.evaluation import CheckpointPolicy, load_evaluation_config
+from sim2real.evaluation.episode_runner import run_eval_episode
+from sim2real.expert import load_expert_config
+from sim2real.filtering.config import load_filter_config
+from sim2real.sim import create_backend
+
+root = Path.cwd()
+checkpoint = root / "outputs/remote/overfit_remote/checkpoint-00001000"
+config = load_evaluation_config("configs/evaluation/default.yaml")
+config = replace(
+    config,
+    settings=replace(
+        config.settings, n_action_steps=10, execution="linear", max_control_steps=600
+    ),
+)
+backend = create_backend("mujoco", "configs/sim")
+policy = CheckpointPolicy(checkpoint, repo_root=root, deterministic_sampling=True, timeout_s=240)
+filter_config = load_filter_config("configs/filtering/mujoco.yaml")
+expert_config = load_expert_config("configs/expert")
+try:
+    for seed in (10000, 10004):
+        for repeat in range(3):
+            record = run_eval_episode(
+                backend,
+                policy,
+                seed=seed,
+                episode_index=0,
+                config=config,
+                eval_run_id=f"overfit_remote_{seed}_r{repeat}",
+                config_hash=config.config_hash(),
+                git_commit="remote-verified",
+                git_dirty=False,
+                randomization_dir="configs/randomization",
+                filter_config=filter_config,
+                expert_config=expert_config,
+            )
+            print(seed, repeat, record.success, record.termination_reason, record.task_completion)
+finally:
+    policy.close()
+    backend.close()
+PY
+```
+
+Teacher-forced L1 uses the same five deterministic sample-seed mean as the Part
+A analysis in `docs/EVALUATION.md`: frames 0..5 of dataset index 0, first-step
+and first-10 L1 in physical units, no closed-loop stepping. Report it next to
+the closed-loop outcome; it is not a policy-quality metric.
+
+**Interpretation table.**
+
+| Outcome | Interpretation | Next action |
+| --- | --- | --- |
+| Converged and closed loop progresses/succeeds | pipeline is sound; the local failure was optimization + the degraded GPU | proceed to Task 10 preparation and a larger run |
+| Converged but closed loop still fails | pipeline bug hunt, in this order: state/action alignment; normalization vs units; gripper dimension; camera mapping / unused camera3; frozen vision encoder and `train_expert_only`; LoRA coverage; instruction handling | test the single hypothesis with the existing checkpoint, no retraining first |
+| Not converged | the limiter is named by the curve (still falling vs flat); the single smallest change is, in order: more steps (1,000 -> 2,000 at the same batch/lr), then LoRA rank, then LR | change one thing only and rerun the same protocol |
+
+Do not call a non-converged run a pipeline bug; do not call a converged run a
+policy-quality result.
+
+## 16. Single-instruction dataset count (Task 9f; document only)
+
+`train_v1` contains **one** instruction only. `meta/tasks.parquet` has one row,
+`task_index=0`, text `pick up the red cube and place it in the left zone`; all
+**40/40** accepted episodes use it. The six-instruction matrix used in the 9d
+sensitivity test is 3 cubes x 2 zones, so the other five target combinations
+have **0** accepted episodes in `train_v1`.
+
+| Instruction (target cube -> zone) | Accepted episodes | Starts inside 0.060 m tolerance |
+| --- | --- | --- |
+| red -> left | **40** | **1/40** (index 39, `ep0071`, seed 10071, 0.05108 m) |
+| red -> right | 0 | not applicable (no episodes) |
+| green -> left | 0 | not applicable |
+| green -> right | 0 | not applicable |
+| blue -> left | 0 | not applicable |
+| blue -> right | 0 | not applicable |
+
+`train_v1` therefore cannot test instruction conditioning across six
+instructions; a six-instruction dataset must be generated separately.
+
+**Generation attempts for a 40-episode single-instruction dataset.** The
+measured Task 7 run accepted **123/200 = 0.615** generated episodes overall
+(200 generated, 131 successful, 123 accepted). Excluding start-in-success-region
+spawns removes about **1/30 = 3.3%**:
+
+`40 / (0.615 * (1 - 0.033)) = 40 / 0.595 = 67.2`
+
+so budget **70 attempts**. The alternative evaluation-seed arithmetic
+`40 / (0.80 * 0.94 * 0.967) = 40 / 0.727 = 55` uses the 24/30 MuJoCo expert
+success and 123/131 filter acceptance; **70** covers both estimates and the
+observed easy-pose skew. For six instructions at the same yield, the naive
+budget is `6 x 70 = 420` attempts; that is not recommended before one
+instruction works.

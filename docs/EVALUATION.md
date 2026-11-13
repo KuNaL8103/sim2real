@@ -884,3 +884,109 @@ disable) because `policy_only` failure analysis needs paired data in
   not a fully converged policy.
 - One renderer per dataset: use llvmpipe for the real model unless the D3D12
   choice is explicitly approved and recorded.
+
+## Task 9f Part A: first-chunk error analysis (2026-11-13)
+
+Purpose: explain how a small teacher-forced L1 can coexist with leaving the
+0.1 rad tube at frame 2. This is inference-only on the **throttled local GPU**
+(210 MHz, SW Power Cap/Thermal Slowdown). The runs took 71 s and 75 s wall
+including model load; that is **throttled, not a performance figure**.
+
+Setup: checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000`, dataset
+index 0 (seed 10000, `ep0000`), frames 0..5, action chunk 50, postprocessed
+actions in physical units. The prediction is the mean first-step action over
+five deterministic sample seeds **101-105** (not rollout seeds). "Motion" is the
+recorded action change from frame `f` to `f+1`; "ratio" is mean absolute
+first-step error divided by that motion.
+
+### Recorded motion, error and ratio per dimension
+
+Absolute first-step error (rad or m for d7), mean over 5 sample seeds:
+
+| frame | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 | mean | max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.01262 | 0.07946 | 0.00426 | 0.04636 | 0.00819 | 0.02714 | 0.03650 | 0.00027 | 0.02685 | 0.07946 |
+| 1 | 0.00999 | 0.05157 | 0.00340 | 0.01235 | 0.00385 | 0.01092 | 0.04315 | 0.00311 | 0.01729 | 0.05157 |
+| 2 | 0.01702 | 0.03747 | 0.00022 | 0.01563 | 0.00498 | 0.01660 | 0.04714 | 0.00043 | 0.01744 | 0.04714 |
+| 3 | 0.01824 | 0.00011 | 0.00362 | 0.00721 | 0.00677 | 0.01184 | 0.05155 | 0.00102 | 0.01254 | 0.05155 |
+| 4 | 0.02330 | 0.04310 | 0.00986 | 0.00693 | 0.01050 | 0.01354 | 0.05022 | 0.00040 | 0.01973 | 0.05022 |
+| 5 | 0.01490 | 0.04724 | 0.00774 | 0.04226 | 0.01395 | 0.05480 | 0.03588 | 0.00400 | 0.02760 | 0.05480 |
+
+Recorded absolute motion `|a(f+1) - a(f)|` per dimension:
+
+| frame | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.00039 | 0.00228 | 0.00047 | 0.00183 | 0.00016 | 0.00045 | 0.00084 | 0.00000 |
+| 1 | 0.00736 | 0.04282 | 0.00878 | 0.03431 | 0.00293 | 0.00843 | 0.01580 | 0.00000 |
+| 2 | 0.01723 | 0.10016 | 0.02053 | 0.08026 | 0.00685 | 0.01973 | 0.03696 | 0.00000 |
+| 3 | 0.01974 | 0.11475 | 0.02352 | 0.09196 | 0.00785 | 0.02261 | 0.04235 | 0.00000 |
+| 4 | 0.01274 | 0.07409 | 0.01519 | 0.05938 | 0.00507 | 0.01460 | 0.02735 | 0.00000 |
+| 5 | 0.00270 | 0.01571 | 0.00322 | 0.01259 | 0.00107 | 0.00309 | 0.00580 | 0.00000 |
+
+Ratio of error to motion (n/a where motion is exactly zero):
+
+| frame | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 32.15 | 34.81 | 9.09 | 25.34 | 52.45 | 60.35 | 43.32 | n/a |
+| 1 | 1.36 | 1.20 | 0.39 | 0.36 | 1.31 | 1.29 | 2.73 | n/a |
+| 2 | 0.99 | 0.37 | 0.01 | 0.19 | 0.73 | 0.84 | 1.28 | n/a |
+| 3 | 0.92 | 0.00 | 0.15 | 0.08 | 0.86 | 0.52 | 1.22 | n/a |
+| 4 | 1.83 | 0.58 | 0.65 | 0.12 | 2.07 | 0.93 | 1.84 | n/a |
+| 5 | 5.52 | 3.01 | 2.40 | 3.36 | 12.98 | 17.71 | 6.19 | n/a |
+
+Per-seed first-step standard deviation is large on the arm: d1 0.046-0.064,
+d3 0.087-0.103, d5 0.039-0.074 rad, so a single deterministic sample is noisy.
+First-10 mean L1 over the five seeds was **0.07928, 0.07852, 0.07504, 0.06293,
+0.04681, 0.03419 rad** at frames 0..5.
+
+### Preprocessor parity at frame 0
+
+The runner observation was captured inside `run_eval_episode` after the same
+MuJoCo reset. Raw state max abs difference vs the dataset sample was
+**5.24e-8**; camera pixel max difference was **0** for both overhead and wrist.
+After LeRobot's own preprocessor, with the same rename map and dataset stats:
+
+| key | shape | max abs difference |
+| --- | --- | --- |
+| `observation.state` | (1, 8) | **0.0** |
+| `observation.images.camera1` | (1, 3, 256, 256) | **0.0** |
+| `observation.images.camera2` | (1, 3, 256, 256) | **0.0** |
+| `observation.language.tokens` | (1, 48) | **0.0** |
+| `observation.language.attention_mask` | (1, 48) | **0.0** |
+| `task` | list | equal |
+
+The dataset batch had extra label/padding keys (`action`, `action_is_pad`,
+`index`, `task_index`, `episode_index`, `timestamp`); the runner batch does not
+send them at inference. No observation, preprocessing, tokenization, or
+normalization difference was found.
+
+### Executed command vs postprocessed chunk
+
+A recording wrapper captured the exact chunk returned by `CheckpointPolicy`
+(which already applies LeRobot's postprocessor) while the real runner executed
+it. At control step 0 (linear execution, fraction 0):
+
+- invoked action vs `chunk[0]`: **max abs difference 0.0**;
+- control step 1 vs `chunk[0] + 0.5 * (chunk[1] - chunk[0])`: **max abs
+  difference 0.0**;
+- values stayed in physical units (chunk first min -1.54196, max 1.51481; the
+  gripper dimension was 0.04176 m).
+
+So the postprocessor is applied exactly once and the runner executes the
+postprocessed chunk without re-normalising it.
+
+### Answer
+
+None of input parity, LeRobot preprocessing, double postprocessing, or unit
+conversion explains the gap. The policy's first-step action error is **not
+small relative to the motion**: at frame 0 the recorded arm motion is only
+0.00016-0.00228 rad per dimension, while the error is 0.004-0.079 rad, i.e.
+**9-60x** the per-step motion. The largest first-step error (0.079 rad) is
+already ~80% of the 0.1 rad tube radius; one policy action is held for two
+20 Hz control steps, so by frame 2 the tube is crossed even when the recorded
+initial motion is almost zero. At moving frames the ratio is smaller (often
+1-3 on joints) but the absolute error remains comparable to one frame of
+motion. The 0.023-0.078 rad teacher-forced L1 is "small" only in absolute
+radians; it is a large fraction of the 0.1 rad acceptance and larger than the
+first-frame motion. Flow-matching sampling noise (per-seed std up to 0.10 rad)
+and under-training, not an input/pipeline mismatch, are the measured causes.

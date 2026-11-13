@@ -1,0 +1,71 @@
+# SmolVLA + PEFT LoRA overfit protocol for the remote health check (Task 9f).
+#
+# Same two train-v1 episodes as the Task 9d diagnostic (dataset indices 0 and 1;
+# episode seeds 10000 and 10004), same LoRA and constant lr 1e-4. The difference
+# is the optimization budget: 1,000 steps instead of 250, chosen from the
+# measured healthy-GPU batch-4 step time (median 0.374 s on full data):
+#
+#   1,000 steps x 0.374 s = 374 s = 6.2 min of compute, plus model load and
+#   checkpoint writes. Remote step time is unknown until measured; the bundle's
+#   RUN_REPORT records it and the protocol is interpreted only after that.
+#
+# Checkpoints every 100 steps therefore include 100, 200 and the end (1,000).
+# Convergence is pre-registered as the mean training loss of the last 20 steps
+# below 0.1. The loss is the flow-matching objective, not an L1 distance.
+#
+# Verified against LeRobot 0.6.1 and lerobot/smolvla_base revision
+# 5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6. Two cameras: overhead -> camera1,
+# wrist -> camera2; camera3 is intentionally absent (empty_cameras stays 0).
+schema_version: 1
+model:
+  family: smolvla
+  checkpoint: lerobot/smolvla_base
+  revision: 5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6
+  expected_cameras:
+    - observation.images.camera1
+    - observation.images.camera2
+  validated: true
+  max_state_dim: 32
+  max_action_dim: 32
+  empty_cameras: 0
+lora:
+  enabled: true
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules:
+    - '(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))'
+  bias: none
+  method_type: LORA
+  init_type: null
+data:
+  dataset_root: data/lerobot/train_v1
+  # Explicit training subset: dataset indices 0 and 1 (seeds 10000 and 10004).
+  episode_indices: [0, 1]
+  val_fraction: 0.2
+  split_seed: 123
+  exclude_perturbed: false
+  mixture_path: null
+  rename_map:
+    observation.images.overhead: observation.images.camera1
+    observation.images.wrist: observation.images.camera2
+  action_representation: joint_position
+  decimation: 2
+  fps: 10.0
+training:
+  smoke_test: false
+  max_steps: 1000
+  batch_size: 4
+  seed: 0
+  lr: 0.0001
+  grad_accum: 1
+  precision: fp32
+  gradient_checkpointing: false
+  save_every: 100
+  num_workers: 0
+  deterministic: true
+  chunk_size: 50
+  n_action_steps: 50
+tracking:
+  backend: none
+  offline: true
