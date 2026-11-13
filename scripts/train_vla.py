@@ -88,7 +88,10 @@ def _real_batches(config, max_batches: int | None = None):
     if not (root / "meta" / "info.json").is_file():
         raise SystemExit(f"dataset metadata not found under {root}")
     split = json.loads((root / "meta" / "sim2real_split.json").read_text(encoding="utf-8"))
-    train_indices = [int(row["index"]) for row in split["train"]]
+    if config.data.episode_indices is not None:
+        train_indices = [int(index) for index in config.data.episode_indices]
+    else:
+        train_indices = [int(row["index"]) for row in split["train"]]
     dataset = LeRobotDataset(
         repo_id=root.name,
         root=root,
@@ -109,7 +112,7 @@ def _real_batches(config, max_batches: int | None = None):
         batches.append(batch)
         if max_batches is not None and index + 1 >= max_batches:
             break
-    return dataset, batches
+    return dataset, batches, train_indices
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -138,7 +141,9 @@ def main(argv: list[str] | None = None) -> int:
         train_ids, val_ids, split_manifest = _fake_split()
         default_steps = 5 if args.smoke else config.training.max_steps
     else:
-        dataset, batches = _real_batches(config, max_batches=4 if args.smoke else None)
+        dataset, batches, train_indices = _real_batches(
+            config, max_batches=4 if args.smoke else None
+        )
         adapter = make_adapter(
             config,
             fake=False,
@@ -150,14 +155,22 @@ def main(argv: list[str] | None = None) -> int:
             "state_dim": int(dataset.meta.features["observation.state"]["shape"][0]),
             "action_dim": int(dataset.meta.features["action"]["shape"][0]),
         }
-        train_ids, val_ids = load_split_manifest(
-            Path(config.data.dataset_root) / "meta" / "sim2real_split.json"
-        )
         split_manifest = json.loads(
             (Path(config.data.dataset_root) / "meta" / "sim2real_split.json").read_text(
                 encoding="utf-8"
             )
         )
+        if config.data.episode_indices is not None:
+            id_by_index = {
+                int(row["index"]): str(row["episode_id"])
+                for row in split_manifest.get("train", []) + split_manifest.get("val", [])
+            }
+            train_ids = [id_by_index[int(index)] for index in train_indices]
+            val_ids = []
+        else:
+            train_ids, val_ids = load_split_manifest(
+                Path(config.data.dataset_root) / "meta" / "sim2real_split.json"
+            )
         default_steps = 2 if args.smoke else config.training.max_steps
 
     limit = args.max_steps if args.max_steps is not None else default_steps

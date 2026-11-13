@@ -186,6 +186,7 @@ class DataConfig:
     decimation: int
     fps: float
     mixture_path: str | None = None
+    episode_indices: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.val_fraction < 1.0:
@@ -213,6 +214,18 @@ class DataConfig:
                 )
         if len(set(self.rename_map.values())) != len(self.rename_map):
             raise ConfigError("data.rename_map: target camera keys must be distinct")
+        if self.episode_indices is not None:
+            if not self.episode_indices:
+                raise ConfigError("data.episode_indices: expected a non-empty list or null")
+            if any(
+                isinstance(index, bool) or not isinstance(index, int) or index < 0
+                for index in self.episode_indices
+            ):
+                raise ConfigError(
+                    "data.episode_indices: every index must be a non-negative integer"
+                )
+            if len(set(self.episode_indices)) != len(self.episode_indices):
+                raise ConfigError("data.episode_indices: duplicate indices are not allowed")
 
 
 @dataclass(frozen=True)
@@ -293,7 +306,7 @@ class TrainingConfig:
         return hashlib.sha256(payload).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": SCHEMA_VERSION,
             "model": {
                 "family": self.model.family,
@@ -346,6 +359,9 @@ class TrainingConfig:
                 "offline": self.tracking.offline,
             },
         }
+        if self.data.episode_indices is not None:
+            payload["data"]["episode_indices"] = list(self.data.episode_indices)
+        return payload
 
     def validate_camera_rename_map(self) -> None:
         """Every camera the model needs must be covered by a rename target."""
@@ -441,6 +457,7 @@ def parse_training_config(raw: Any, *, source: str | None = None) -> TrainingCon
             "split_seed",
             "exclude_perturbed",
             "mixture_path",
+            "episode_indices",
             "rename_map",
             "action_representation",
             "decimation",
@@ -455,6 +472,15 @@ def parse_training_config(raw: Any, *, source: str | None = None) -> TrainingCon
             raise ConfigError("data.rename_map: expected string keys")
         rename_map[source_key] = _string(target_key, f"data.rename_map.{source_key}")
     mixture_raw = data_raw.get("mixture_path")
+    episode_raw = data_raw.get("episode_indices")
+    episode_indices: tuple[int, ...] | None = None
+    if episode_raw is not None:
+        if not isinstance(episode_raw, list) or not episode_raw:
+            raise ConfigError("data.episode_indices: expected a non-empty list or null")
+        episode_indices = tuple(
+            _integer(value, f"data.episode_indices[{index}]", minimum=0)
+            for index, value in enumerate(episode_raw)
+        )
     data = DataConfig(
         dataset_root=_string(data_raw.get("dataset_root"), "data.dataset_root"),
         val_fraction=_number(
@@ -475,6 +501,7 @@ def parse_training_config(raw: Any, *, source: str | None = None) -> TrainingCon
         decimation=_integer(data_raw.get("decimation"), "data.decimation", minimum=1),
         fps=_number(data_raw.get("fps"), "data.fps", minimum=0.0),
         mixture_path=None if mixture_raw is None else _string(mixture_raw, "data.mixture_path"),
+        episode_indices=episode_indices,
     )
 
     training_raw = _mapping(raw.get("training"), "training")

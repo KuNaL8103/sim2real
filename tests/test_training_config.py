@@ -87,3 +87,17 @@ def test_config_hash_is_deterministic_and_value_sensitive():
     from sim2real.training.checkpoint import config_hash
 
     assert config_hash(changed) != first.config_hash
+
+
+def test_episode_indices_subset_is_validated_and_exported(raw_config):
+    raw_config["data"]["episode_indices"] = [0, 1]
+    config = _parse(raw_config)
+    assert config.data.episode_indices == (0, 1)
+    assert config.to_dict()["data"]["episode_indices"] == [0, 1]
+    assert config.to_dict()["data"]["episode_indices"] == [0, 1]
+
+    for invalid in ([], [0, 0], [-1], [True]):
+        broken = copy.deepcopy(raw_config)
+        broken["data"]["episode_indices"] = invalid
+        with pytest.raises(ConfigError, match="episode_indices"):
+            _parse(broken)
