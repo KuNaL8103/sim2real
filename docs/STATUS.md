@@ -7,6 +7,13 @@ this file is authoritative for clones and CI.
 - Last verified ROS test run: passed=524 failed=0 skipped=4 errors=0 | date=2026-11-13 | base_commit=556925d
 - Task 1 status: complete
 
+Both recorded runs used the tree at `556925d` plus this session's code and the
+optional scikit-learn 1.9.1 in `.venv`, so the core count includes the
+cross-check. `scripts/ci_parity.sh` then passed; as documented, its `uv sync`
+removed core-only scikit-learn, and an immediate post-parity core run was
+**511 passed / 12 skipped** (the optional cross-check skipped). ci_parity's ROS
+half reported **7 tests, 0 errors, 0 failures**.
+
 ## Task 9f-remote status (2026-11-13)
 
 Part A (first-chunk error analysis) is complete. Part B (bundle, remote script,
