@@ -586,7 +586,7 @@ do not substitute the local 210 MHz 9d median (2.992 s/step), which would make
 
 **Execution.** Follow `docs/REMOTE_TRAINING.md`:
 
-1. build/upload the bundle from the pushed commit (no upload in this session);
+1. build/upload the bundle from the final pushed commit (manifest size about 90.7 MiB; no upload in this session);
 2. on the remote host, extract it at the repository root, clone the public repo
    at the manifest commit, and run `scripts/remote_train.sh` with the bundle
    config;

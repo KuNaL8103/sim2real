@@ -26,6 +26,17 @@ teacher-forced L1 is small only in absolute radians, not relative to the
 per-step motion. Details and full per-dimension tables are in
 `docs/EVALUATION.md`.
 
+## Remote bundle
+
+The bundle is built under `outputs/remote_bundle/` (git-ignored) and is about
+**90.7 MiB** (first build: 95,133,662 bytes; payload 95,519,481 bytes, 11
+files). It contains the full 40-episode `train_v1` dataset, the overfit remote
+config, the full `train_v1` config, pinned requirements from `.venv-ml`
+(torch 2.11.0+cu126, PEFT 0.21.2, transformers 5.5.4, accelerate 1.15.0,
+LeRobot 0.6.1, num2words 0.5.14), and a MANIFEST with every file hash. The
+manifest records the pushed commit; the remote run must clone exactly that
+commit. No model weights or HF cache are included.
+
 ## Pending checks
 
 - [ ] Run the overfit protocol on a remote GPU that passes the bundle's matmul

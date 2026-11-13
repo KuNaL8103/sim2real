@@ -125,7 +125,7 @@ scans for forbidden files, and writes:
 
 | Content | Detail |
 | --- | --- |
-| `data/lerobot/train_v1/` | Full 40-episode dataset, 92 MB on disk (parquet already compressed; the archive is approximately the same size) |
+| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving; the measured Task 9f archive was **90.73 MiB / 95,133,662 bytes**. A later rebuild may differ by a few bytes because the manifest records the commit and build time (parquet is already compressed). |
 | `outputs/remote_bundle_payload/configs/training/` | The overfit protocol config and the full `train_v1` config |
 | `outputs/remote_bundle_payload/requirements.txt` | Exact versions read from `.venv-ml`, with `--extra-index-url https://download.pytorch.org/whl/cu126` |
 | `outputs/remote_bundle_payload/MANIFEST.json` | sha256 + size of every file, git commit, dataset stats/dataset hashes, expected `checkpoint_metadata` fields, model revisions |
