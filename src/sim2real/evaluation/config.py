@@ -19,6 +19,7 @@ import yaml
 
 SCHEMA_VERSION = 1
 FAILURE_DEFINITIONS = ("policy_only", "any_failure")
+EXECUTION_MODES = ("hold", "linear")
 DECISIONS = ("REQUEST_TARGETED_GENERATION", "REQUEST_RETRAIN", "STOP")
 
 
@@ -89,6 +90,7 @@ class EvaluationSettings:
     terminate_on_limit: bool = True
     render_images: bool = False
     renderer: str = "llvmpipe"
+    execution: str = "linear"
     output_dir: str = "data/eval"
     randomization_profile: str = "default"
     task_instruction: str = "pick up the red cube and place it in the left zone"
@@ -106,6 +108,10 @@ class EvaluationSettings:
             raise EvaluationConfigError("evaluation.policy_step_period_s: must be > 0")
         if self.max_control_steps < 2:
             raise EvaluationConfigError("evaluation.max_control_steps: must be >= 2")
+        if self.execution not in EXECUTION_MODES:
+            raise EvaluationConfigError(
+                f"evaluation.execution: expected one of {list(EXECUTION_MODES)}"
+            )
         if self.eval_seed < 0:
             raise EvaluationConfigError("evaluation.eval_seed: must be >= 0")
         if self.num_episodes < 0:
@@ -146,6 +152,7 @@ class EvaluationSettings:
             "terminate_on_limit": self.terminate_on_limit,
             "render_images": self.render_images,
             "renderer": self.renderer,
+            "execution": self.execution,
             "output_dir": self.output_dir,
             "randomization_profile": self.randomization_profile,
             "task_instruction": self.task_instruction,
@@ -291,6 +298,7 @@ def _parse_settings(data: dict[str, Any], path: str) -> EvaluationSettings:
         "terminate_on_limit",
         "render_images",
         "renderer",
+        "execution",
         "output_dir",
         "randomization_profile",
         "task_instruction",
@@ -333,6 +341,7 @@ def _parse_settings(data: dict[str, Any], path: str) -> EvaluationSettings:
             data.get("render_images", default.render_images), f"{path}.render_images"
         ),
         "renderer": _text(data.get("renderer", default.renderer), f"{path}.renderer"),
+        "execution": _text(data.get("execution", default.execution), f"{path}.execution"),
         "output_dir": _text(data.get("output_dir", default.output_dir), f"{path}.output_dir"),
         "randomization_profile": _text(
             data.get("randomization_profile", default.randomization_profile),
@@ -483,6 +492,7 @@ def load_evaluation_config(
 __all__ = [
     "DECISIONS",
     "FAILURE_DEFINITIONS",
+    "EXECUTION_MODES",
     "SCHEMA_VERSION",
     "EvaluationConfig",
     "EvaluationConfigError",

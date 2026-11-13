@@ -159,6 +159,7 @@ class EvalEpisodeRecord:
     git_dirty: bool
     n_action_steps: int
     renderer: str
+    starts_in_success_region: bool | None = None
     metrics: dict[str, Any] | None = None
     metrics_error: str = ""
     failure: dict[str, Any] = field(default_factory=dict)
@@ -194,6 +195,10 @@ class EvalEpisodeRecord:
             raise EvalRecordError("collision_count must be >= 0")
         if self.n_action_steps < 1:
             raise EvalRecordError("n_action_steps must be >= 1")
+        if self.starts_in_success_region is not None and not isinstance(
+            self.starts_in_success_region, (bool, np.bool_)
+        ):
+            raise EvalRecordError("starts_in_success_region must be bool or null")
         for name in (
             "friction_sliding",
             "object_mass",
@@ -241,6 +246,7 @@ class EvalEpisodeRecord:
             "git_dirty": bool(self.git_dirty),
             "n_action_steps": int(self.n_action_steps),
             "renderer": self.renderer,
+            "starts_in_success_region": self.starts_in_success_region,
             "steps": [step.to_dict() for step in self.steps],
         }
 
@@ -311,6 +317,7 @@ class EvalEpisodeRecord:
             git_dirty=bool(data["git_dirty"]),
             n_action_steps=int(data["n_action_steps"]),
             renderer=str(data["renderer"]),
+            starts_in_success_region=data.get("starts_in_success_region"),
             steps=[EvalStep.from_dict(item) for item in data["steps"]],
         )
 
@@ -387,7 +394,12 @@ class EvalRun:
 
 
 def aggregate_records(records: list[EvalEpisodeRecord]) -> dict[str, Any]:
-    """Success rate with a Wilson interval, termination counts, mean completion."""
+    """Success rate with a Wilson interval, termination counts, mean completion.
+
+    ``starts_in_success_region`` is unknown (``None``) for legacy records; those
+    are retained. Episodes explicitly flagged ``True`` are also excluded from the
+    ``*_excluding_start_in_region`` fields.
+    """
     total = len(records)
     successes = sum(1 for record in records if record.success)
     counts: dict[str, int] = {}
@@ -397,6 +409,11 @@ def aggregate_records(records: list[EvalEpisodeRecord]) -> dict[str, Any]:
     mean_completion = (
         float(np.mean([record.task_completion for record in records])) if records else 0.0
     )
+    known_flags = sum(1 for record in records if record.starts_in_success_region is not None)
+    start_in_region = sum(1 for record in records if record.starts_in_success_region is True)
+    excluded = [record for record in records if record.starts_in_success_region is not True]
+    excluded_success = sum(1 for record in excluded if record.success)
+    excluded_low, excluded_high = wilson_interval(excluded_success, len(excluded))
     return {
         "num_episodes": total,
         "num_success": successes,
@@ -404,6 +421,14 @@ def aggregate_records(records: list[EvalEpisodeRecord]) -> dict[str, Any]:
         "wilson_95": [low, high],
         "termination_counts": dict(sorted(counts.items())),
         "mean_task_completion": mean_completion,
+        "num_known_start_flags": known_flags,
+        "num_starts_in_success_region": start_in_region,
+        "num_episodes_excluding_start_in_region": len(excluded),
+        "num_success_excluding_start_in_region": excluded_success,
+        "success_rate_excluding_start_in_region": (
+            excluded_success / len(excluded) if excluded else 0.0
+        ),
+        "wilson_95_excluding_start_in_region": [excluded_low, excluded_high],
     }
 
 

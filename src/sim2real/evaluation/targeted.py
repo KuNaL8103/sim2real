@@ -102,7 +102,19 @@ def _run_expert_with_sample(
             "sample": sample.to_dict(),
             "report": report.to_dict(),
         }
-        record.metadata = {"targeted": True, "failure_distribution_id": distribution_id}
+        zone = backend.configs.scene.zones[task.zone_id]
+        zone_xy = np.asarray(zone.position, dtype=np.float64)[:2]
+        cube_pose = np.asarray(sample.object_pose.poses[task.object_id], dtype=np.float64)
+        in_region = bool(
+            np.linalg.norm(cube_pose[:2, 3] - zone_xy)
+            <= zone.radius * config.success.success_zone_scale
+            + config.success.zone_radius_tolerance_m
+        )
+        record.metadata = {
+            "targeted": True,
+            "failure_distribution_id": distribution_id,
+            "starts_in_success_region": in_region,
+        }
         setter = getattr(backend, "set_collision_context", None)
         if callable(setter):
             setter(task.object_id)

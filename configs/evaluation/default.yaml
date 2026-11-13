@@ -19,6 +19,7 @@ evaluation:
   # D3D12/MESA D3D12 adapter settings are opt-in and are recorded, never used
   # silently.
   renderer: llvmpipe
+  execution: linear
   output_dir: data/eval
   randomization_profile: default
   task_instruction: "pick up the red cube and place it in the left zone"

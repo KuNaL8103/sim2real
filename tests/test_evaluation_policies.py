@@ -79,7 +79,9 @@ def test_timing_contract_holds_each_action_for_two_control_steps():
     config = load_evaluation_config()
     config = replace(
         config,
-        settings=replace(config.settings, n_action_steps=10, max_control_steps=40),
+        settings=replace(
+            config.settings, n_action_steps=10, max_control_steps=40, execution="hold"
+        ),
     )
     backend = create_backend("fake", "configs/sim")
     policy = CountingPolicy()

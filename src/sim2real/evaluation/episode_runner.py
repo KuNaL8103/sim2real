@@ -134,6 +134,21 @@ def _physics_instability(backend: Any, observation: Any, expert_config: Any) -> 
     return None
 
 
+def starts_in_success_region(backend: Any, task: Any, observation: Any, expert_config: Any) -> bool:
+    """Whether the target cube already lies inside the success xy tolerance."""
+    _, _, metrics = _success_check(
+        backend,
+        task,
+        observation,
+        [np.asarray(observation.object_poses[task.object_id])],
+        expert_config,
+    )
+    return bool(
+        float(metrics["xy_error_m"])
+        <= float(metrics["allowed_radius_m"]) + expert_config.success.zone_radius_tolerance_m
+    )
+
+
 def _error_record(
     *,
     episode_id: str,
@@ -209,6 +224,7 @@ def run_eval_episode(
     if set_actions is not None:
         set_actions(int(settings.n_action_steps))
 
+    in_success_region: bool | None = None
     base = {
         "episode_id": episode_id,
         "eval_run_id": eval_run_id,
@@ -244,6 +260,7 @@ def run_eval_episode(
         cube = next(iter(backend.configs.scene.cubes))
         values = _flatten_sample(sample, cube)
         observation = backend.get_observation()
+        in_success_region = starts_in_success_region(backend, task, observation, expert)
         set_context = getattr(policy, "set_reset_context", None)
         if set_context is not None:
             set_context(sample, observation)
@@ -303,21 +320,31 @@ def run_eval_episode(
                 reason = "POLICY_ERROR"
                 failure = {"reason": f"invalid action {action.tolist()}"}
                 break
-            joint_target = action[:7]
-            gripper_target = float(action[7])
+            next_action = action
+            if settings.execution == "linear" and chunk_cursor < len(chunk_actions):
+                next_action = np.asarray(chunk_actions[chunk_cursor], dtype=np.float64)
             limits = np.asarray(backend.joint_limits, dtype=np.float64)
-            outside = (joint_target < limits[:, 0]) | (joint_target > limits[:, 1])
-            if np.any(outside):
-                if settings.terminate_on_limit:
-                    reason = "LIMIT_VIOLATION"
-                    failure = {"reason": f"joint target {joint_target.tolist()} outside limits"}
-                    break
-                joint_target = np.clip(joint_target, limits[:, 0], limits[:, 1])
-
-            for _ in range(settings.hold_steps):
+            hold_steps = settings.hold_steps
+            for sub_step in range(hold_steps):
                 if control_step >= settings.max_control_steps:
                     reason = "TIMEOUT"
                     break
+                fraction = 0.0 if hold_steps <= 0 else sub_step / hold_steps
+                command = (
+                    action
+                    if settings.execution == "hold"
+                    else action + fraction * (next_action - action)
+                )
+                joint_target = command[:7]
+                gripper_target = float(command[7])
+                outside = (joint_target < limits[:, 0]) | (joint_target > limits[:, 1])
+                if np.any(outside):
+                    if settings.terminate_on_limit:
+                        reason = "LIMIT_VIOLATION"
+                        failure = {"reason": f"joint target {joint_target.tolist()} outside limits"}
+                        break
+                    joint_target = np.clip(joint_target, limits[:, 0], limits[:, 1])
+                    command = np.concatenate([joint_target, [gripper_target]])
                 try:
                     result = backend.step(joint_target, gripper_target)
                 except Exception as exc:  # noqa: BLE001 - backend failure is an outcome
@@ -335,9 +362,7 @@ def run_eval_episode(
                         joint_positions=observation.robot_state.joint_positions,
                         joint_velocities=observation.robot_state.joint_velocities,
                         ee_pose=observation.robot_state.ee_pose,
-                        action=np.clip(
-                            np.concatenate([joint_target, [gripper_target]]), -1.0e6, 1.0e6
-                        ),
+                        action=np.clip(command, -1.0e6, 1.0e6),
                         gripper_position=float(observation.robot_state.gripper_position),
                         unintended_collision=collision,
                     )
@@ -391,6 +416,7 @@ def run_eval_episode(
         git_dirty=bool(git_dirty),
         n_action_steps=settings.n_action_steps,
         renderer=renderer,
+        starts_in_success_region=in_success_region,
         failure={},
         steps=steps,
     )
@@ -617,4 +643,5 @@ __all__ = [
     "run_eval",
     "run_eval_episode",
     "run_paired_eval",
+    "starts_in_success_region",
 ]

@@ -32,7 +32,9 @@ def make_step(index: int = 0, *, collision: bool = False) -> EvalStep:
     )
 
 
-def make_record(*, reason: str = "TIMEOUT", steps: int = 3) -> EvalEpisodeRecord:
+def make_record(
+    *, reason: str = "TIMEOUT", steps: int = 3, starts_in_success_region: bool | None = None
+) -> EvalEpisodeRecord:
     return EvalEpisodeRecord(
         episode_id="run_ep0000",
         eval_run_id="run",
@@ -58,6 +60,7 @@ def make_record(*, reason: str = "TIMEOUT", steps: int = 3) -> EvalEpisodeRecord
         git_dirty=False,
         n_action_steps=10,
         renderer="fake-analytic",
+        starts_in_success_region=starts_in_success_region,
         steps=[make_step(index=i) for i in range(steps)],
     )
 
@@ -189,3 +192,21 @@ def test_task_completion_is_bounded_and_handles_zero_start_distance():
     assert task_completion(np.array([1.0, 0.0]), np.array([2.0, 0.0]), zone) == pytest.approx(0.0)
     assert task_completion(np.array([1.0, 0.0]), np.array([0.5, 0.0]), zone) == pytest.approx(0.5)
     assert task_completion(zone, zone, zone) == 1.0
+
+
+def test_start_in_success_region_roundtrip_and_aggregate_exclusion():
+    start = make_record(reason="SUCCESS", starts_in_success_region=True)
+    normal = make_record(reason="SUCCESS", starts_in_success_region=False)
+    legacy = make_record(reason="TIMEOUT")
+    restored = EvalEpisodeRecord.from_json(start.to_json())
+    assert restored.starts_in_success_region is True
+    payload = legacy.to_dict()
+    payload.pop("starts_in_success_region")
+    assert EvalEpisodeRecord.from_dict(payload).starts_in_success_region is None
+
+    aggregate = aggregate_records([start, normal, legacy])
+    assert aggregate["num_success"] == 2
+    assert aggregate["num_starts_in_success_region"] == 1
+    assert aggregate["num_episodes_excluding_start_in_region"] == 2
+    assert aggregate["num_success_excluding_start_in_region"] == 1
+    assert aggregate["success_rate_excluding_start_in_region"] == 0.5

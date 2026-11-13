@@ -22,6 +22,7 @@ from sim2real.evaluation.episode_runner import (
     run_eval,
     run_eval_episode,
     run_paired_eval,
+    starts_in_success_region,
 )
 from sim2real.evaluation.failure_analysis import (
     DISTRIBUTION_TYPES,
@@ -118,6 +119,7 @@ __all__ = [
     "run_eval",
     "run_eval_episode",
     "run_paired_eval",
+    "starts_in_success_region",
     "run_targeted_rollouts",
     "summarize_result",
     "targeted_seeds",
