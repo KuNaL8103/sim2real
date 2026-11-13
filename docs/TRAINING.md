@@ -521,3 +521,26 @@ legacy.
 
 **What is not claimed.** No expected success rate, no generalisation claim, and
 no claim that the current 1,000-step checkpoint is representative.
+
+### Task 9e addendum (2026-11-13)
+
+The GPU health gate failed: 60 s synthetic load held SM at **210 MHz** with
+**SW Power Cap and SW Thermal Slowdown** active (power 4.36-7.35 W, 52-56 C).
+The Task 9e overfit and fix-variant runs were therefore **not run**; the 9d
+overfit remains unconverged and inconclusive.
+
+Closed-loop drift with the existing checkpoint: with linear execution and
+state teacher forcing at re-plan points, all three train seeds still leave the
+0.1 rad tube at **frame 2** (first chunk); teacher-forced max drift **0.55-0.62
+rad**, free **0.37-0.50 rad**. The error is already in the first chunk, not
+accumulated over many steps.
+
+Instruction test with 10 samples: cross-instruction chunk differences are
+**below** within-instruction noise for both the fine-tuned checkpoint
+(ratios 0.59-0.85) and `lerobot/smolvla_base` (0.53-0.67). The language pathway
+is not measurably affecting the action chunk; start with one instruction and
+verify instruction conditioning explicitly before multi-instruction training.
+
+Do not start the next real training run until the GPU clock/power issue is
+fixed and a true overfit (mean last-20-step loss below 0.1) is achieved. Task
+10 remains blocked pending that evidence.

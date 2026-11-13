@@ -727,6 +727,78 @@ against); frozen vision/expert-only (intended; may need more capacity/steps);
 instruction handling (weak sensitivity - observed but not the train-seed failure
 cause).
 
+## Task 9e GPU gate, drift and instruction diagnosis (2026-11-13)
+
+### GPU health gate: FAILED - training parts not run
+
+60 s synthetic 2048x2048 matmul load in `.venv-ml`, sampling every 2 s (32
+samples, 2280 matmuls): SM clock **210 / 210 / 210 MHz** (min/median/max),
+power **4.36 / 7.245 / 7.35 W**, temperature **52 / 55 / 56 C**, throttle reason
+`0x24` on **32/32** samples (SW Power Cap + SW Thermal Slowdown). This is the
+same 210 MHz cap as Task 9d. The gate requires median >=1000 MHz and no power
+cap, so **B (real overfit) and C (fix variant) were not run**. No system or
+driver setting was changed. The GPU needs a charger/power-plan/vendor-software
+check first.
+
+### A. Closed-loop drift (existing 1,000-step checkpoint)
+
+Linear execution, n_action_steps 10, deterministic sampling. Teacher-forced
+mode overwrote the arm qpos with the recorded dataset state at every re-plan
+point; free mode did not.
+
+| seed | mode | max joint diff (rad) | mean joint diff | first 0.1 rad exit | fraction >0.1 rad |
+| --- | --- | --- | --- | --- | --- |
+| 10000 | teacher | 0.617 | 0.128 | step 4, frame 2 | 0.864 |
+| 10000 | free | 0.499 | 0.099 | step 4, frame 2 | 0.954 |
+| 10004 | teacher | 0.551 | 0.080 | step 4, frame 2 | 0.836 |
+| 10004 | free | 0.374 | 0.077 | step 4, frame 2 | 0.860 |
+| 10008 | teacher | 0.575 | 0.075 | step 5, frame 2 | 0.778 |
+| 10008 | free | 0.456 | 0.088 | step 5, frame 2 | 0.874 |
+
+Policy call median was 1.37 s. **The policy leaves the 0.1 rad tube in the
+first chunk (frame 2) in every run, with or without state resets.** Teacher
+forcing the arm state at re-plan points does not improve the trajectory; the
+error is already in the first chunk, so this is not primarily accumulated
+drift. It is a per-chunk action error (under-training or a model/pipeline
+issue), which B would separate but B is blocked by the GPU.
+
+### D. Instruction test with 10 samples
+
+Deterministic sampling, 6 instructions x 10 seeds, 3 train observations.
+Values are mean absolute chunk differences over the first 8 action dimensions.
+
+Fine-tuned checkpoint:
+
+| frame | cross-instruction mean | within-instruction noise | ratio |
+| --- | --- | --- | --- |
+| 0 | 0.01710 | 0.02906 | 0.589 |
+| 10 | 0.01768 | 0.02081 | 0.849 |
+| 20 | 0.01708 | 0.02066 | 0.827 |
+
+Base `lerobot/smolvla_base` (same observations, 10 seeds):
+
+| frame | cross-instruction mean | within-instruction noise | ratio |
+| --- | --- | --- | --- |
+| 0 | 0.00499 | 0.00862 | 0.579 |
+| 10 | 0.03250 | 0.04850 | 0.670 |
+| 20 | 0.03458 | 0.06503 | 0.532 |
+
+**Instruction effects are below the sampling noise in all six cases, for both
+the base and fine-tuned models.** The language pathway is not measurably
+affecting the action chunk with this setup. The thin 9d result (ratio 1.1) did
+not survive 10 samples. The training plan should start with one instruction and
+include an explicit instruction-conditioned test before multi-instruction
+training.
+
+### B/C status and conclusion
+
+B (real overfit) and C (fix variant) are **NOT RUN** because the GPU health
+gate failed. The 9d overfit remains unconverged and inconclusive. Decision:
+**GPU unhealthy -> hardware fix first** (charger, Windows power plan, vendor
+software). Task 10 stays blocked until the GPU clock is healthy and a true
+overfit either succeeds (pipeline sound) or fails at low training loss (pipeline
+bug hunt). No policy-quality claim.
+
 ## CLI
 
 ```bash
@@ -747,6 +819,19 @@ disable) because `policy_only` failure analysis needs paired data in
 ## Known limitations
 
 - Only simulation; no physical robot and no safety claim.
+- **Task 9e GPU health gate failed.** 60 s synthetic load held SM at **210 MHz**
+  with SW Power Cap + SW Thermal Slowdown active (4.36-7.35 W, 52-56 C), so the
+  real overfit and fix-variant runs were **not run**. The GPU needs a charger /
+  Windows power-plan / vendor-software check first.
+- **Closed-loop drift starts in the first chunk.** With the existing
+  checkpoint, all three train seeds leave the 0.1 rad tube at **frame 2**;
+  teacher-forced state resets at re-plan points do not help (max drift 0.55-0.62
+  rad teacher, 0.37-0.50 free). This is per-chunk action error, not accumulated
+  drift, and B is needed to separate under-training from a pipeline issue.
+- **Instruction sensitivity is below noise at 10 samples.** Fine-tuned
+  cross/within ratios 0.59-0.85; base model 0.53-0.67. The language pathway is
+  not measurably affecting the action chunk; start with one instruction and
+  test instruction conditioning explicitly.
 - **Task 9d trust findings:** the success region radius is **0.060 m**; 1/40
   train episodes and 1/30 eval seeds start inside it, so the 9b 1/30 policy
   success is a false positive (effective **0/30**). `starts_in_success_region`
