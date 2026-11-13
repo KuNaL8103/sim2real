@@ -108,6 +108,7 @@ def test_valid_reference_stages_episodes_with_the_distribution_id(tmp_path):
     for episode_id in result["episode_ids"]:
         sidecar = json.loads((staging / f"episode_{episode_id}.json").read_text(encoding="utf-8"))
         assert sidecar["metadata"]["failure_distribution_id"] == distribution.distribution_id
+        assert sidecar["metadata"]["starts_in_success_region"] in {True, False}
 
 
 def test_targeted_seeds_stay_inside_the_reserved_range():

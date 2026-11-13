@@ -126,3 +126,14 @@ def test_start_in_success_region_flag_uses_the_success_tolerance():
         assert starts_in_success_region(backend, task, observation, EXPERT) is False
     finally:
         backend.close()
+
+
+def test_invalid_execution_mode_is_rejected():
+    from sim2real.evaluation.config import EvaluationConfigError, EvaluationSettings
+
+    try:
+        EvaluationSettings(execution="spline")
+    except EvaluationConfigError as exc:
+        assert "execution" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("invalid execution mode was accepted")
