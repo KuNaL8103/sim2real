@@ -13,13 +13,35 @@ no physical robot is connected.
 | Quantity | Value | Why |
 | --- | --- | --- |
 | dataset / policy period | 0.1 s (10 Hz) | Training data was written at decimation 2 of the 20 Hz loop. |
-| backend control rate | 20 Hz | One policy action is **held for 2 control steps**. |
+| backend control rate | 20 Hz | Each policy action covers **2 control steps**. |
+| `eval.execution` | **`linear`** (default) | Linear joint-space interpolation between consecutive 10 Hz actions; `hold` is the legacy zero-order hold. |
 | `eval.n_action_steps` | **10** (1.0 s) | Not the training value 50 (5.0 s, longer than an episode). |
 | success definition | Task 4 expert `_success_check` | Same thresholds, so paired comparisons are meaningful. |
 
 A chunk is re-planned every `n_action_steps` policy steps (20 control steps at
-the defaults). `ActionChunk.step_period_s` is checked but the runner uses the
-configured hold count; a mismatch is a configuration error, not a silent change.
+the defaults). In `linear` mode, control step `2i` receives action `a_i` and
+step `2i+1` receives the midpoint `(a_i + a_{i+1})/2`; the last action in a
+chunk is held constant for both steps. In `hold` mode both steps receive `a_i`.
+The earlier 9b/9c numbers were measured in **hold mode** and are legacy.
+
+Oracle on the 32 train-split seeds (recorded 10 Hz actions, n_action_steps 10):
+
+| execution | success | Wilson 95% |
+| --- | --- | --- |
+| `hold` (legacy) | 24/32 = 0.750 | [0.579, 0.867] |
+| `linear` (default) | **31/32 = 0.969** | [0.843, 0.994] |
+| 20 Hz no-decimation ceiling | **32/32 = 1.000** | [0.893, 1.000] |
+
+`linear` is the default because it recovers 7 of the 8 hold failures. The ROS 2
+Jazzy `joint_trajectory_controller` documentation states that the `spline`
+interpolator uses **linear** interpolation when only positions are specified
+(<https://control.ros.org/jazzy/doc/ros2_controllers/joint_trajectory_controller/doc/trajectory.html>),
+which matches the interpolation style. However, the `/vla/raw_action` contract
+uses `time_from_start=(k+1)*dt`, i.e. point `k` is at `(k+1)*0.1 s`, while the
+evaluation applies `a_k` at control step `2k` (`k*0.1 s`). A live trajectory
+therefore lags the evaluation convention by one policy period unless the
+publisher uses `k*dt` or the consumer accounts for the offset. This is a Task 10
+contract decision, not a measurement claim.
 
 `n_action_steps` sweep (fake backend, `noisy_expert`, 30 seeds from 20000, same
 noise seed, expert 30/30 on every setting):
@@ -231,6 +253,11 @@ never trains), `STOP`. Corrupt or partial ledger lines are reported and skipped.
   `ready` frame; the client does not send observations before it arrives.
 - A live server is reused across episodes (a `reset` frame calls the policy's
   reset); it is not reloaded per episode.
+- Deterministic sampling: `--sample-seed` (or a `sample_seed` field in the
+  `reset` frame) seeds the flow-matching noise as `torch.manual_seed(seed +
+  call_index)`. The client sends the episode seed by default. Same seed + same
+  input reproduces the chunk exactly; a different seed differs (measured max
+  abs 0.263).
 - Observation: 8-D state, the named uint8 images, and the task string. Reply:
   action chunk shape/dtype plus the policy step period.
 - Timeouts, malformed frames, and server death are detected and reported as
@@ -539,6 +566,167 @@ safe fallback when no fresh action is available, and monitor end-to-end latency.
 | 9b 1/30 "success" | **success-definition false positive** | Initial cube within 0.06 m of the zone. Effective policy success is 0/30. Proposed: require displacement or start outside the success radius in evaluation-only success accounting. Expert code unchanged. |
 | everything else | next hypotheses | gripper range/clipping, chunk open-loop at n=50, and model action accuracy. Image scale/normalization is not implicated: inputs are exact and the server uses LeRobot pre/post with dataset stats. |
 
+## Task 9d trust and overfit diagnosis (2026-11-13)
+
+### A. Success-definition audit
+
+The success tolerance is read from the success function:
+`zone.radius * success_zone_scale + zone_radius_tolerance_m` =
+`0.055 * 1.0 + 0.005` = **0.060 m**.
+
+- **train_v1 (40 episodes):** **1** starts inside 0.060 m — dataset index 39,
+  episode `cli_mujoco_10000_1793611074_ep0071`, seed 10071, initial distance
+  **0.05108 m**, recorded outcome success. The other 39 start outside.
+- **30 eval seeds (derived from 20000):** **1** starts inside — index 10, derived
+  seed **132083934**, initial distance **0.056518 m**; it is also an expert
+  success and was the 9b policy "success". Expert success excluding starts:
+  **23/29 = 0.793**, Wilson **[0.6161, 0.9015]** (recorded all-seed expert 24/30).
+- **Sampler minimum:** the default profile allows `cube_red` at
+  `x=0.38, y=-0.20`, i.e. **0.020 m** from the left zone centre, below the
+  0.060 m tolerance. The sampler **can** spawn inside the success region.
+
+ZeroPolicy reconciliation on the exact 9b seed (132083934, index 10):
+
+| step | xy error | allowed+tole | height error | gripper open | stable | result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.056518 | 0.055 + 0.005 | 0.0 | true (0.040) | 1/5 | not stable yet |
+| 1 | 0.056518 | same | 0.000153 | **false (0.02515)** | 2/5 | gripper closed |
+| 4 (hold-open) | 0.056518 | same | 0.000108 | **true (0.03672)** | 5/5 | **SUCCESS** |
+
+ZeroPolicy commands the measured opening (0.04); the MuJoCo fingers sag to
+0.02515 after the first step, below the 0.035 release threshold. A policy that
+holds the arm but commands the gripper target to 0.04 reaches 0.03672 and
+succeeds at step 4 with `task_completion=0.0`. The **gripper component**, not
+the cube-in-zone test, is the difference. Neither run manipulates the cube; the
+9b "success" is a success-definition false positive and the effective policy
+manipulation success is **0/30**.
+
+`EvalEpisodeRecord` now carries `starts_in_success_region` (bool or null;
+missing = unknown for legacy records), computed from the initial observation
+with the success function's own tolerance. Staged targeted episodes carry the
+same key in metadata. Aggregates report both all-episode and
+`*_excluding_start_in_region` success/Wilson fields. Options and consequences:
+
+- **Exclude starts from evaluation sampling:** changes the seed meaning (a seed
+  may now be skipped), and previous 9b/9c counts are not directly comparable.
+- **Require displacement:** needs a displacement threshold and would change the
+  success function (expert code; not changed today).
+- **Exclude starts from training data:** the existing `train_v1` has one such
+  episode (index 39); removing it changes the dataset hash, split and filter
+  statistics. The next dataset should exclude such spawns.
+
+### B. Execution contract
+
+**Reconciliation of runner 24/32 vs independent replay.** Side by side on the
+same 32 train seeds: runner `hold` **24/32**, independent replay without
+repeating the last action **22/32**, independent replay with repeat-last
+**24/32** (identical episode set to the runner). The per-episode table shows the
+exact difference at indices 21 and 24: the runner continues holding the last
+action after the recorded actions run out, while the independent replay stopped
+at the final recorded action. Phase, action-to-control-step assignment,
+re-planning and randomization were otherwise identical. **Cause: truncation at
+episode end plus repeat-last, not a phase or seed difference.** (The 9c script
+reported 20 with a slightly different loop; the side-by-side numbers above are
+the reproducible comparison.)
+
+**Linear mode.** `eval.execution` is now `hold | linear`; `linear` is the
+default. Control step `2i` uses `a_i`, step `2i+1` uses `(a_i + a_{i+1})/2`,
+and the final action in a chunk is held constant. Tests cover the phase,
+interpolation exactness and chunk-end behaviour.
+
+Oracle on the 32 train seeds:
+
+| mode | success | Wilson 95% | failures (final cube-zone distance, m) |
+| --- | --- | --- | --- |
+| hold (legacy) | 24/32 = 0.750 | [0.579, 0.867] | 8: 0.0610, 0.0632, 0.0650, 0.0698, 0.0768, 0.0794, 0.0910, 0.1070 |
+| linear (default) | **31/32 = 0.969** | [0.843, 0.994] | 1: index 24, 0.1541 |
+| 20 Hz no-decimation | **32/32 = 1.000** | [0.893, 1.000] | none |
+
+The ROS 2 Jazzy documentation says positions-only `spline` trajectories use
+**linear** interpolation, matching the interpolation style. But the live
+`/vla/raw_action` contract uses `time_from_start=(k+1)*dt`, so a live
+trajectory is one policy period behind the evaluation convention (`a_k` at
+`k*dt`); Task 10 must decide whether to publish `k*dt` or account for the
+offset. Hold-mode 9b/9c numbers are legacy.
+
+### C. Reproducible, language-aware calls
+
+- **Instruction parity:** the runner string and the dataset task string are
+  exactly `'pick up the red cube and place it in the left zone'` (repr identical
+  for three train episodes and `meta/tasks.parquet`). The server uses the same
+  LeRobot preprocessor as training with the same stats, so tokenization is
+  identical by construction; no independent token dump was produced.
+- **Instruction sensitivity:** six instructions (3 cubes x 2 zones), 5 sampled
+  chunks each, same state/images. Mean pairwise cross-instruction chunk
+  difference **0.01903**, max **0.03737**; within-instruction repeat noise mean
+  **0.01712**, max **0.01824**. The effect is only **~1.1x** the mean noise
+  (max ~2.0x): language conditioning is **weak/uncertain**, not a strong
+  instruction response. This is a diagnostic, not a quality claim.
+- **Deterministic sampling:** the server accepts `--sample-seed` / a
+  `sample_seed` reset field and seeds `torch.manual_seed(seed + call_index)`.
+  Same seed + same input gives **identical** chunks (max abs 0.0); a different
+  seed differs by **0.263**. The client sends the episode seed by default.
+- **Teacher-forced error (5-sample mean, physical units):**
+
+| frame | first-step L1 | first-10 L1 | hold-last first-step | hold-last first-10 |
+| --- | --- | --- | --- | --- |
+| 0 | 0.02425 | 0.07772 | 0.00000 | 0.07739 |
+| 10 | 0.01451 | 0.02275 | 0.02373 | 0.03699 |
+| 20 | 0.01958 | 0.03854 | 0.02639 | 0.11623 |
+
+  The 9c frame-0/frame-20 single-sample values were 0.056724 and 0.056681; they
+  were **not identical**, just coincidentally close. The averaged values are
+  clearly distinct.
+- The model beats hold-last on first-step and first-10 at frames 10/20, but not
+  at frame 0 (where the recorded action equals the state) - consistent with the
+  offline L1 pattern.
+
+### D. Overfit sanity test
+
+Chosen episodes: dataset indices 0 and 1 (`ep0000` seed 10000, `ep0004` seed
+10004), both outside the success region, same instruction. Training: same stack,
+batch **4**, 250 steps, lr **1e-4**, chunk 50, LoRA settings unchanged,
+`episode_indices: [0, 1]`.
+
+- Wall **15:06**, step median **2.992 s**, first 11.3 s; peak VRAM **1,733 MiB**,
+  peak RSS **3,908 MiB**; GPU **210 MHz**, 59-60 C (SW Power Cap and SW Thermal
+  Slowdown active; 9b ran at ~1,185 MHz). Checkpoint
+  `outputs/task9d/overfit_v1/checkpoint-00000250`, `git_commit=e2a25e3`,
+  `git_dirty=false`, metadata SHA-256 `9be5ce5a...`.
+- Loss blocks (50 steps): **2.1746 -> 0.9834 -> 0.8210 -> 0.6818 -> 0.6396**;
+  final **0.49675**, min 0.22072. This is **not** a converged overfit.
+- Closed loop on the same two seeds, linear execution, n_action_steps 10, 3
+  deterministic sampling repeats each: **0/6 SUCCESS**, all TIMEOUT, completion
+  ~0, joint max **0.338-0.518 rad**, mean **0.065-0.092 rad**.
+- Teacher-forced on those training frames: first-step L1 **0.037-0.078**,
+  first-10 **0.058-0.107**, not better than the base checkpoint.
+
+**Interpretation:** the overfit run did not reach a low training loss, so the
+test is **inconclusive as a pipeline-bug detector**. It does not show that the
+pipeline can overfit and then fail in closed loop; it shows that 250 steps at
+1e-4 under the 210 MHz/15-minute constraint were insufficient to fit even two
+episodes. A/B parity is exact, so the leading hypothesis remains insufficient
+optimization, not an observation/normalization bug. Task 10 waits for a true
+overfit (or a GPU-clock fix) before further training.
+
+### Decision table (Task 9d)
+
+| observation | row | consequence |
+| --- | --- | --- |
+| 1/40 train and 1/30 eval start inside tolerance | **trivial-start episodes found** | Flagged; plan exclusion for the next dataset; 9b policy success is effectively **0/30**. |
+| Linear oracle 31/32 vs hold 24/32, 20 Hz 32/32 | **linear beats hold** | Adopt `linear` for evaluation and Task 10; hold results are legacy. |
+| Overfit 0/6 but training loss 0.64, step-capped at 210 MHz | **overfit fails / inconclusive** | Pipeline bug hunt before further training; Task 10 waits. Parity exact and loss not converged make insufficient optimization the first hypothesis. |
+| Instruction cross-difference 0.019 vs noise 0.017 | **instruction sensitivity weak/uncertain** | Language conditioning is not clearly learned; the next plan starts with one instruction and checks instruction-conditioned behaviour. |
+
+Next pipeline hypotheses with evidence: optimization budget/LR (loss still
+falling, 250 steps only); state/action alignment (A/B exact - against);
+normalization/action units (server uses dataset stats and parity is exact -
+against); gripper range (clipped, but the arm never reaches the cube -
+secondary); camera mapping/unused camera3 (byte-identical, expected 2 cameras -
+against); frozen vision/expert-only (intended; may need more capacity/steps);
+instruction handling (weak sensitivity - observed but not the train-seed failure
+cause).
+
 ## CLI
 
 ```bash
@@ -559,6 +747,22 @@ disable) because `policy_only` failure analysis needs paired data in
 ## Known limitations
 
 - Only simulation; no physical robot and no safety claim.
+- **Task 9d trust findings:** the success region radius is **0.060 m**; 1/40
+  train episodes and 1/30 eval seeds start inside it, so the 9b 1/30 policy
+  success is a false positive (effective **0/30**). `starts_in_success_region`
+  is now recorded and aggregates report with/without such starts. Linear
+  execution succeeds **31/32** oracle episodes vs hold **24/32**; linear is the
+  default and hold-mode 9b/9c numbers are legacy.
+- **Task 9d overfit run is inconclusive, not a pipeline-bug proof.** 250 steps
+  on 2 episodes reached training loss **0.49675** (block mean 0.640) and closed
+  loop failed **0/6** on the same seeds. The GPU was pinned at **210 MHz** with
+  SW Power Cap/Thermal Slowdown active (15:06 wall), so the run did not
+  converge. A true overfit is still required before Task 10 or further
+  training.
+- **Instruction sensitivity is weak.** Six instructions x 5 samples gave a mean
+  cross-instruction chunk difference **0.01903** vs within-instruction noise
+  **0.01712** (max 0.03737 vs 0.01824). Language conditioning is not clearly
+  learned or used.
 - The fake backend is kinematic; success rates there are not MuJoCo numbers.
 - **Task 9c diagnosis:** observation parity is exact (state ≤1.18e-7; images
   byte-identical; frame t = control step 2t). The 10 Hz zero-order hold loses

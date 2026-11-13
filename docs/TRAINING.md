@@ -475,3 +475,49 @@ success, robustness, or generalisation.
   chunk positions k=0 and k=1. No closed-loop or generalisation claim.
 - **The GPU reached 88 °C** with a median training SM clock of 1,185 MHz versus
   a 2,670 MHz maximum sample; the exact throttle reason was not instrumented.
+
+## 14. Task 9d measured training plan (document only, not run)
+
+The Task 9d diagnosis (see `docs/EVALUATION.md`) changes the next training plan
+in four ways: the 9b "success" is a start-in-success-region false positive; the
+evaluation execution contract is now `linear`; the overfit run was step-limited
+at 210 MHz and did not converge; and instruction sensitivity is weak.
+
+**Scope.** Start with **one instruction**: `pick up the red cube and place it in
+the left zone`, randomized object poses. Do not train all six instructions
+until a single-instruction policy shows a measurable instruction-conditioned
+response and closed-loop progress.
+
+**Episodes and arithmetic.** The MuJoCo expert succeeded **24/30 = 0.80** on
+the evaluation seeds; the accepted-data filter accepted **123/131** successful
+Task 7 episodes, and clean acceptance was **114/117**. Excluding start-in-region
+spawns removes about **1/30 = 3.3%**. A 40-episode target therefore needs roughly
+`40 / (0.80 * 0.94 * 0.97) ≈ 55` clean attempts; budget **70** attempts to allow
+for the expert's ~20% failure rate and the observed easy-pose skew. This is an
+estimate, not a guarantee.
+
+**Steps and wall time.** The measured Task 9d batch-4 step is **2.99 s** at
+210 MHz; batch 16 was **1.5 s** in 9b at ~1,185 MHz. At the current clock,
+2,000 steps at batch 4 is about **100 min**; if the GPU clock is restored,
+2,000 steps at batch 16 is about **50 min**, and 5,000 steps about **125 min**.
+Choose the step count after the GPU clock is healthy and the overfit test
+converges; state the estimate before running.
+
+**Optimization.** Keep batch 16 if VRAM allows (measured 4.1 GiB), lr 1e-4 with
+a short warm-up and cosine decay (for example 50 warm-up steps then decay to
+10% of the peak over the run), fp32, chunk 50. The constant-LR 1,000-step run
+left loss at 0.32; a schedule is the smallest evidence-based change.
+
+**Dataset rate.** Keep the 10 Hz dataset and evaluate with `execution: linear`
+(the oracle improves from 24/32 hold to 31/32 linear). A 20 Hz re-export would
+double the data and is not justified before a single-instruction policy works.
+
+**Evaluation protocol.** Seeds **20000-20029**, paired scripted expert, linear
+execution, `n_action_steps=10`, deterministic sampling, llvmpipe, and report
+success both **with and without** start-in-success-region episodes. The paired
+expert baseline on those seeds is **24/30** (23/29 excluding the trivial start);
+do not compare against the hold-mode 9b policy numbers without labelling them
+legacy.
+
+**What is not claimed.** No expected success rate, no generalisation claim, and
+no claim that the current 1,000-step checkpoint is representative.
