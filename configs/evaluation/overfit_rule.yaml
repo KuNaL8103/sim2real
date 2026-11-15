@@ -1,0 +1,17 @@
+# Pre-registered overfit decision rule (Task 9g).
+#
+# These bars are a judgement chosen before any remote result exists. They are
+# not derived from remote data and must not be edited after the remote run.
+# The training loss is advisory only; it is not a pass criterion.
+schema_version: 1
+overfit_rule:
+  arm_dims: 7
+  first10_steps: 10
+  sample_seeds: [101, 102, 103, 104, 105]
+  first_step_arm_l1_max_rad: 0.010
+  first10_beats_hold_fraction_min: 0.90
+  gripper_first_step_l1_max_m: 0.005
+  gripper_clip_min_m: 0.0
+  gripper_clip_max_m: 0.04
+  gripper_clip_delta_max_m: 0.002
+  loss_advisory_threshold: 0.1
