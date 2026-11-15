@@ -24,3 +24,10 @@ def test_ci_parity_script_exists_and_mentions_ci_steps():
 def test_ci_parity_script_syncs_the_ci_group():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "uv sync --locked --group sim" in text
+
+
+def test_ci_parity_script_has_clean_clone_mode():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "--clean-clone" in text
+    assert "git clone --no-local" in text
+    assert "SIM2REAL_SKIP_RENDER=1 uv run pytest -ra" in text
