@@ -990,3 +990,82 @@ motion. The 0.023-0.078 rad teacher-forced L1 is "small" only in absolute
 radians; it is a large fraction of the 0.1 rad acceptance and larger than the
 first-frame motion. Flow-matching sampling noise (per-seed std up to 0.10 rad)
 and under-training, not an input/pipeline mismatch, are the measured causes.
+
+## Task 9g wider first-chunk analysis (2026-11-13, throttled GPU)
+
+Scope: train-split dataset indices **0, 1 and 2**, frames **0-5, 10, 20**, five
+deterministic sample seeds **101-105**. The checkpoint is the same 1,000-step
+full-data run (`outputs/task8/train_v1_lora/checkpoint-00001000`). The run took
+**255 s** wall on the local GPU; that is **throttled, not a performance
+figure**. It is a diagnostic only.
+
+Per-frame summary (L1 in physical units; "motion" is `|a(f+1) - a(f)|`; the
+ratio is the mean over the seven arm dimensions):
+
+| episode | frame | mean error | max error | mean motion | max motion | mean ratio (7 arm dims) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0 | 0.02685 | 0.07946 | 0.00080 | 0.00228 | 36.79 |
+| 0 | 1 | 0.01729 | 0.05157 | 0.01505 | 0.04282 | 1.24 |
+| 0 | 2 | 0.01744 | 0.04714 | 0.03522 | 0.10016 | 0.63 |
+| 0 | 3 | 0.01254 | 0.05155 | 0.04035 | 0.11475 | 0.54 |
+| 0 | 4 | 0.01973 | 0.05022 | 0.02605 | 0.07409 | 1.14 |
+| 0 | 5 | 0.02760 | 0.05480 | 0.00552 | 0.01571 | 7.31 |
+| 0 | 10 | 0.01432 | 0.02418 | 0.01862 | 0.07101 | 7.24 |
+| 0 | 20 | 0.02327 | 0.06459 | 0.00774 | 0.03125 | 56.42 |
+| 1 | 0 | 0.02785 | 0.07486 | 0.00134 | 0.00271 | 22.07 |
+| 1 | 1 | 0.02119 | 0.05523 | 0.02427 | 0.04901 | 0.87 |
+| 1 | 2 | 0.01562 | 0.03452 | 0.05291 | 0.10685 | 0.42 |
+| 1 | 3 | 0.00898 | 0.02789 | 0.05291 | 0.10685 | 0.36 |
+| 1 | 4 | 0.01841 | 0.05119 | 0.02427 | 0.04901 | 0.78 |
+| 1 | 5 | 0.01547 | 0.05220 | 0.00134 | 0.00271 | 10.53 |
+| 1 | 10 | 0.01361 | 0.03893 | 0.00740 | 0.02719 | 4.32 |
+| 1 | 20 | 0.01406 | 0.03123 | 0.00120 | 0.00473 | 70.08 |
+| 2 | 0 | 0.02683 | 0.07534 | 0.00098 | 0.00208 | 28.77 |
+| 2 | 1 | 0.02168 | 0.05558 | 0.01889 | 0.04028 | 1.18 |
+| 2 | 2 | 0.01730 | 0.04145 | 0.04666 | 0.09949 | 0.47 |
+| 2 | 3 | 0.00990 | 0.02141 | 0.05888 | 0.12554 | 0.31 |
+| 2 | 4 | 0.01551 | 0.04395 | 0.04666 | 0.09949 | 0.41 |
+| 2 | 5 | 0.01795 | 0.06134 | 0.01889 | 0.04028 | 1.00 |
+| 2 | 10 | 0.01425 | 0.04043 | 0.03116 | 0.11432 | 2.36 |
+| 2 | 20 | 0.02748 | 0.11962 | 0.02098 | 0.08104 | 1.32 |
+
+Frame-0 per-dimension error (rad, or m for d7):
+
+| episode | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.01262 | 0.07946 | 0.00426 | 0.04636 | 0.00819 | 0.02714 | 0.03650 | 0.00027 |
+| 1 | 0.01388 | 0.07486 | 0.00566 | 0.04568 | 0.00425 | 0.03575 | 0.04244 | 0.00026 |
+| 2 | 0.01435 | 0.07534 | 0.00134 | 0.04632 | 0.00431 | 0.03105 | 0.04175 | 0.00018 |
+
+Frame-0 per-dimension recorded motion:
+
+| episode | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.00039 | 0.00228 | 0.00047 | 0.00183 | 0.00016 | 0.00045 | 0.00084 | 0.00000 |
+| 1 | 0.00112 | 0.00271 | 0.00136 | 0.00210 | 0.00042 | 0.00058 | 0.00244 | 0.00000 |
+| 2 | 0.00073 | 0.00208 | 0.00094 | 0.00166 | 0.00038 | 0.00039 | 0.00163 | 0.00000 |
+
+Frame-0 per-dimension error/motion ratio (n/a means zero motion):
+
+| episode | d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 32.15 | 34.81 | 9.09 | 25.34 | 52.45 | 60.35 | 43.32 | n/a |
+| 1 | 12.35 | 27.58 | 4.15 | 21.70 | 10.10 | 61.25 | 17.37 | n/a |
+| 2 | 19.59 | 36.18 | 1.42 | 27.96 | 11.49 | 79.14 | 25.63 | n/a |
+
+**Does the 9f pattern hold?** Yes. At frame 0 all three episodes have almost no
+recorded motion (max 0.00208-0.00271 rad) while the first-step error is
+**0.02683-0.02785 rad** (max 0.07486-0.07946 rad); the mean ratio is **22-37x**.
+The per-dimension ratios are 1.4-79x. At moving frames the ratio usually falls
+below ~1-2, but frame 5 and 20 can be high again when the recorded motion is
+near zero (7-70x). The same first-chunk error is therefore present on every
+episode, not just episode 0.
+
+**Sample-seed spread vs the mean error.** The standard deviation across the five
+seeds is comparable to or larger than the mean error: mean-over-dimension
+std/mean-error is **1.33, 2.07, 2.15, 3.07, 1.89, 1.37** at frames 0-5 for
+episode 0; **1.31, 1.79, 2.30, 4.02, 1.59, 1.52** for episode 1; and
+**1.36, 1.80, 2.20, 3.68, 2.01, 1.39** for episode 2. At frame 0 the arm-dimension
+std is 0.018-0.091 rad, while the mean error is 0.027 rad. A five-seed mean is
+still noisy; the pre-registered rule uses it deliberately to reduce this noise,
+but it cannot make a single deterministic sample representative.

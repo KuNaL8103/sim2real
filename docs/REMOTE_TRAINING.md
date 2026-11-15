@@ -105,8 +105,9 @@ rather than bypassing the check.
 
 This section supersedes the older export list above. It is still **documentation
 only**: no upload, account, provider test, or remote training happened in this
-session. The local GPU is pinned at **210 MHz** (SW Power Cap + SW Thermal
-Slowdown) and is not used for training.
+session. The local GPU is treated as degraded/untrusted: it measured **210 MHz**
+under load in 9e/9f (SW Power Cap + SW Thermal Slowdown), even though Task 9g's
+idle reading was 2130 MHz. It is not used for training.
 
 ### What to upload
 
@@ -125,10 +126,12 @@ scans for forbidden files, and writes:
 
 | Content | Detail |
 | --- | --- |
-| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving; the measured Task 9f archive was **90.73 MiB / 95,133,662 bytes**. A later rebuild may differ by a few bytes because the manifest records the commit and build time (parquet is already compressed). |
+| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving. The Task 9f archive was **90.73 MiB / 95,133,662 bytes**; Task 9g adds `repo.bundle` (about 5-6 MiB), so expect roughly **96 MiB**. The exporter prints the exact size and sha256 for each build. |
 | `outputs/remote_bundle_payload/configs/training/` | The overfit protocol config and the full `train_v1` config |
 | `outputs/remote_bundle_payload/requirements.txt` | Exact versions read from `.venv-ml`, with `--extra-index-url https://download.pytorch.org/whl/cu126` |
-| `outputs/remote_bundle_payload/MANIFEST.json` | sha256 + size of every file, git commit, dataset stats/dataset hashes, expected `checkpoint_metadata` fields, model revisions |
+| `outputs/remote_bundle_payload/repo.bundle` | Git bundle of the exact commit for the offline clone fallback (about 5-6 MiB) |
+| `outputs/remote_bundle_payload/remote_train.sh` | The preflight/training script, so the extracted bundle can bootstrap itself |
+| `outputs/remote_bundle_payload/MANIFEST.json` | sha256 + size of every file, git commit, dataset stats/dataset hashes, expected `checkpoint_metadata` fields, model revisions, Python major.minor and `lerobot` Requires-Python, repo.bundle hash |
 
 The archive name includes the commit prefix and UTC timestamp. The exporter
 also prints its own sha256. `outputs/` is git-ignored.
@@ -147,28 +150,64 @@ also prints its own sha256. `outputs/` is git-ignored.
 
 ### Exact remote commands
 
-On the remote machine, after uploading the archive (for example with `scp` or
-`rsync`; no upload was performed here):
+The real extracted layout is exactly two top-level entries: `data/` and
+`outputs/`. The payload directory is **`outputs/remote_bundle_payload/`**
+(containing `MANIFEST.json`, `requirements.txt`, `repo.bundle`,
+`remote_train.sh`, and `configs/`). Both `data/` and `outputs/` are git-ignored.
+
+**GitHub clone variant** (after uploading the archive):
 
 ```bash
 git clone https://github.com/KuNaL8103/sim2real.git sim2real
 cd sim2real
 git checkout <EXACT_COMMIT_FROM_MANIFEST>
 tar -xzf /path/to/sim2real_remote_<commit7>_<UTC>.tar.gz -C .
+
+# Preflight only: no venv, no pip, no download, no training.
+scripts/remote_train.sh --check-only \
+  --bundle-dir outputs/remote_bundle_payload \
+  --config outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote.yaml
+
+# Full run after the preflight passes.
 scripts/remote_train.sh \
   --bundle-dir outputs/remote_bundle_payload \
   --config outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote.yaml \
   --output-dir outputs/remote/overfit_remote
 ```
 
+**Offline bundle variant** (GitHub unavailable). Extract the archive somewhere
+first, then let the payload script bootstrap a local clone from `repo.bundle`:
+
+```bash
+tar -xzf /path/to/sim2real_remote_<commit7>_<UTC>.tar.gz -C .
+outputs/remote_bundle_payload/remote_train.sh --check-only \
+  --bundle-dir outputs/remote_bundle_payload \
+  --config outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote.yaml
+```
+
+Without `--from-bundle`, the script automatically uses
+`outputs/remote_bundle_payload/repo.bundle` when it is not inside a git
+checkout. It clones to a unique temp workdir, verifies the bundle and that HEAD
+equals the manifest commit, then re-runs from the clone. To force it, add
+`--from-bundle outputs/remote_bundle_payload/repo.bundle`. Remove the same
+`--check-only` line and add `--output-dir outputs/remote/overfit_remote` for the
+full run.
+
 `tar` extracts the dataset under `data/` and the payload under `outputs/`; both
-are git-ignored, so `git status --porcelain` stays empty. The script fails
-loudly if the tree is dirty, the HEAD differs from the manifest commit, a
-manifest hash mismatches, CUDA is unavailable, the GPU has less than **8 GiB**,
-or the median SM clock under load is below **1,000 MHz**.
+are git-ignored, so `git status --porcelain` stays empty. `--check-only`
+verifies the Python major.minor, `lerobot` Requires-Python, manifest hashes,
+commit and tree, and prints GPU/driver/CUDA identity, then exits before any
+venv, pip, network or training step. The full run additionally checks the
+network endpoints, prints the pinned downloads, and runs a CUDA matmul. It fails
+loudly if the tree is dirty, HEAD differs from the manifest commit, a manifest
+hash mismatches, CUDA is unavailable, the GPU has less than **8 GiB**, or the
+median SM clock under load is below **1,000 MHz**.
 
 ### Network actions, printed before they run
 
+0. HEAD requests with an 8 s timeout to PyPI, the PyTorch cu126 index, and
+   `huggingface.co/lerobot/smolvla_base`; blocked endpoints fail the run with
+   a notebook/outbound-traffic message.
 1. `pip install -r outputs/remote_bundle_payload/requirements.txt` from PyPI
    plus the pinned PyTorch cu126 index.
 2. Hugging Face downloads of the two pinned repositories above, unless already
@@ -183,12 +222,18 @@ The script prints, in order:
 
 - `MANIFEST verified: N files`;
 - `code commit <sha> is checked out clean`;
-- the network actions above;
+- Python major.minor and `lerobot` Requires-Python checks;
+- GPU name, driver version and nvidia-smi CUDA version (measured, not a
+  compatibility claim);
+- in `--check-only`: `CHECK ONLY: ...` and exit;
+- in a full run: the network check, the network actions above, and a preflight
+  JSON containing those values;
 - a GPU JSON block with the matmul checksum, total memory, median/min/max SM
   clock, power, temperature, and throttle reasons;
 - the training summary JSON and per-step `losses.jsonl`;
 - `RUN_REPORT.json` with steps, wall time, final loss, last-20 mean loss, median
-  step time, peak VRAM/RSS, GPU telemetry, and checkpoint hashes.
+  step time, peak VRAM/RSS, GPU telemetry, the full preflight (Python, driver,
+  CUDA, network, matmul) and checkpoint hashes.
 
 Checkpoints are written every 100 steps: `checkpoint-00000100`,
 `checkpoint-00000200`, ..., and the end (`checkpoint-00001000` for this config).
@@ -201,7 +246,8 @@ rsync -av <remote-user>@<remote-host>:~/sim2real/outputs/remote/overfit_remote/ 
 ```
 
 This downloads the checkpoint folders, `losses.jsonl`, `train.log`,
-`gpu_monitor.csv`, and `RUN_REPORT.json`. Keep the run name
+`gpu_monitor.csv`, `preflight.json`, `network.json`, `matmul.json`, and
+`RUN_REPORT.json`. Keep the run name
 `overfit_remote` (or use a unique `outputs/remote/<run_name>/` for every run).
 
 ### Verify locally
@@ -215,10 +261,35 @@ scripts/verify_remote_checkpoint.py \
 
 It refuses `git_dirty=true`, a commit absent from local history, a config hash,
 stats/dataset hash, rename map, chunk/fps/`n_action_steps` mismatch, an adapter
-hash mismatch, or a policy-server handshake refusal. The default handshake is
-CPU with `CUDA_VISIBLE_DEVICES` empty; it prints which handshake was used. A
-`--handshake cuda` run is a short throttled diagnostic and is not a performance
-figure.
+hash mismatch, or a policy-server handshake refusal. A RUN_REPORT is required by
+default; `--no-run-report` prints **UNVERIFIED: no run report** and is never the
+default. The default handshake is CPU with `CUDA_VISIBLE_DEVICES` empty; it
+prints which handshake was used. A `--handshake cuda` run is a short throttled
+diagnostic and is not a performance figure.
+
+Then run the pre-registered teacher-forced rule:
+
+```bash
+.venv-ml/bin/python scripts/eval_teacher_forced.py \
+  --checkpoint outputs/remote/overfit_remote/checkpoint-00001000 \
+  --dataset data/lerobot/train_v1 \
+  --episodes 0,1 \
+  --rule configs/evaluation/overfit_rule.yaml \
+  --output outputs/remote/overfit_remote/teacher_forced.json
+```
+
+It prints PASS/FAIL for the three pre-registered criteria and keeps the training
+loss advisory. The closed-loop follow-up (seeds 10000/10004, three repeats,
+linear, `n_action_steps=10`) is the snippet in `docs/TRAINING.md` section 15.
+
+### Bundle-commit reconciliation (Task 9g)
+
+The Task 9f runbook once named `c3802a5` as the bundle commit. That was a
+docs-only commit and is **superseded**; the 9f archive that actually exists was
+built from `b620c91` (95,133,660 bytes, sha256 `967dc109...41b8`). The
+authoritative bundle commit is the `git_commit` recorded in the MANIFEST of the
+final Task 9g bundle built from the final pushed HEAD. Do not use `c3802a5` as
+a remote checkout.
 
 ### Remote GPU decision rule
 

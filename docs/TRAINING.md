@@ -563,12 +563,10 @@ quality experiment. No part of it ran in the Task 9f session.
 | Checkpoints | every **100** steps: 100, 200, ..., end (1000) |
 | Seed | 0 |
 
-**Convergence, defined before the run.** Converged means the **mean training
-loss of the last 20 steps is below 0.1**. The training loss is the
-flow-matching objective, not an L1 distance in radians. The Task 9d 250-step run
-ended at **0.49675** and was still falling; 0.1 is about **5x lower** and is a
-clear "the model can fit two episodes" signal. It is pre-registered here and
-must not be redefined after seeing the curve.
+**Convergence.** The pre-registered deciding rule is in section 17: it uses
+teacher-forced error, not the training loss. The training loss is reported
+advisory only. The Task 9d 250-step run ended at **0.49675** and was still
+falling; a last-20 mean below 0.1 is noted but does **not** decide pass/fail.
 
 **Batch and step arithmetic (healthy-GPU measurements, not remote guesses).**
 The measured healthy-GPU step times were: batch 1 **0.43-0.66 s**, batch 4
@@ -586,13 +584,18 @@ do not substitute the local 210 MHz 9d median (2.992 s/step), which would make
 
 **Execution.** Follow `docs/REMOTE_TRAINING.md`:
 
-1. build/upload the bundle from the final pushed commit (manifest size about 90.7 MiB; no upload in this session);
-2. on the remote host, extract it at the repository root, clone the public repo
-   at the manifest commit, and run `scripts/remote_train.sh` with the bundle
-   config;
-3. return `outputs/remote/<run_name>/RUN_REPORT.json` and the checkpoint
-   folder(s) under `outputs/remote/<run_name>/`;
-4. verify locally with `scripts/verify_remote_checkpoint.py`.
+1. build/upload the bundle from the final pushed commit (about 90-96 MiB
+   depending on the repo.bundle; no upload in this session);
+2. on the remote host, clone the public repo at the manifest commit, extract
+   the archive at the repository root, and run `scripts/remote_train.sh
+   --check-only` before the full run (offline variant: let
+   `outputs/remote_bundle_payload/remote_train.sh` bootstrap from
+   `repo.bundle`); the real layout is `data/` plus
+   `outputs/remote_bundle_payload/`;
+3. return `outputs/remote/<run_name>/RUN_REPORT.json`, `preflight.json`, and
+   the checkpoint folder(s) under `outputs/remote/<run_name>/`;
+4. verify locally with `scripts/verify_remote_checkpoint.py`, then run
+   `scripts/eval_teacher_forced.py`.
 
 **Local verification (refuses a mismatch).**
 
@@ -605,7 +608,19 @@ scripts/verify_remote_checkpoint.py \
 
 The default handshake is CPU (`CUDA_VISIBLE_DEVICES` empty), so the result is
 not a throttled GPU timing. Use `--handshake cuda` only for a short diagnostic;
-label it throttled.
+label it throttled. A RUN_REPORT is required by default; `--no-run-report` is
+explicit and prints **UNVERIFIED: no run report**.
+
+Then run the pre-registered teacher-forced rule:
+
+```bash
+.venv-ml/bin/python scripts/eval_teacher_forced.py \
+  --checkpoint outputs/remote/overfit_remote/checkpoint-00001000 \
+  --dataset data/lerobot/train_v1 \
+  --episodes 0,1 \
+  --rule configs/evaluation/overfit_rule.yaml \
+  --output outputs/remote/overfit_remote/teacher_forced.json
+```
 
 **Local closed-loop evaluation after verification.** Use the two training
 seeds, linear execution, `n_action_steps=10`, deterministic sampling, and
@@ -614,6 +629,7 @@ index 0 (the 9d convention; dataset indices 0 and 1 are `ep0000`/`ep0004`).
 
 ```bash
 .venv/bin/python - <<'PY'
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -624,6 +640,7 @@ from sim2real.filtering.config import load_filter_config
 from sim2real.sim import create_backend
 
 root = Path.cwd()
+commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 checkpoint = root / "outputs/remote/overfit_remote/checkpoint-00001000"
 config = load_evaluation_config("configs/evaluation/default.yaml")
 config = replace(
@@ -647,7 +664,7 @@ try:
                 config=config,
                 eval_run_id=f"overfit_remote_{seed}_r{repeat}",
                 config_hash=config.config_hash(),
-                git_commit="remote-verified",
+                git_commit=commit,
                 git_dirty=False,
                 randomization_dir="configs/randomization",
                 filter_config=filter_config,
@@ -762,3 +779,55 @@ instruction handling; absolute-vs-delta action parameterization.
 
 The existing 9d run (250 steps, loss 0.49675, 0/6 closed loop) did not meet this
 rule; it is not evidence of a pipeline bug by itself.
+
+## 18. Action parameterization statistics (hypothesis only; nothing changed)
+
+Computed from the full `train_v1` parquet (40 episodes, 1,849 frames) with
+NumPy; no GPU, no model. The action/observation contract was **not changed**.
+The question is how a delta target would scale versus the current absolute
+joint-position target, especially near the start of an episode.
+
+Per-dimension standard deviations over all frames (rad, or m for d7):
+
+| dim | std(abs action) | std(action - state) | std(action_t - action_{t-1}) | delta / abs | (action-state) / abs |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0.091294 | 0.007820 | 0.012047 | 0.1320 | 0.0857 |
+| 1 | 0.122312 | 0.020327 | 0.029777 | 0.2435 | 0.1662 |
+| 2 | 0.157771 | 0.016373 | 0.024584 | 0.1558 | 0.1038 |
+| 3 | 0.216124 | 0.045878 | 0.069830 | 0.3231 | 0.2123 |
+| 4 | 0.060704 | 0.005730 | 0.008752 | 0.1442 | 0.0944 |
+| 5 | 0.143542 | 0.035805 | 0.054451 | 0.3793 | 0.2494 |
+| 6 | 0.222447 | 0.023884 | 0.035752 | 0.1607 | 0.1074 |
+| 7 | 0.019846 | 0.012229 | 0.008412 | 0.4239 | 0.6162 |
+
+The within-episode delta target has a much smaller scale on the arm dimensions:
+**0.13-0.38x** the absolute-action scale, or roughly **2.6-7.6x smaller**. The
+action-minus-state residual is **0.09-0.25x** the absolute scale. The gripper is
+different: action equals state at frame 0, and the delta scale is 0.42x while
+the action-minus-state scale is 0.62x.
+
+Per-frame ratios across episodes (frames 0-5; frame 0 has no previous action,
+and at frame 0 action equals state, so those ratios are undefined):
+
+| frame | delta / abs (d0-d6) | (action-state) / abs (d0-d6) |
+| --- | --- | --- |
+| 0 | n/a | n/a (action == state) |
+| 1 | 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00 | 0.73, 0.59, 0.51, 0.56, 0.78, 0.66, 0.63 |
+| 2 | 0.95, 0.95, 0.95, 0.97, 0.95, 0.94, 0.95 | 0.53, 0.52, 0.53, 0.52, 0.52, 0.49, 0.50 |
+| 3 | 0.66, 0.83, 0.66, 0.73, 0.70, 0.48, 0.66 | 0.39, 0.47, 0.40, 0.41, 0.40, 0.31, 0.39 |
+| 4 | 0.40, 0.70, 0.41, 0.56, 0.44, 0.57, 0.40 | 0.27, 0.41, 0.28, 0.34, 0.29, 0.18, 0.28 |
+| 5 | 0.20, 0.48, 0.21, 0.39, 0.25, 2.16, 0.21 | 0.17, 0.31, 0.17, 0.26, 0.19, 1.15, 0.17 |
+
+The frame-1 delta ratio is 1.0 because the across-episode initial-pose spread
+dominates the first step; the within-episode delta std in the full table is the
+more meaningful target scale. Near the start, the delta and action-minus-state
+targets are therefore smaller relative to the absolute target, which is a
+plausible reason a delta parameterization could be easier to fit.
+
+**Hypothesis and cost.** A delta-action dataset could reduce the normalized
+target scale by about **2.6-7.6x** on the arm dimensions. It is **not free**:
+it needs a new dataset export/format, new normalization statistics, changes to
+the training data loader and action decoding, and a new observation/action
+contract (plus new evaluation checks). It also changes the meaning of the
+gripper dimension and the recorded oracle. Nothing was implemented or changed in
+Task 9g; this is recorded as a hypothesis for a later decision.
