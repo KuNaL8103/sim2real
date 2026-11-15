@@ -709,3 +709,56 @@ success and 123/131 filter acceptance; **70** covers both estimates and the
 observed easy-pose skew. For six instructions at the same yield, the naive
 budget is `6 x 70 = 420` attempts; that is not recommended before one
 instruction works.
+
+## 17. Overfit decision rule (pre-registered)
+
+This rule was written and committed **before** any bundle or remote-run change in
+Task 9g and before any remote overfit result exists. The numeric bars are a
+judgement chosen in advance; they are **not derived from the remote data** and
+must not be edited after the remote run.
+
+**Loss is advisory, not the pass criterion.** The SmolVLA training objective is
+a flow-matching loss with random noise and time samples and has a floor. The
+mean of the last 20 training steps is reported, and a value below 0.1 is noted,
+but it does **not** decide pass/fail.
+
+**Evaluated frames.** For dataset indices **0 and 1** (the two overfit
+episodes), evaluate frames **0-5, 10, 20, 30, and every 10th frame after that up
+to the episode end** (40, 50, ...). At every evaluated frame, use the mean over
+**5 deterministic sample seeds (101-105)**. L1 is in physical units; arm
+dimensions are the first seven joints and dimension 7 is the gripper.
+
+**Deciding criteria (all three must pass):**
+
+1. **First-step arm error:** mean first-step L1 over the seven arm dimensions
+   and all evaluated frames is **<= 0.010 rad**.
+   Reference: the 9f 1,000-step full-data checkpoint measured **0.02685 rad** at
+   frame 0 and **0.0125-0.0276 rad** over frames 0-5.
+2. **First-10-step error vs hold-last:** the first-10-step mean L1 is below the
+   hold-last-state baseline on **at least 90%** of the evaluated frames.
+3. **Gripper:** mean first-step L1 for dimension 7 is **<= 0.005 m**, and
+   clipping predictions into **[0, 0.04] m** changes them by **< 0.002 m on
+   average**.
+
+**Secondary closed-loop check (local, not a substitute for criteria 1-3).**
+Linear execution, `n_action_steps=10`, deterministic sampling, **3 repeats on
+seed 10000 and 3 repeats on seed 10004**. Report success, termination reason and
+task completion for every repeat. The pipeline is **"sound" only if criteria 1-3
+pass AND at least one of the three repeats succeeds on each seed**.
+
+**Interpretation table.**
+
+| Criteria 1-3 | Closed loop | Interpretation | Next action |
+| --- | --- | --- | --- |
+| pass | succeeds on each seed | pipeline is sound | proceed to Task 10 preparation |
+| pass | fails | execution/contract bug hunt (runner, units, reset, action timing) | test the execution path with the existing checkpoint; do not call it under-training |
+| fail | any | if training loss is still falling: **under-training** | propose more steps or an LR change, one change at a time |
+| fail | any | if training loss has plateaued: **capacity/pipeline hunt** | test the hypotheses below |
+
+Capacity/pipeline hypotheses, in this order: state/action alignment;
+normalization vs units; gripper dimension; camera mapping and the unused
+`camera3` slot; frozen vision encoder and expert-only flags; LoRA coverage;
+instruction handling; absolute-vs-delta action parameterization.
+
+The existing 9d run (250 steps, loss 0.49675, 0/6 closed loop) did not meet this
+rule; it is not evidence of a pipeline bug by itself.
