@@ -81,6 +81,19 @@ def _versions(bundle_module) -> dict[str, str]:
     return {name: "1.2.3" for name in bundle_module.PINNED_PACKAGES}
 
 
+def _python_metadata() -> dict:
+    return {
+        "version": "3.12.3",
+        "major_minor": "3.12",
+        "executable": "/usr/bin/python3.12",
+        "lerobot_requires_python": ">=3.10",
+    }
+
+
+def _head() -> str:
+    return subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+
+
 def _checkpoint(tmp_path: Path, config_path: Path, dataset: Path) -> Path:
     config = load_training_config(config_path)
     split = json.loads((dataset / "meta/sim2real_split.json").read_text(encoding="utf-8"))
@@ -131,18 +144,26 @@ def test_bundle_hashes_files_prints_size_and_excludes_forbidden(tmp_path, capsys
         config_paths=[config],
         output_dir=output,
         versions=_versions(bundle),
-        commit="a" * 40,
+        python_metadata=_python_metadata(),
+        commit=_head(),
         timestamp="20260101T000000Z",
         allow_dirty=True,
     )
     printed = capsys.readouterr().out
     assert "bundle payload" in printed and "MiB" in printed
     assert result.archive.is_file()
-    assert result.files >= 4
+    assert result.files >= 6
     files = result.manifest["files"]
     assert "data/lerobot/train_v1/meta/info.json" in files
     assert "data/lerobot/train_v1/data/file-000.parquet" in files
     assert "outputs/remote_bundle_payload/requirements.txt" in files
+    assert "outputs/remote_bundle_payload/repo.bundle" in files
+    assert "outputs/remote_bundle_payload/remote_train.sh" in files
+    assert result.manifest["python"]["major_minor"] == "3.12"
+    assert (
+        result.manifest["repo_bundle"]["sha256"]
+        == files["outputs/remote_bundle_payload/repo.bundle"]["sha256"]
+    )
     with tarfile.open(result.archive) as archive:
         names = set(archive.getnames())
         for relative, entry in files.items():
@@ -214,6 +235,7 @@ def test_verifier_handshake_accepts_fake_model(tmp_path):
         checkpoint,
         config,
         handshake="fake",
+        allow_no_run_report=True,
         server_python=Path(sys.executable),
     )
     assert summary["handshake"] == "fake"
@@ -229,7 +251,7 @@ def test_verifier_rejects_dirty_checkpoint(tmp_path):
     metadata["git_dirty"] = True
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(verifier.VerificationError, match="git_dirty"):
-        verifier.verify_checkpoint(checkpoint, config, handshake="skip")
+        verifier.verify_checkpoint(checkpoint, config, handshake="skip", allow_no_run_report=True)
 
 
 def test_verifier_rejects_stats_mismatch(tmp_path):
@@ -242,7 +264,7 @@ def test_verifier_rejects_stats_mismatch(tmp_path):
     metadata["stats_file_hash"] = "0" * 64
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(verifier.VerificationError, match="stats file hash"):
-        verifier.verify_checkpoint(checkpoint, config, handshake="skip")
+        verifier.verify_checkpoint(checkpoint, config, handshake="skip", allow_no_run_report=True)
 
 
 def test_verifier_rejects_unknown_commit(tmp_path):
@@ -255,7 +277,7 @@ def test_verifier_rejects_unknown_commit(tmp_path):
     metadata["git_commit"] = "0" * 40
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(verifier.VerificationError, match="not present in local history"):
-        verifier.verify_checkpoint(checkpoint, config, handshake="skip")
+        verifier.verify_checkpoint(checkpoint, config, handshake="skip", allow_no_run_report=True)
 
 
 def test_verifier_rejects_adapter_hash_mismatch(tmp_path):
@@ -266,7 +288,24 @@ def test_verifier_rejects_adapter_hash_mismatch(tmp_path):
     adapter_file = checkpoint / "adapter/fake_adapter.npz"
     adapter_file.write_bytes(adapter_file.read_bytes() + b"tamper")
     with pytest.raises(verifier.VerificationError, match="adapter directory hash"):
+        verifier.verify_checkpoint(checkpoint, config, handshake="skip", allow_no_run_report=True)
+
+
+def test_verifier_requires_run_report_unless_explicitly_overridden(tmp_path, capsys):
+    verifier = _load_script("verify_remote_checkpoint")
+    dataset = _write_dataset(tmp_path / "dataset")
+    config = _write_config(tmp_path, dataset)
+    checkpoint = _checkpoint(tmp_path, config, dataset)
+    with pytest.raises(verifier.VerificationError, match="no RUN_REPORT"):
         verifier.verify_checkpoint(checkpoint, config, handshake="skip")
+    summary = verifier.verify_checkpoint(
+        checkpoint,
+        config,
+        handshake="skip",
+        allow_no_run_report=True,
+    )
+    assert summary["run_report"] == "UNVERIFIED: no run report"
+    assert "UNVERIFIED: no run report" in capsys.readouterr().err
 
 
 def test_remote_train_script_has_required_guards():

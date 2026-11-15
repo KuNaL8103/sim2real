@@ -192,6 +192,28 @@ def _python_versions(python: Path) -> dict[str, str]:
     return versions
 
 
+def _python_metadata(python: Path) -> dict[str, Any]:
+    code = (
+        "import json,sys\n"
+        "from importlib.metadata import PackageNotFoundError, metadata\n"
+        "out={\n"
+        "  'version': sys.version.split()[0],\n"
+        "  'major_minor': f'{sys.version_info.major}.{sys.version_info.minor}',\n"
+        "  'executable': sys.executable,\n"
+        "  'lerobot_requires_python': None,\n"
+        "}\n"
+        "try:\n"
+        "    out['lerobot_requires_python']=metadata('lerobot').get('Requires-Python')\n"
+        "except PackageNotFoundError:\n"
+        "    pass\n"
+        "print(json.dumps(out,sort_keys=True))\n"
+    )
+    result = subprocess.run([str(python), "-c", code], check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise BundleError(f"could not read Python metadata from {python}: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
 def render_requirements(versions: dict[str, str], python: str | None = None) -> str:
     missing = [name for name in PINNED_PACKAGES if not versions.get(name)]
     if missing:
@@ -297,6 +319,7 @@ def export_bundle(
     output_dir: Path,
     python_executable: Path | None = None,
     versions: dict[str, str] | None = None,
+    python_metadata: dict[str, Any] | None = None,
     commit: str | None = None,
     timestamp: str | None = None,
     allow_dirty: bool = False,
@@ -311,12 +334,16 @@ def export_bundle(
             "git working tree is dirty; commit the code first so the remote clone "
             "and checkpoint metadata can record git_dirty=false"
         )
+    python = python_executable or (ROOT / ".venv-ml/bin/python")
     if versions is None:
-        python = python_executable or (ROOT / ".venv-ml/bin/python")
         if not Path(python).is_file():
             raise BundleError(f"{python}: ML environment not found")
         versions = _python_versions(Path(python))
-    requirements = render_requirements(versions, str(python_executable or "local .venv-ml"))
+    if python_metadata is None:
+        if not Path(python).is_file():
+            raise BundleError(f"{python}: ML environment not found")
+        python_metadata = _python_metadata(Path(python))
+    requirements = render_requirements(versions, str(python))
 
     configs = [load_training_config(path) for path in config_paths]
     dataset_info = _dataset_info(Path(dataset_root))
@@ -326,6 +353,20 @@ def export_bundle(
         payload = staging / PAYLOAD_PREFIX
         payload.mkdir(parents=True)
         (payload / "requirements.txt").write_text(requirements, encoding="utf-8")
+        shutil.copy2(ROOT / "scripts" / "remote_train.sh", payload / "remote_train.sh")
+        repo_bundle = payload / "repo.bundle"
+        bundle_result = subprocess.run(
+            ["git", "-C", str(ROOT), "bundle", "create", str(repo_bundle), "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if bundle_result.returncode != 0:
+            raise BundleError(f"could not create repo.bundle: {bundle_result.stderr.strip()}")
+        print(
+            f"repo.bundle: {repo_bundle.stat().st_size} bytes "
+            f"({repo_bundle.stat().st_size / 1024**2:.2f} MiB)"
+        )
         _copy_dataset(Path(dataset_root), staging)
         config_entries: dict[str, dict] = {}
         for source, config in zip(config_paths, configs, strict=True):
@@ -360,6 +401,12 @@ def export_bundle(
                 "fingerprint": dataset_fingerprint(Path(dataset_root)),
             },
             "configs": config_entries,
+            "python": python_metadata,
+            "repo_bundle": {
+                "path": f"{PAYLOAD_PREFIX}/repo.bundle",
+                "sha256": file_sha256(repo_bundle),
+                "size": repo_bundle.stat().st_size,
+            },
             "requirements": {
                 "path": f"{PAYLOAD_PREFIX}/requirements.txt",
                 "sha256": file_sha256(payload / "requirements.txt"),
