@@ -111,6 +111,7 @@ def verify_checkpoint(
     run_report: Path | None = None,
     dataset_root: Path | None = None,
     handshake: str = "cpu",
+    allow_no_run_report: bool = False,
     server_python: Path | None = None,
     timeout_s: float = 600.0,
     seed: int = 0,
@@ -197,6 +198,15 @@ def verify_checkpoint(
             metadata_sha256=metadata_sha256,
             adapter_sha256=adapter_sha256,
         )
+        run_report_status = "verified"
+    elif allow_no_run_report:
+        run_report_status = "UNVERIFIED: no run report"
+        print("UNVERIFIED: no run report", file=sys.stderr)
+    else:
+        raise VerificationError(
+            "no RUN_REPORT.json supplied; pass --run-report, or explicitly "
+            "opt into --no-run-report to continue with an UNVERIFIED result"
+        )
 
     handshake_used = handshake
     if handshake != "skip":
@@ -244,6 +254,7 @@ def verify_checkpoint(
         "step": metadata.get("step"),
         "adapter_hash": adapter_sha256,
         "metadata_sha256": metadata_sha256,
+        "run_report": run_report_status,
         "handshake": handshake_used,
         "handshake_note": handshake_note,
     }
@@ -254,6 +265,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-report", default=None)
+    parser.add_argument(
+        "--no-run-report",
+        action="store_true",
+        help="continue without a RUN_REPORT.json and print UNVERIFIED: no run report",
+    )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument(
         "--handshake",
@@ -270,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.checkpoint),
             Path(args.config),
             run_report=Path(args.run_report) if args.run_report else None,
+            allow_no_run_report=bool(args.no_run_report),
             dataset_root=Path(args.dataset_root) if args.dataset_root else None,
             handshake=args.handshake,
             server_python=Path(args.server_python) if args.server_python else None,
