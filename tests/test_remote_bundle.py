@@ -187,7 +187,8 @@ def test_bundle_refuses_forbidden_files(tmp_path):
             config_paths=[config],
             output_dir=tmp_path / "bundle",
             versions=_versions(bundle),
-            commit="a" * 40,
+            python_metadata=_python_metadata(),
+            commit=_head(),
             allow_dirty=True,
         )
 
@@ -203,7 +204,8 @@ def test_bundle_refuses_model_weights(tmp_path):
             config_paths=[config],
             output_dir=tmp_path / "bundle",
             versions=_versions(bundle),
-            commit="a" * 40,
+            python_metadata=_python_metadata(),
+            commit=_head(),
             allow_dirty=True,
         )
 
