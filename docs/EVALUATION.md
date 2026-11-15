@@ -1069,3 +1069,26 @@ episode 0; **1.31, 1.79, 2.30, 4.02, 1.59, 1.52** for episode 1; and
 std is 0.018-0.091 rad, while the mean error is 0.027 rad. A five-seed mean is
 still noisy; the pre-registered rule uses it deliberately to reduce this noise,
 but it cannot make a single deterministic sample representative.
+
+## Task 9h GPU gate and branch R (2026-11-15)
+
+The 60 s synthetic matmul gate ran on the local RTX 4050 in `.venv-ml`
+(2,280 matmuls, 60.11 s). It sampled `nvidia-smi` every 2 s (30 samples):
+
+| Quantity | Min | Median | Max |
+| --- | --- | --- | --- |
+| SM clock (MHz) | 210 | **210** | 210 |
+| Power (W) | 4.68 | 7.17 | 7.25 |
+| Temperature (C) | 54 | 56 | 57 |
+
+Throttle reason was **`0x24`** (SW Power Cap + SW Thermal Slowdown) on every
+sample. This fails the health rule (median SM clock >= 1,000 MHz with no power
+cap active), so the session took **branch R**: no local or remote training and
+no teacher-forced/closed-loop evaluation of a new checkpoint. The pre-registered
+rule was not evaluated and was not edited.
+
+The authoritative bundle `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`
+(95,909,403 bytes, sha256 `658df551...afe4e`) passed `--check-only` in a clean
+temp clone at `d7a0c90`: 13 manifest hashes, clean commit, Python 3.12,
+`lerobot Requires-Python >=3.12`, GPU/driver printed, no install/download/
+training. Task 10 remains blocked pending a healthy-GPU overfit result.

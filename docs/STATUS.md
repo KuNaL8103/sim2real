@@ -3,18 +3,45 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=522 failed=0 skipped=12 errors=0 | date=2026-11-15 | base_commit=319103c
-- Last verified ROS test run: passed=535 failed=0 skipped=4 errors=0 | date=2026-11-15 | base_commit=319103c
+- Last verified test run: passed=523 failed=0 skipped=12 errors=0 | date=2026-11-15 | base_commit=a03d008
+- Last verified ROS test run: passed=536 failed=0 skipped=4 errors=0 | date=2026-11-15 | base_commit=a03d008
 - Task 1 status: complete
 
-The 2026-11-15 run used the tree at `319103c` with scikit-learn **absent**
-(removed by an earlier ci_parity `uv sync`), so the core count is **522 passed /
-12 skipped**; with sklearn present the optional cross-check would add one pass
-and remove one skip (the 9f baseline was 512/11). `.venv-ros` was **535/4**,
-`colcon test-result` **7 tests / 0 failures**, and `run_ml_tests.sh` **4 passed
-/ 1 deselected**. `scripts/ci_parity.sh` passed at the end of the session. The
-difference from 9f is explained by the new tests: 6 teacher-forced, 1 verifier
-and 4 remote-preflight tests (plus the status test already present).
+The 2026-11-15 run used the tree at `d7a0c90` plus the Task 9h clean-clone
+test. Both baseline conventions, side by side:
+
+| convention | core ROS-free |
+| --- | --- |
+| scikit-learn **absent** (current `.venv`, after ci_parity) | **523 passed / 12 skipped** |
+| scikit-learn **present** (9f convention) | **524 passed / 11 skipped** (inferred: the optional cross-check adds one pass and removes one skip; not re-run because installing sklearn was not approved) |
+
+`.venv-ros` was **536/4**, `colcon test-result` **7 tests / 0 failures**, and
+`run_ml_tests.sh` **4 passed / 1 deselected**. `scripts/ci_parity.sh` and
+`scripts/ci_parity.sh --clean-clone` both passed. `--clean-clone` reported
+**520 passed / 14 skipped** in a fresh clone with the local pinned assets
+copied (no ML venv, no CLAUDE.md, no data/). The difference from 9f is the new
+teacher-forced, verifier, remote-preflight and clean-clone tests.
+
+## Task 9h GPU gate and branch R status (2026-11-15)
+
+- Both CI jobs for `d7a0c90` are **user-confirmed green** (2026-11-15,
+  Actions tab); the author also observed run `43717234280` with both jobs
+  success. Supporting evidence only.
+- Repo visibility, unauthenticated:
+  `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true git ls-remote
+  https://github.com/KuNaL8103/sim2real.git HEAD` returned
+  `d7a0c90c4077a8f9bf4ffbbe79aa841c1b0f51a5 HEAD`, equal to local HEAD.
+- 60 s synthetic matmul gate: SM clock **210/210/210 MHz** (min/median/max),
+  power **4.68/7.17/7.25 W**, temperature **54/56/57 C**, throttle **`0x24`**
+  (SW Power Cap + SW Thermal Slowdown) on 30/30 samples. **Branch R**: no
+  training, no new verifier accept-path test, no teacher-forced or closed-loop
+  evaluation.
+- The authoritative d7a0c90 bundle passed `--check-only` in a clean temp
+  clone: 13 manifest hashes, clean manifest commit, Python 3.12, `lerobot`
+  Requires-Python `>=3.12`, GPU/driver printed, no install/download/training.
+- `scripts/ci_parity.sh --clean-clone` was added and passed; the flag is
+  covered by a test.
+- Task 10 remains blocked pending a healthy-GPU overfit result.
 
 ## Task 9g cleanup-and-hardening status (2026-11-15)
 
@@ -70,16 +97,18 @@ per-step motion. Details and full per-dimension tables are in
 
 ## Remote bundle
 
-The Task 9f archive is `outputs/remote_bundle/sim2real_remote_b620c91_20261113T143925Z.tar.gz`
-(**95,133,660 bytes, sha256 `967dc109...41b8`**, built from `b620c91`). The
-Task 9g bundle is rebuilt only after the final push, from the final pushed HEAD
-with a clean tree. It contains the full 40-episode `train_v1` dataset, the two
-training configs, pinned `.venv-ml` requirements, `repo.bundle` for offline
-cloning, the payload copy of `remote_train.sh`, Python/`lerobot` Requires-Python
-metadata, and a MANIFEST with every file hash. Its manifest `git_commit` is the
-authoritative commit the remote run must clone; `c3802a5` is superseded and must
-not be used. No model weights or HF cache are included. The final archive size
-and sha256 are printed by the builder and reported in the session close-out.
+The authoritative Task 9g archive is
+`outputs/remote_bundle/sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`:
+**95,909,403 bytes (91.47 MiB)**, sha256
+`658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`. Its
+MANIFEST commit is `d7a0c90c4077a8f9bf4ffbbe79aa841c1b0f51a5`; `c3802a5` is
+superseded and must not be used. The remote checks out the **MANIFEST commit**,
+not the repository HEAD, so later docs-only commits are safe. The archive
+contains the full 40-episode `train_v1` dataset, the two training configs,
+pinned `.venv-ml` requirements, `repo.bundle` (771,044 bytes) for offline
+cloning, the payload copy of `remote_train.sh`, Python/`lerobot`
+Requires-Python metadata, and a MANIFEST with every file hash. No model weights
+or HF cache are included.
 
 ## Pending checks
 
@@ -96,10 +125,9 @@ and sha256 are printed by the builder and reported in the session close-out.
 
 ## GPU finding
 
-The local RTX 4050 Laptop measured **210 MHz SM** under 9e/9f load with
-**SW Power Cap** and **SW Thermal Slowdown** active (4.36-7.35 W, 52-56 C,
-throttle `0x24` on 32/32 samples). On 2026-11-15 idle it read **2130 MHz**
-(P3, 12 W, 54 C) but the same throttle flags were still active; that single idle
-reading does not prove the clock is fixed. Treat the local GPU as degraded:
-short inference diagnostics only; every timing is labelled
-**"throttled, not a performance figure"**. No local training.
+The local RTX 4050 Laptop is degraded. The Task 9h 60 s matmul gate measured
+**210/210/210 MHz** SM (min/median/max), **4.68/7.17/7.25 W**, **54/56/57 C**,
+throttle **`0x24`** on 30/30 samples. Task 9e/9f measured the same 210 MHz
+signature. Treat the local GPU as degraded: short inference diagnostics only;
+every timing is labelled **"throttled, not a performance figure"**. No local
+training.

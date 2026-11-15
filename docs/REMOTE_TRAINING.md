@@ -126,7 +126,7 @@ scans for forbidden files, and writes:
 
 | Content | Detail |
 | --- | --- |
-| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving. The Task 9f archive was **90.73 MiB / 95,133,662 bytes**; Task 9g adds `repo.bundle` (about 5-6 MiB), so expect roughly **96 MiB**. The exporter prints the exact size and sha256 for each build. |
+| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving. The authoritative Task 9g archive is `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`, **95,909,403 bytes (91.47 MiB)**, sha256 `658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`; its payload has 13 files and `repo.bundle` is 771,044 bytes. |
 | `outputs/remote_bundle_payload/configs/training/` | The overfit protocol config and the full `train_v1` config |
 | `outputs/remote_bundle_payload/requirements.txt` | Exact versions read from `.venv-ml`, with `--extra-index-url https://download.pytorch.org/whl/cu126` |
 | `outputs/remote_bundle_payload/repo.bundle` | Git bundle of the exact commit for the offline clone fallback (about 5-6 MiB) |
@@ -160,7 +160,7 @@ The real extracted layout is exactly two top-level entries: `data/` and
 ```bash
 git clone https://github.com/KuNaL8103/sim2real.git sim2real
 cd sim2real
-git checkout <EXACT_COMMIT_FROM_MANIFEST>
+git checkout <EXACT_COMMIT_FROM_MANIFEST>   # d7a0c90 for this archive, not HEAD
 tar -xzf /path/to/sim2real_remote_<commit7>_<UTC>.tar.gz -C .
 
 # Preflight only: no venv, no pip, no download, no training.
@@ -287,9 +287,12 @@ linear, `n_action_steps=10`) is the snippet in `docs/TRAINING.md` section 15.
 The Task 9f runbook once named `c3802a5` as the bundle commit. That was a
 docs-only commit and is **superseded**; the 9f archive that actually exists was
 built from `b620c91` (95,133,660 bytes, sha256 `967dc109...41b8`). The
-authoritative bundle commit is the `git_commit` recorded in the MANIFEST of the
-final Task 9g bundle built from the final pushed HEAD. Do not use `c3802a5` as
-a remote checkout.
+authoritative archive is `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`
+(95,909,403 bytes, sha256 `658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`),
+whose MANIFEST commit is `d7a0c90c4077a8f9bf4ffbbe79aa841c1b0f51a5`. **The
+remote checks out the MANIFEST commit, not the repository HEAD**: later
+docs-only commits after `d7a0c90` are safe and do not invalidate this bundle.
+Do not use `c3802a5` as a remote checkout.
 
 ### Remote GPU decision rule
 

@@ -831,3 +831,21 @@ the training data loader and action decoding, and a new observation/action
 contract (plus new evaluation checks). It also changes the meaning of the
 gripper dimension and the recorded oracle. Nothing was implemented or changed in
 Task 9g; this is recorded as a hypothesis for a later decision.
+
+## 19. Task 9h status: GPU gate failed, branch R (2026-11-15)
+
+The 60 s synthetic load held the local RTX 4050 at **210 MHz** SM (min/median/
+max 210/210/210), power **4.68/7.17/7.25 W**, temperature **54/56/57 C**, and
+throttle `0x24` (SW Power Cap + SW Thermal Slowdown) on all 30 samples. The
+health gate requires a median >= 1,000 MHz with no power cap under load, so
+**branch R** applies: no overfit training, no new verifier accept-path test, no
+teacher-forced or closed-loop evaluation, and no change to the pre-registered
+rule in section 17.
+
+The d7a0c90 bundle was verified with `--check-only` in a clean temp clone:
+13 manifest hashes, clean manifest commit, Python 3.12, `lerobot`
+Requires-Python `>=3.12`, GPU/driver printed, no install or download. The remote
+sequence remains the one in `docs/REMOTE_TRAINING.md`; the remote checks out the
+MANIFEST commit (`d7a0c90` for this archive), not later docs-only HEAD commits.
+Task 10 cannot start until a healthy GPU produces and locally verifies the
+pre-registered result.
