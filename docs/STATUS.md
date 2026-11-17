@@ -43,6 +43,10 @@ and never zeros or the last chunk. A rejected chunk does not latch; `ESTOP`
 does. A software e-stop is **not** safety-rated, and mock hardware is **not**
 physical safety.
 
+Both CI jobs for the pre-Task-11 push at `4a92cbe` are **user-confirmed green**
+(2026-11-17, Actions tab; supporting evidence only). The Task 11 push
+(`2519aad`) still needs the user's Actions-tab confirmation.
+
 **Verified counts in this session (sklearn absent in the core `.venv`):**
 
 | suite | result |
