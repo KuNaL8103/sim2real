@@ -320,14 +320,16 @@ def test_real_client_hang_times_out_and_is_terminal(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_POLICY_SERVER_MODE", "hang")
     worker = AsyncInferenceWorker(
         # The client's hello timeout and the worker's call timeout are separate
-        # concerns; give the tiny fixture server 1 s to import and answer hello.
-        _real_client_factory(_checkpoint(tmp_path), timeout_s=1.0),
+        # concerns. Do not measure the process/import startup here: wait for the
+        # explicit READY state first, then exercise the 0.3 s call timeout.
+        _real_client_factory(_checkpoint(tmp_path), timeout_s=5.0, startup_timeout_s=10.0),
         call_timeout_s=0.3,
         max_restarts=0,
         restart_backoff_s=0.0,
     )
     worker.start()
     try:
+        assert _wait_for(lambda: worker.state == READY, timeout_s=10.0)
         worker.submit(_observation())
         assert _wait_for(lambda: worker.state == FAILED, timeout_s=10.0)
         assert worker.stats()["timed_out_calls"] >= 1
