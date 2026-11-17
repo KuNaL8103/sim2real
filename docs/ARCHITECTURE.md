@@ -435,11 +435,19 @@ Design (smallest change that meets the requirements):
    only for `step()` + `capture_snapshot()`. `MuJoCoBackend.capture_snapshot()`
    copies `MjData` with `mj_copyData`; the fake backend copies its observation
    and object poses. The lock is released before publishing or rendering.
-3. **One render thread, asynchronous submit.** `RenderCoordinator` owns a single
-   worker thread because MuJoCo's EGL context is thread-bound. A camera callback
-   submits a snapshot and returns immediately; the worker renders and publishes.
-   If a render is already in flight the submission is rejected and counted as
-   `skipped_busy`. There is no queue.
+3. **One render thread, asynchronous submit, fair camera pairs.**
+   `RenderCoordinator` owns a single worker thread because MuJoCo's EGL context
+   is thread-bound. A camera callback submits a snapshot and returns
+   immediately; the worker renders and publishes. If a render is already in
+   flight the submission is rejected and counted as `skipped_busy`. There is no
+   general queue. `CameraPairScheduler` fixes the starvation introduced by the
+   first async version: it keeps one pending snapshot, submits at most one
+   camera per slot, retries the same camera when the coordinator is busy, and
+   advances only after every camera in the pair has been submitted. Both
+   cameras therefore share the snapshot stamp (the VLA node's 0.05 s skew
+   contract), while the first camera alternates round-robin between pairs so a
+   slow renderer cannot serve only overhead. Per-camera `published` and
+   `skipped_busy` counters are printed at shutdown.
 4. **Stamp/TF ordering.** The control tick publishes `/joint_states` and dynamic
    `/tf`, then exposes the snapshot to the camera group. A camera frame uses the
    snapshot's stamp, and the colour/depth/`CameraInfo` triplet shares it. A tf2
@@ -452,8 +460,9 @@ Design (smallest change that meets the requirements):
 6. **Optional `render_only_when_subscribed`** (default `false`) skips a camera
    whose three publishers have no subscribers and counts the skip.
 7. **Counters at shutdown:** `published`, `skipped_busy`, `skipped_reset`,
-   `failed`, `skipped_unsubscribed` are printed directly (not via rosout, which
-   may already be invalid on SIGINT). The async submit was added after CI showed
+   `skipped_stale`, `failed`, `skipped_unsubscribed`, plus
+   `published_by_camera` and `skipped_busy_by_camera`, are printed directly
+   (not via rosout, which may already be invalid on SIGINT). The async submit was added after CI showed
    that a blocking camera callback could still starve control on a smaller
    runner; it is the only path used by the ROS timer. The rate test waits for a
    live subscription and measures a 3 s window, excluding discovery startup. It
@@ -1700,6 +1709,7 @@ Apache-2.0 LICENSE before copying.
 | 63 | 2026-11-07 | Decision C: the real path uses LeRobot's processors and dataset stats; `training/normalization.py` is fake/test-only | One normalization path per tensor. The parity test measured a maximum difference of 8.0e-08 versus `NormalizerProcessorStep`; applying both would normalize twice |
 | 64 | 2026-11-07 | LoRA targets are resolved against the loaded model and passed to PEFT as exact module names | PEFT 0.21.2 turns a list into a set and loses regex matching; the verified 37-module scope is 1,485,312 trainable parameters (0.329%) |
 | 65 | 2026-11-07 | torch 2.11.0+cu126 is the verified GPU wheel for driver 551.76 | A scratch-venv 2048x2048 CUDA matmul passed (sum 141957.375); cu124 has no CPython 3.12 torch satisfying `>=2.7,<2.12`; cu128 was not tested |
+| 70 | 2026-11-17 | Camera rendering uses a same-snapshot pair scheduler with round-robin first camera; state/TF stay independent of rendering | Since `51fc817` the single-slot coordinator always submitted overhead first, starving wrist under llvmpipe (pre-fix: overhead 3.25 Hz, wrist color/depth/info 0; `skipped_busy` 600 in 20 s). The pair scheduler serves both cameras from one stamp (0.0 s skew measured over 100 pairs) and gives 67/67 overhead/wrist renders in the live check; 20 Hz control unchanged (20.00 Hz in 3/3 isolated rate runs) |
 | 66 | 2026-11-17 | `/vla/raw_action` uses `time_from_start = k*dt` (k=0 is the first action) and `header.stamp` = observation stamp | Matches the evaluation runner's default linear execution: action k is applied at observation time + k*dt, with linear interpolation between consecutive actions. A JointTrajectory controller conventionally uses `(k+1)*dt`; Task 11 owns the retiming decision, and the raw chunk keeps the stamp plus per-point offsets so it can be retimed without information loss |
 | 67 | 2026-11-17 | Inference uses a single-slot, latest-observation-wins mailbox and one worker thread | The measured throttled call is ~1.33-1.39 s versus a 0.1 s policy period; an unbounded queue would publish obsolete actions. Callbacks only copy data, so the executor is never blocked |
 | 68 | 2026-11-17 | No torch in the ROS process; the model lives behind the verified policy-server protocol | Keeps ROS and ML ABI/install constraints separate and makes the node testable with fake servers. The node asserts `torch` is absent from `sys.modules` |

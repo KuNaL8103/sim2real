@@ -82,7 +82,7 @@ from sim2real.sim.qos import (
 from sim2real.sim.qos import (
     QosSpec,
 )
-from sim2real.sim.rendering import RenderCoordinator
+from sim2real.sim.rendering import CameraPairScheduler, RenderCoordinator
 from sim2real.sim.reset_handler import reset_environment
 from sim2real.sim.ros_names import camera_topics
 
@@ -201,6 +201,8 @@ class SimNode(Node):
         self._snapshot_lock = threading.Lock()
         self._latest_snapshot: RenderSnapshot | None = None
         self._render_coordinator = RenderCoordinator(self.backend)
+        self._camera_scheduler = CameraPairScheduler(contracts.CAMERAS)
+        self._camera_schedule_lock = threading.Lock()
         self._skipped_unsubscribed = 0
 
         self._joint_publisher = self.create_publisher(
@@ -322,15 +324,26 @@ class SimNode(Node):
             snapshot = self._latest_snapshot
         if snapshot is None:
             return
-        for camera in contracts.CAMERAS:
+        coordinator = self._render_coordinator
+        if snapshot.generation != coordinator.generation:
+            # The reset quiesce invalidated the pending pair. Start from the
+            # next fresh snapshot instead of retrying a stale one forever.
+            with self._camera_schedule_lock:
+                self._camera_scheduler.clear()
+            return
+
+        def submit(camera: str, pending: RenderSnapshot) -> bool:
             if self._render_only_when_subscribed and not self._camera_has_subscribers(camera):
                 self._skipped_unsubscribed += 1
-                continue
-            self._render_coordinator.submit(
+                return True
+            return coordinator.submit(
                 camera,
-                snapshot,
+                pending,
                 lambda frame, cam=camera: self._publish_camera(cam, frame),
             )
+
+        with self._camera_schedule_lock:
+            self._camera_scheduler.next(snapshot, submit)
 
     def _publish_camera(self, camera: str, frame: Any) -> None:
         info = self.backend.get_camera_info(camera)
@@ -397,6 +410,8 @@ class SimNode(Node):
         # for the in-flight render and invalidates every older snapshot.
         with self._backend_lock:
             self._render_coordinator.begin_reset()
+            with self._camera_schedule_lock:
+                self._camera_scheduler.clear()
             try:
                 with self._snapshot_lock:
                     self._latest_snapshot = None
@@ -439,7 +454,9 @@ class SimNode(Node):
             "render stats: "
             f"published={stats['published']} skipped_busy={stats['skipped_busy']} "
             f"skipped_reset={stats['skipped_reset']} skipped_stale={stats['skipped_stale']} "
-            f"failed={stats['failed']} skipped_unsubscribed={self._skipped_unsubscribed}",
+            f"failed={stats['failed']} skipped_unsubscribed={self._skipped_unsubscribed} "
+            f"published_by_camera={stats['published_by_camera']} "
+            f"skipped_busy_by_camera={stats['skipped_busy_by_camera']}",
             flush=True,
         )
         try:

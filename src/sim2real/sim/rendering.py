@@ -20,6 +20,74 @@ from sim2real.sim.backend import CameraFrame, RenderSnapshot, SimBackend
 FrameCallback = Callable[[CameraFrame], None]
 
 
+def round_robin_order(cameras: tuple[str, ...], tick: int) -> tuple[str, ...]:
+    """Return ``cameras`` starting at ``tick % len(cameras)``.
+
+    The order is stable and deterministic, so a slow renderer that can only
+    serve one camera per tick still alternates which camera gets the first slot.
+    """
+    if not cameras:
+        return ()
+    offset = int(tick) % len(cameras)
+    return tuple(cameras[offset:]) + tuple(cameras[:offset])
+
+
+class CameraPairScheduler:
+    """Serve every camera from one snapshot before advancing to a newer one.
+
+    The render coordinator has one slot. If the camera tick submits both cameras
+    eagerly, the first in the list can permanently starve the rest. This
+    scheduler keeps a pending snapshot and submits at most one camera per slot,
+    retrying the same camera when the coordinator is busy. The pair is complete
+    only after every camera has been submitted, so all cameras in a pair share
+    the snapshot's stamp. The first camera alternates round-robin between pairs.
+    """
+
+    def __init__(self, cameras: tuple[str, ...]) -> None:
+        if not cameras:
+            raise ValueError("at least one camera is required")
+        self._cameras = tuple(cameras)
+        self._tick = 0
+        self._snapshot: RenderSnapshot | None = None
+        self._order: tuple[str, ...] = ()
+        self._index = 0
+
+    @property
+    def pending_snapshot(self) -> RenderSnapshot | None:
+        return self._snapshot
+
+    def clear(self) -> None:
+        """Drop the pending pair (used by the reset quiesce)."""
+        self._snapshot = None
+        self._order = ()
+        self._index = 0
+
+    def next(
+        self, latest_snapshot: RenderSnapshot, submit: Callable[[str, RenderSnapshot], bool]
+    ) -> int:
+        """Try to submit pending cameras; return how many were accepted.
+
+        ``submit`` returns True when the coordinator accepted the render. On
+        False (busy, stale, or reset) the same camera is retried on the next
+        call, so it cannot be skipped permanently.
+        """
+        if self._snapshot is None:
+            self._snapshot = latest_snapshot
+            self._order = round_robin_order(self._cameras, self._tick)
+            self._tick += 1
+            self._index = 0
+        submitted = 0
+        while self._index < len(self._order):
+            camera = self._order[self._index]
+            if not submit(camera, self._snapshot):
+                break
+            self._index += 1
+            submitted += 1
+        if self._index >= len(self._order):
+            self.clear()
+        return submitted
+
+
 class RenderCoordinator:
     def __init__(self, backend: SimBackend) -> None:
         self._backend = backend
@@ -36,6 +104,8 @@ class RenderCoordinator:
         self.skipped_reset = 0
         self.skipped_stale = 0
         self.failed = 0
+        self.published_by_camera: dict[str, int] = {}
+        self.skipped_busy_by_camera: dict[str, int] = {}
         self._thread = threading.Thread(target=self._worker, name="sim2real-render", daemon=True)
         self._thread.start()
 
@@ -68,6 +138,8 @@ class RenderCoordinator:
                 "skipped_reset": self.skipped_reset,
                 "skipped_stale": self.skipped_stale,
                 "failed": self.failed,
+                "published_by_camera": dict(self.published_by_camera),
+                "skipped_busy_by_camera": dict(self.skipped_busy_by_camera),
             }
 
     def submit(self, camera: str, snapshot: RenderSnapshot, on_frame: FrameCallback) -> bool:
@@ -81,6 +153,7 @@ class RenderCoordinator:
                 return False
             if self._busy:
                 self.skipped_busy += 1
+                self.skipped_busy_by_camera[camera] = self.skipped_busy_by_camera.get(camera, 0) + 1
                 return False
             self._busy = True
             self._request = (camera, snapshot, on_frame)
@@ -100,6 +173,7 @@ class RenderCoordinator:
                 return None
             if self._busy:
                 self.skipped_busy += 1
+                self.skipped_busy_by_camera[camera] = self.skipped_busy_by_camera.get(camera, 0) + 1
                 return None
             self._busy = True
             self._request = (camera, snapshot, None)
@@ -121,6 +195,7 @@ class RenderCoordinator:
             raise error
         with self._condition:
             self.published += 1
+            self.published_by_camera[camera] = self.published_by_camera.get(camera, 0) + 1
         return frame
 
     def _worker(self) -> None:
@@ -162,6 +237,7 @@ class RenderCoordinator:
             else:
                 with self._condition:
                     self.published += 1
+                    self.published_by_camera[camera] = self.published_by_camera.get(camera, 0) + 1
             finally:
                 with self._condition:
                     self._request = None
