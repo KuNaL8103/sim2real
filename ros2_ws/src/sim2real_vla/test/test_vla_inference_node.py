@@ -276,6 +276,11 @@ class TestVlaInferenceEndToEnd(unittest.TestCase):
         self.assertGreaterEqual(latest["counters"]["chunks_published"], 1)
         self.assertFalse(latest["depth_used"])
         self.assertEqual(latest["policy_backend"], "fake")
+        self.assertIsNotNone(latest["time_to_ready_s"])
+        self.assertGreaterEqual(latest["latency"]["samples"], 1)
+        self.assertGreaterEqual(latest["published_future_fraction"]["samples"], 1)
+        self.assertGreaterEqual(latest["last_published_future_fraction"], 0.0)
+        self.assertLessEqual(latest["last_published_future_fraction"], 1.0)
 
     def test_missing_instruction_publishes_nothing(self) -> None:
         stamp_ns = 7_000_000_000

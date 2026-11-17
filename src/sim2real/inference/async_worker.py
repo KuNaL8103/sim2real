@@ -113,6 +113,8 @@ class AsyncInferenceWorker:
         self._in_flight: int | None = None
         self._failures_since_success = 0
         self._terminal = False
+        self._started_ns: int | None = None
+        self._time_to_ready_s: float | None = None
         self._counters = {
             "submitted": 0,
             "replaced": 0,
@@ -163,6 +165,7 @@ class AsyncInferenceWorker:
                     "request_id": self._request_counter,
                     "in_flight": self._in_flight,
                     "mailbox_waiting": 0 if self._mailbox is None else 1,
+                    "time_to_ready_s": self._time_to_ready_s,
                 }
             )
             return data
@@ -187,6 +190,7 @@ class AsyncInferenceWorker:
         with self._lock:
             if self._thread is not None:
                 return
+            self._started_ns = time.monotonic_ns()
             self._thread = threading.Thread(
                 target=self._run, name="vla_inference_worker", daemon=True
             )
@@ -309,6 +313,10 @@ class AsyncInferenceWorker:
                 # Do not clear the failure budget here: a policy that starts but
                 # fails on every act must still reach FAILED. Only a successful
                 # act resets it.
+                if self._time_to_ready_s is None and self._started_ns is not None:
+                    self._time_to_ready_s = (
+                        time.monotonic_ns() - self._started_ns
+                    ) / 1_000_000_000.0
                 self._set_state(READY, "policy backend ready")
                 return True
             except Exception as exc:  # noqa: BLE001 - start failure is reported, not fatal

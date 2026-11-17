@@ -30,6 +30,7 @@ from sim2real.inference.config import (
     load_inference_config,
 )
 from sim2real.inference.fake_policy import FakeChunkPolicy, RawChunk
+from sim2real.inference.metrics import LatencyTracker, future_fraction, summarize
 from sim2real.inference.observation import (
     ImageInput,
     JointStateInput,
@@ -61,12 +62,14 @@ __all__ = [
     "InferenceRequest",
     "InferenceResult",
     "JointStateInput",
+    "LatencyTracker",
     "ObservationAssembler",
     "RawChunk",
     "ServerObservation",
     "TrajectoryChunk",
     "ValidationError",
     "finger_out_of_range",
+    "future_fraction",
     "load_inference_config",
     "make_chunk",
     "make_fake_policy_factory",
@@ -75,5 +78,6 @@ __all__ = [
     "resolve_repo_root",
     "resolve_server_python",
     "select_actions",
+    "summarize",
     "trim_for_latency",
 ]

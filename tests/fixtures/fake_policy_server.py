@@ -14,8 +14,6 @@ import os
 import sys
 import time
 
-import numpy as np
-
 from sim2real.evaluation.policy_protocol import (
     PROTOCOL_VERSION,
     read_packet,
@@ -26,7 +24,11 @@ MODE = os.environ.get("FAKE_POLICY_SERVER_MODE", "ok")
 DELAY = float(os.environ.get("FAKE_POLICY_SERVER_DELAY", "2.0"))
 
 
-def _actions() -> np.ndarray:
+def _actions():
+    # Import lazily: the hang/crash/startup modes must not pay numpy's import
+    # cost inside the client's short hello timeout.
+    import numpy as np
+
     return (np.arange(4 * 8, dtype=np.float32).reshape(4, 8) * 0.1 + 1.0).astype(np.float32)
 
 
@@ -81,7 +83,7 @@ def main() -> int:
             time.sleep(DELAY)
         actions = _actions()
         if MODE == "bad-nan":
-            actions[0, 0] = np.nan
+            actions[0, 0] = float("nan")
         write_packet(
             out,
             {
@@ -90,7 +92,7 @@ def main() -> int:
                 "dtype": "float32",
                 "step_period_s": 0.1,
             },
-            [np.ascontiguousarray(actions).tobytes()],
+            [actions.tobytes()],
         )
 
 

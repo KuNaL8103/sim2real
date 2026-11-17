@@ -16,6 +16,7 @@ import json
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -57,12 +58,15 @@ from sim2real.inference import (  # noqa: E402
     InferenceConfig,
     InferenceConfigError,
     JointStateInput,
+    LatencyTracker,
     ObservationAssembler,
     ValidationError,
     finger_out_of_range,
+    future_fraction,
     load_inference_config,
     make_chunk,
     make_policy_factory,
+    summarize,
     trim_for_latency,
 )
 from sim2real.inference.async_worker import (  # noqa: E402
@@ -171,6 +175,11 @@ class VlaInferenceNode(Node):
         self._last_chunk_points = 0
         self._last_publish_stamp_ns: int | None = None
         self._last_finger_out_of_range = False
+        self._latency_tracker = LatencyTracker(max_samples=500)
+        self._published_future_fractions: deque[float] = deque(maxlen=500)
+        self._last_observation_elapsed_s: float | None = None
+        self._last_selected_future_fraction: float | None = None
+        self._last_published_future_fraction: float | None = None
         self._counters = {
             "observations_submitted": 0,
             "chunks_published": 0,
@@ -403,9 +412,17 @@ class VlaInferenceNode(Node):
                 self._record_rejection("CHUNK_INVALID", str(exc))
             return
 
-        outside = finger_out_of_range(chunk)
+        elapsed_ns = int(result.received_ns) - int(result.observation_received_ns)
+        selected_future, _selected_total, selected_fraction = future_fraction(
+            chunk.time_from_start_ns, elapsed_ns
+        )
+        with self._lock:
+            self._latency_tracker.add(float(result.latency_s))
+            self._last_observation_elapsed_s = elapsed_ns / 1_000_000_000.0
+            self._last_selected_future_fraction = selected_fraction
+
         if self._config.latency_compensation:
-            trimmed = trim_for_latency(chunk, result.equivalent_now_ns())
+            trimmed = trim_for_latency(chunk, int(result.observation_stamp_ns) + elapsed_ns)
             if trimmed is None:
                 with self._lock:
                     self._counters["chunks_dropped_stale"] += 1
@@ -417,6 +434,8 @@ class VlaInferenceNode(Node):
                 return
             chunk = trimmed
 
+        _future, _total, published_fraction = future_fraction(chunk.time_from_start_ns, elapsed_ns)
+        outside = finger_out_of_range(chunk)
         message = self._to_message(chunk)
         with self._lock:
             if self._state in (FAILED, STOPPED):
@@ -426,6 +445,8 @@ class VlaInferenceNode(Node):
             self._last_chunk_points = chunk.point_count
             self._last_publish_stamp_ns = int(chunk.stamp_ns)
             self._last_finger_out_of_range = bool(outside)
+            self._last_published_future_fraction = published_fraction
+            self._published_future_fractions.append(published_fraction)
             self._last_error = (
                 f"GRIPPER_OUT_OF_RANGE: rows {list(outside)} passed through raw"
                 if outside
@@ -530,6 +551,11 @@ class VlaInferenceNode(Node):
                 "counters": dict(self._counters),
                 "rejected": dict(self._rejected),
                 "last_latency_s": self._last_latency_s,
+                "latency": self._latency_tracker.summary(),
+                "last_observation_elapsed_s": self._last_observation_elapsed_s,
+                "last_selected_future_fraction": self._last_selected_future_fraction,
+                "last_published_future_fraction": self._last_published_future_fraction,
+                "published_future_fraction": summarize(list(self._published_future_fractions)),
                 "last_error": self._last_error,
                 "last_chunk_points": self._last_chunk_points,
                 "last_publish_stamp_ns": self._last_publish_stamp_ns,
@@ -542,7 +568,11 @@ class VlaInferenceNode(Node):
             }
         worker = getattr(self, "_worker", None)
         if worker is not None:
-            payload["worker"] = worker.stats()
+            stats = worker.stats()
+            payload["worker"] = stats
+            payload["time_to_ready_s"] = stats.get("time_to_ready_s")
+        else:
+            payload["time_to_ready_s"] = None
         return payload
 
     def _on_status_timer(self) -> None:

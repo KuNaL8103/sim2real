@@ -170,6 +170,28 @@ def test_slow_call_does_not_block_submit_and_reports_latency():
         worker.shutdown()
 
 
+def test_worker_reports_time_to_ready():
+    def factory():
+        time.sleep(0.05)
+        return FakeChunkPolicy(chunk_size=4)
+
+    worker = AsyncInferenceWorker(
+        factory,
+        call_timeout_s=2.0,
+        max_restarts=0,
+        restart_backoff_s=0.0,
+    )
+    worker.start()
+    try:
+        assert _wait_for(lambda: worker.state == READY)
+        value = worker.stats()["time_to_ready_s"]
+        assert value is not None
+        assert value >= 0.05
+        assert value < 2.0
+    finally:
+        worker.shutdown()
+
+
 def test_policy_failures_are_bounded_and_terminal():
     results = []
     policy = FakeChunkPolicy(chunk_size=4, failure="raise")
@@ -297,7 +319,9 @@ def test_real_client_startup_timeout_is_bounded(tmp_path, monkeypatch):
 def test_real_client_hang_times_out_and_is_terminal(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_POLICY_SERVER_MODE", "hang")
     worker = AsyncInferenceWorker(
-        _real_client_factory(_checkpoint(tmp_path), timeout_s=0.3),
+        # The client's hello timeout and the worker's call timeout are separate
+        # concerns; give the tiny fixture server 1 s to import and answer hello.
+        _real_client_factory(_checkpoint(tmp_path), timeout_s=1.0),
         call_timeout_s=0.3,
         max_restarts=0,
         restart_backoff_s=0.0,
