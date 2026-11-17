@@ -24,6 +24,8 @@ setup(
         (os.path.join("share", package_name, "config"), inference_configs),
     ],
     install_requires=["setuptools"],
+    tests_require=["pytest"],
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="Kunal",
     maintainer_email="kunaldabbe2003@gmail.com",
