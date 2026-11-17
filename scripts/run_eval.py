@@ -79,6 +79,8 @@ def _make_policy(args: argparse.Namespace, backend_args: tuple[str, str]):
             args.checkpoint,
             fake_model=args.fake_policy_model,
             repo_root=ROOT,
+            timeout_s=float(getattr(args, "policy_timeout", 30.0)),
+            startup_timeout_s=float(getattr(args, "policy_startup_timeout", 180.0)),
         )
     raise SystemExit(f"unknown policy {args.policy!r}")
 
@@ -130,6 +132,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--filter-config", default=None)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--fake-policy-model", action="store_true")
+    parser.add_argument(
+        "--policy-timeout",
+        type=float,
+        default=30.0,
+        help="seconds allowed for one policy call after the server is ready (default 30)",
+    )
+    parser.add_argument(
+        "--policy-startup-timeout",
+        type=float,
+        default=180.0,
+        help=(
+            "seconds allowed for the server's first model load / ready handshake "
+            "(default 180; cold start is not a policy step, and a 1,000-step SmolVLA "
+            "load was measured at 39.8 s)"
+        ),
+    )
     parser.add_argument("--noise-sigma", type=float, default=0.01)
     parser.add_argument("--dropout", type=float, default=0.05)
     parser.add_argument("--correlation-gain", type=float, default=1.0)

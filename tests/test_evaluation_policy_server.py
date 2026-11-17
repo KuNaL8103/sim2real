@@ -68,6 +68,73 @@ def _assert_handshake_failure(checkpoint: Path, **kwargs):
     policy.close()
 
 
+def test_cold_start_timeout_is_separate_from_call_timeout(tmp_path):
+    """A slow model load must not be charged against the per-call timeout.
+
+    Regression for the Task 9i POLICY_ERROR: the real server sends ``hello``
+    immediately, then loads the base model, then sends ``ready``. On a slow
+    machine that load exceeded the 30 s per-call timeout and every episode
+    failed before its first control step.
+    """
+    checkpoint = _checkpoint(tmp_path)
+    slow = tmp_path / "slow_ready.py"
+    delay = 1.5
+    slow.write_text(
+        "import sys, time\n"
+        "from sim2real.evaluation.policy_protocol import (\n"
+        "    PROTOCOL_VERSION, read_packet, write_packet)\n"
+        "out = sys.stdout.buffer\n"
+        "hello, _ = read_packet(sys.stdin.buffer)\n"
+        "write_packet(out, {'type': 'hello', 'ok': True, 'protocol': PROTOCOL_VERSION,\n"
+        "    'checkpoint_hash': hello.get('checkpoint_hash'), 'state_dim': 8,\n"
+        "    'action_dim': 8, 'chunk_size': 4, 'fps': 10.0,\n"
+        "    'image_keys': ['overhead', 'wrist']})\n"
+        f"time.sleep({delay})\n"
+        "write_packet(out, {'type': 'ready', 'ok': True, 'sample_seed': None})\n"
+        "while True:\n"
+        "    header, _ = read_packet(sys.stdin.buffer)\n"
+        "    if header.get('type') == 'reset':\n"
+        "        write_packet(out, {'type': 'reset', 'ok': True,\n"
+        "            'sample_seed': header.get('sample_seed')})\n"
+        "    elif header.get('type') == 'close':\n"
+        "        break\n"
+        "    else:\n"
+        "        write_packet(out, {'type': 'error', 'message': 'unexpected'})\n"
+        "        break\n",
+        encoding="utf-8",
+    )
+
+    # Inherited per-call timeout (0.4 s) is too short for the 1.5 s load.
+    strict = CheckpointPolicy(
+        checkpoint,
+        server_python=sys.executable,
+        server_script=slow,
+        repo_root=ROOT,
+        timeout_s=0.4,
+    )
+    try:
+        with pytest.raises(PolicyError, match="timed out"):
+            strict.reset("pick", 20000)
+    finally:
+        strict.close()
+
+    # A separate startup timeout lets the same load finish; calls stay strict.
+    patient = CheckpointPolicy(
+        checkpoint,
+        server_python=sys.executable,
+        server_script=slow,
+        repo_root=ROOT,
+        timeout_s=0.4,
+        startup_timeout_s=10.0,
+    )
+    try:
+        patient.reset("pick", 20000)
+        assert patient.info["sample_seed"] == 20000
+        assert patient.info["server_protocol"] == PROTOCOL_VERSION
+    finally:
+        patient.close()
+
+
 def test_fake_model_handshake_and_chunk(tmp_path):
     policy = CheckpointPolicy(
         _checkpoint(tmp_path),

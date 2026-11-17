@@ -384,6 +384,7 @@ class CheckpointPolicy:
         server_script: str | Path | None = None,
         repo_root: str | Path | None = None,
         timeout_s: float = 30.0,
+        startup_timeout_s: float | None = None,
         fake_model: bool = False,
         deterministic_sampling: bool = True,
     ) -> None:
@@ -398,6 +399,12 @@ class CheckpointPolicy:
         self._server_python = server_python or _default_policy_python(root)
         self._server_script = Path(server_script or (root / "scripts" / "policy_server.py"))
         self._timeout_s = float(timeout_s)
+        # Cold start (torch import + base model load) is not a policy step: it can
+        # exceed the per-call timeout on a slow or throttled machine. ``None`` keeps
+        # the historical behaviour (one timeout for everything).
+        self._startup_timeout_s = (
+            self._timeout_s if startup_timeout_s is None else float(startup_timeout_s)
+        )
         self._fake_model = bool(fake_model)
         self._deterministic_sampling = bool(deterministic_sampling)
         self._process: subprocess.Popen[bytes] | None = None
@@ -520,7 +527,7 @@ class CheckpointPolicy:
                 "image_keys": list(self._image_keys),
             }
         )
-        ready, _ = self._recv()
+        ready, _ = self._recv(self._startup_timeout_s)
         if ready.get("type") == "error":
             raise PolicyError(f"policy server model load failed: {ready.get('message')}")
         if ready.get("type") != "ready":
