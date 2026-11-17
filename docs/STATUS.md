@@ -3,8 +3,8 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=534 failed=0 skipped=13 errors=0 | date=2026-11-17 | base_commit=3ddf112
-- Last verified ROS test run: passed=547 failed=0 skipped=5 errors=0 | date=2026-11-17 | base_commit=3ddf112
+- Last verified test run: passed=601 failed=0 skipped=19 errors=0 | date=2026-11-17 | base_commit=5555ec3
+- Last verified ROS test run: passed=619 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=5555ec3
 - Task 1 status: complete
 
 The 2026-11-17 run used the Task 9i tree at `3ddf112`. Both baseline
@@ -21,6 +21,100 @@ conventions, side by side:
 passed / 1 deselected**. `scripts/ci_parity.sh --clean-clone` passed at
 `3ddf112` with **531 passed / 16 skipped** (one extra skip: no `.venv-ml`, so
 the real-pin test skips). `.venv-ml` was not rebuilt; see the deviations below.
+
+## Task 10 status: ROS 2 VLA inference node (2026-11-17)
+
+Implemented `vla_inference_node` (`sim2real_vla`) plus the ROS-free core in
+`src/sim2real/inference/`: observation assembly/validation, a single-slot
+latest-observation-wins async worker, chunk conversion, latency trimming,
+strict config, fake policy, and the real `CheckpointPolicy` client path. The
+node never imports torch; the model stays behind `scripts/policy_server.py`.
+`/vla/status` is an additive `std_msgs/msg/String` contract. The launch default
+is `policy_backend:=fake`; nothing in this node connects to a controller.
+
+**Measured results in this session (all local unless stated):**
+
+| suite | result |
+| --- | --- |
+| core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` | **601 passed / 0 failed / 19 skipped / 0 errors** |
+| `.venv-ros` pytest (sourced ROS + built interfaces) | **619 passed / 0 failed / 6 skipped / 0 errors** |
+| `colcon test --packages-select sim2real_vla` | **Ran 6 tests, OK** |
+| `colcon test-result --all` | **7 tests / 0 failures / 0 errors / 0 skipped** (the 6 `sim2real_vla` unittest cases are not emitted as xunit; the 7 are `sim2real_msgs`) |
+| `scripts/run_ml_tests.sh` | **4 passed / 1 deselected** |
+| `scripts/ci_parity.sh` | **599 passed / 21 skipped** |
+| `scripts/ci_parity.sh --clean-clone` at `5555ec3` | **598 passed / 22 skipped** (extra `.venv-ml`-absent skips) |
+
+Counts moved from the 9i baseline (534/13 core, 547/5 ROS) by the new tests.
+The dataset-frame parity test is **skipped honestly**: the checked-out
+`data/lerobot/train_v1` copy has metadata only, no decoded PNG frames. A skipped
+test is not a pass.
+
+**Live fake-backend graph check.** `sim_node` (MuJoCo headless, llvmpipe) plus
+`vla_inference_node policy_backend:=fake` and a one-off instruction produced
+`/vla/raw_action` with `frame_id=""`, joint names
+`panda_joint1..7,panda_finger_joint1`, 9 points (latency trimming dropped the
+first), and `time_from_start` 0.1-0.9 s relative to the observation stamp.
+`/vla/status` reported `READY`, 93 published chunks, zero failures/restarts,
+and the fake call latency ~0.0001 s. **Pre-existing issue found:** under
+MuJoCo+llvmpipe, `sim_node`'s single-slot render coordinator always starts with
+overhead, so `/camera/wrist/color/image_raw` received **0** messages (overhead
+~4 Hz; render stats `published=1212 skipped_busy=6600`). The live check fed the
+same overhead frame to the wrist topic with an identical stamp to exercise the
+node's real sync path. This is a sim_node scheduling defect, not a Task 10
+claim; it is an open item.
+
+**Optional real-checkpoint smoke (throttled, not a performance figure).**
+`checkpoint-00001000` exists and passed
+`scripts/verify_remote_checkpoint.py --handshake skip` with
+`UNVERIFIED: bundle provenance not checked` and `overrides: []` in
+`RUN_REPORT.json`; **no `outputs/remote/overfit_remote/as_used/` copy exists**.
+The real node ran for 120 s with `latency_compensation:=false` (so raw chunks
+would publish despite the call exceeding the 1 s horizon): **21 chunks**, 53
+status latency samples, **median 2.526 s**, **max 10.250 s**, 319 submitted /
+294 replaced (latest-wins mailbox), stale 0 (compensation deliberately off),
+gripper-out-of-range flagged and passed through raw, 0 failures/restarts in the
+window. The model was already ready before the probe's first READY sample, so
+time-to-ready was not separately instrumented; the 9i measured load on this
+machine was **34.71 s**. This says nothing about policy quality. A shutdown
+race (abort during `act`) was found here and fixed: the worker no longer counts
+a shutdown abort as a restart and the client no longer dereferences a cleared
+process handle.
+
+**Unverified here:** remote-run provenance (user-reported, hand-patched
+launcher/requirements, no audited `as_used/`); ros2_controllers timing
+semantics for the `(k+1)*dt` controller convention (not fetched); MoveIt;
+Isaac Sim.
+
+**Open items:** the policy remains under-trained (pre-registered rule unmet);
+`.venv-ml` still holds unapproved `scipy 1.18.1` and `mujoco 4.0.1` and needs a
+clean rebuild before Task 12; `sim_node` wrist-camera starvation needs its own
+fix; the manual checkpoint below is **PENDING** user confirmation.
+
+## Documented exception for starting Task 10
+
+The pre-registered overfit decision rule (`docs/TRAINING.md` section 17,
+`configs/evaluation/overfit_rule.yaml`) has **NOT** been met. Facts verified
+from the docs and files: remote overfit run (Colab T4, **user-reported
+provenance**, hand-patched launcher/requirements, no audited `as_used/` copy
+unless `outputs/remote/overfit_remote/as_used/` exists, and it does not):
+1,000 steps, first-step arm L1 **0.0333 rad** (bar 0.010: FAIL), gripper
+first-step L1 **0.00688 m** (bar 0.005: FAIL), first-10-beats-hold fraction
+**1.0** (PASS), gripper clip delta **0.00170 m** (PASS). Closed loop on recorded
+training seeds 10000/10004, 3 repeats each: **0/6 success, 6/6 TIMEOUT**.
+Earlier results: the 9b policy "1/30" was a success-definition false positive
+(effective **0/30**); the real 1,000-step full-data checkpoint was **0/4** on
+training seeds. The instruction effect on the output is below sampling noise
+(9e). The local GPU is capped at **210 MHz**; local timings are **"throttled, not
+a performance figure"**. Measured model load **34.71 s**; median policy call
+about **1.33-1.39 s** on that throttled GPU.
+
+Why proceeding is acceptable: the inference node is policy-agnostic. It talks
+to the verified policy-server protocol, is tested with fake models, and makes
+**no claim about policy quality**. The deliverable is the pipeline, not a good
+policy. Consequences that must be stated: (1) a real-checkpoint run of this node
+is expected to fail the task; (2) nothing may be described as "the VLA controls
+the robot successfully"; (3) the pre-registered rule is unchanged and still
+unmet; (4) retraining remains an open item.
 
 ## Task 9i status: first remote overfit result interpreted (2026-11-17)
 
@@ -195,6 +289,13 @@ MANIFEST with every file hash. No model weights or HF cache are included.
 - [x] Run `scripts/eval_teacher_forced.py` with
   `configs/evaluation/overfit_rule.yaml` (overall FAIL: arm 0.0333, gripper
   0.00688 m) and the closed loop on the training seeds (0/6, all TIMEOUT).
+- [x] Implement `vla_inference_node`, its ROS-free inference core, launch/config,
+  contract/QoS rows, and CPU/ROS tests (Task 10).
+- [x] Run the core, `.venv-ros`, colcon, ML, CI-parity, clean-clone, and
+  fake-backend live graph checks; record the real-checkpoint smoke above.
+- [ ] **Manual checkpoint (PENDING user confirmation):** inspect the fake
+  backend, `/vla/status`, and server-kill recovery with the commands in the
+  Task 10 handoff. Do not mark this passed without the user.
 - [ ] Confirm this push's GitHub Actions tab (supporting evidence only; the user
   confirms the Actions tab).
 - [ ] Run the prepared 2,000-step follow-up

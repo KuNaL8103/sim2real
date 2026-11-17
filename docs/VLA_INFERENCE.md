@@ -247,3 +247,69 @@ ros2 launch sim2real_vla vla_inference.launch.py \
 
 The launch file never starts or connects a controller. `/vla/raw_action` must
 not be wired to the joint trajectory controller until Task 11 exists.
+
+## Manual checkpoint (PENDING user confirmation)
+
+These are for the user; the automated session does not mark them passed. Use
+separate terminals, each with:
+
+```bash
+cd ~/Python/sim2real
+source /opt/ros/jazzy/setup.bash
+source ros2_ws/install/setup.bash
+```
+
+**1) Simulator (terminal A).** Headless MuJoCo, images enabled:
+
+```bash
+export MUJOCO_GL=egl
+ros2 launch sim2real_sim sim.launch.py backend:=mujoco headless:=true
+```
+
+Expect `/joint_states` and `/camera/overhead/color/image_raw`. Known issue:
+under MuJoCo+llvmpipe this sim_node build starves the wrist camera
+(`published=... skipped_busy=...` at shutdown). Until that is fixed, the
+inference node will stay in `WAITING_FOR_INPUT` because it requires both
+cameras. For the manual fake-backend check either apply the wrist scheduling
+fix or feed an identical-stamp wrist frame (test harness only).
+
+**2) Inference node + rate (terminal B).** Fake backend; no model:
+
+```bash
+ros2 launch sim2real_vla vla_inference.launch.py policy_backend:=fake
+ros2 topic hz /vla/raw_action
+```
+
+Expect a chunk at up to 10 Hz once an instruction exists; the fake policy holds
+the current state.
+
+**3) Status (terminal C).**
+
+```bash
+ros2 topic echo /vla/status --once --full-length
+```
+
+Expect `state` to move `STARTING -> WAITING_FOR_INPUT/READY`, `worker.state`
+`READY`, `depth_used=false`, and counters. Publish an instruction once:
+
+```bash
+ros2 topic pub --once --qos-reliability reliable --qos-durability volatile \
+  -w 1 /task_instruction std_msgs/msg/String \
+  "{data: \"pick up the red cube and place it in the left zone\"}"
+```
+
+Expect `chunks_published` to increase and `/vla/raw_action` to show 9-10 points.
+
+**4) Server-kill recovery (real backend, terminal B).** Start with
+`policy_backend:=server` and a valid `checkpoint_path`, wait for
+`worker.state=READY`, then:
+
+```bash
+pkill -f policy_server.py
+ros2 topic echo /vla/status --full-length
+```
+
+Expect `state=MODEL_UNAVAILABLE` with the crash reason, **no**
+`/vla/raw_action` publication while unavailable, then either recovery to
+`READY` within the bounded restarts or terminal `FAILED`. Check
+`ps aux | grep policy_server` afterwards: no child should remain.
