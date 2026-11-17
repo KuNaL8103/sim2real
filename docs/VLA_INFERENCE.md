@@ -59,7 +59,7 @@ are shipped with the package.
 | `checkpoint_path` | `""` | path | required for `server` |
 | `server_python` | `""` | path | empty: `$SIM2REAL_POLICY_PYTHON`, else `<repo>/.venv-ml/bin/python`; resolved and checked |
 | `server_script` | `""` | path | empty: `<repo>/scripts/policy_server.py` |
-| `startup_timeout_s` | `120` | s | cold start (torch import + model load); measured remote load 34.71 s, user-reported T4 provenance |
+| `startup_timeout_s` | `180` | s | cold start (torch import + model load); measured local time-to-ready 107.38 s (Task 10b), remote load 34.71 s (user-reported T4 provenance) |
 | `call_timeout_s` | `30` | s | one `act` call |
 | `policy_period_s` | `0.1` | s | dataset/policy period (10 Hz) |
 | `n_action_steps` | `10` | steps | horizon published (1.0 s); training chunk is 50 |

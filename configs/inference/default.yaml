@@ -21,9 +21,11 @@ inference:
   # Empty means <repo>/scripts/policy_server.py.
   server_script: ""
 
-  # Cold start (torch import + base model load). The measured remote load was
-  # 34.71 s (user-reported T4 provenance); this is a timeout, not a promise.
-  startup_timeout_s: 120.0
+  # Cold start (torch import + base model load). Measured local time-to-ready
+  # was 107.38 s in Task 10b, so 120 s left too little headroom; the default is
+  # 180 s. The measured remote load was 34.71 s (user-reported T4 provenance).
+  # This is a timeout, not a promise.
+  startup_timeout_s: 180.0
   # Per-act timeout. The measured local throttled call was ~1.33-1.39 s.
   call_timeout_s: 30.0
 

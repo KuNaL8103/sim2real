@@ -98,8 +98,9 @@ class InferenceConfig:
     server_python: str = ""
     server_script: str = ""
     # Cold start (torch import + base model load) is not a policy step. The
-    # measured remote load was 34.71 s; this is a timeout, not a promise.
-    startup_timeout_s: float = 120.0
+    # measured local time-to-ready was 107.38 s (Task 10b); 180 s leaves margin.
+    # This is a timeout, not a promise.
+    startup_timeout_s: float = 180.0
     call_timeout_s: float = 30.0
     policy_period_s: float = 0.1
     n_action_steps: int = 10
