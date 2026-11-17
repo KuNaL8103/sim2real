@@ -32,6 +32,10 @@ node never imports torch; the model stays behind `scripts/policy_server.py`.
 `/vla/status` is an additive `std_msgs/msg/String` contract. The launch default
 is `policy_backend:=fake`; nothing in this node connects to a controller.
 
+Both CI jobs for the pre-Task-10 push at `fae2724` are **user-confirmed green**
+(2026-11-17, Actions tab; supporting evidence only). The Task 10 push
+(`1ed799b`) still needs the user's Actions-tab confirmation.
+
 **Measured results in this session (all local unless stated):**
 
 | suite | result |
