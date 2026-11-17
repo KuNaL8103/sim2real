@@ -199,6 +199,96 @@ The **Task 11 safety watchdog** is the only consumer allowed to forward
 `/vla/raw_action` to a controller. It must choose the final time convention and
 add the missing jerk/effort limits to `panda.yaml` first.
 
+## Live two-camera validation (Task 10b)
+
+The pre-fix live check under MuJoCo+llvmpipe measured overhead color at
+**3.25 Hz** and wrist color, wrist depth and wrist camera_info at **0** messages
+in 20 s; sim_node shutdown reported `published=123 skipped_busy=600`. The cause
+was scheduling, not the simulator: `RenderCoordinator` has one slot and the
+async `_camera_tick` always submitted `overhead` first, so `wrist` was always
+`skipped_busy` when a render outlasted the camera tick. Before commit `51fc817`
+(2026-10-31) the callback rendered both cameras synchronously, so both were
+served; the async change introduced the starvation. The Task 2b docs' "images
+2.67 Hz" is not evidence that the wrist ROS topic worked: the rate test and
+the Task 2b test subscribed to overhead only.
+
+After the pair-scheduler fix, a 20 s live probe measured:
+
+| topic | rate |
+| --- | --- |
+| overhead color | 1.85 Hz |
+| overhead depth | 1.85 Hz |
+| overhead camera_info | 1.85 Hz |
+| wrist color | 1.80 Hz |
+| wrist depth | 1.80 Hz |
+| wrist camera_info | 1.80 Hz |
+
+Shutdown stats: `published=134` with `published_by_camera={overhead: 67,
+wrist: 67}`, `skipped_busy=387`, `failed=0`. A 100-pair stamp probe measured
+**0.0 s** overhead/wrist stamp skew for every pair (`stamp_intersection=100`);
+the two cameras are rendered from the same snapshot, sequentially in arrival
+time (median arrival gap about 0.25 s). The node's default `max_camera_skew_s`
+is 0.05 s and the synchronizer slop is 0.05 s, so same-stamp pairs are accepted.
+
+With `policy_backend:=fake`, no shim and the real two-camera stream:
+**100 action messages in 60 s**, 59 status samples, node state `READY`, no
+failures or restarts, and `image_pairs_received`/`observations_submitted`
+increased steadily. Every action had **9 points** with `time_from_start`
+**0.1-0.9 s** when `latency_compensation=true`; with
+`latency_compensation=false` the same node published **10 points** at
+**0.0-0.9 s**. The 0.0 s point is not a formatting difference: the trim rule
+keeps `time_from_start >= elapsed`, and any positive elapsed time (even the
+fake policy's ~0.0003 s call) is greater than 0.0 s, so the first point is
+dropped. The raw chunk still carries the observation stamp and all per-point
+offsets; Task 11 chooses the final convention.
+
+## Live latency budget (Task 10b; throttled, not a performance figure)
+
+The checkpoint `outputs/remote/overfit_remote/checkpoint-00001000` exists and
+passed `scripts/verify_remote_checkpoint.py --handshake skip` with
+`UNVERIFIED: bundle provenance not checked` and `overrides: []`. There is no
+audited `outputs/remote/overfit_remote/as_used/` copy; the remote run remains
+**user-reported provenance** with hand-patched launcher/requirements.
+
+A direct cold-start measurement (no ROS, `.venv-ml` server) took **77.33 s**
+to `ready`; the valid sim-backed run below took **107.38 s** to `ready`. All
+local timings are on the **210 MHz / SW-power-capped** GPU and are labelled
+**"throttled, not a performance figure"**.
+
+The approved 16-minute block was cut short after run 2; runs 3 and 4 are **NOT
+RUN** under that hard stop. The valid run used sim_node + real server,
+`latency_compensation=false`, `n_action_steps=10`, 90 s after ready:
+
+| metric | run 2 (valid) |
+| --- | --- |
+| time to ready | **107.38 s** |
+| chunks received / published | **43 / 42** |
+| chunks dropped stale | **0** |
+| call latency samples | **42** |
+| median / p95 / max call latency | **1.88085 s / 3.61568 s / 5.90400 s** |
+| submitted / replaced | **149 / 105** |
+| median action interval | 1.88091 s |
+| published points still in the future | **0.0** (median/min/max; all selected points were already past at publish) |
+| point count | 10 per chunk, 0.0-0.9 s |
+
+Run 1 (server alone with a synthetic 10 Hz camera publisher) reached ready at
+**74.41 s** but its camera stream stalled after ready (`OBSERVATION_TOO_OLD`);
+it produced only 5 chunks and is **not** a valid 90 s window. Its measured
+latency was median 3.69 s, max 6.21 s over 5 calls. That harness stall is a
+test-publisher limitation, not a policy error. Runs 3 and 4 were not started.
+
+The earlier Task 10 report's "21 chunks vs 53 latency samples" came from
+sampling the 1 Hz `last_latency_s` field, not from per-call samples; the new
+status carries a bounded per-call `latency` summary, and run 2 shows 42 samples
+for 43 received chunks. The measured median is **1.88 s** here, versus the
+earlier **1.33-1.39 s** on the same throttled machine; the difference is not
+attributed beyond what was measured (sim rendering/CPU contention and a longer
+cold start were present in this run). The measured consequence is plain: a
+10-point chunk covers only **0.9 s**, while calls took **1.88-5.90 s**, so live
+chunks are almost entirely past by the time they arrive unless they are
+retimed/extended. Task 11 must choose the stale-chunk and retiming policy; this
+node does not change its convention or defaults.
+
 ## Documented exception for starting Task 10
 
 The pre-registered overfit decision rule (`docs/TRAINING.md` section 17,
@@ -266,12 +356,11 @@ export MUJOCO_GL=egl
 ros2 launch sim2real_sim sim.launch.py backend:=mujoco headless:=true
 ```
 
-Expect `/joint_states` and `/camera/overhead/color/image_raw`. Known issue:
-under MuJoCo+llvmpipe this sim_node build starves the wrist camera
-(`published=... skipped_busy=...` at shutdown). Until that is fixed, the
-inference node will stay in `WAITING_FOR_INPUT` because it requires both
-cameras. For the manual fake-backend check either apply the wrist scheduling
-fix or feed an identical-stamp wrist frame (test harness only).
+Expect `/joint_states`, overhead and wrist color/depth/camera_info. Under
+MuJoCo+llvmpipe the measured post-fix rates were **about 1.8-1.9 Hz per
+camera** (each color, depth and camera_info), with both cameras in a pair
+sharing one stamp. If wrist stays at zero, check that the pair scheduler fix is
+built and look for `published_by_camera` in the shutdown stats.
 
 **2) Inference node + rate (terminal B).** Fake backend; no model:
 

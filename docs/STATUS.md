@@ -3,24 +3,25 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=601 failed=0 skipped=19 errors=0 | date=2026-11-17 | base_commit=5555ec3
-- Last verified ROS test run: passed=619 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=5555ec3
+- Last verified test run: passed=608 failed=0 skipped=20 errors=0 | date=2026-11-17 | base_commit=1d8d882
+- Last verified ROS test run: passed=627 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=1d8d882
 - Task 1 status: complete
 
-The 2026-11-17 run used the Task 9i tree at `3ddf112`. Both baseline
-conventions, side by side:
+The Task 10b checks used the code commit `1d8d882` (scheduler, status
+instrumentation, colcon pytest visibility). Both baseline conventions, side by
+side:
 
 | convention | core ROS-free |
 | --- | --- |
-| scikit-learn **absent** (current `.venv`) | **534 passed / 13 skipped** |
-| scikit-learn **present** (9f convention) | **535 passed / 12 skipped** (inferred: the optional cross-check adds one pass and removes one skip; not re-run because installing sklearn was not approved) |
+| scikit-learn **absent** (current `.venv`, measured 2026-11-17) | **608 passed / 20 skipped** |
+| scikit-learn **present** (9f convention) | not re-run; installing sklearn was not approved. The optional cross-check previously added one pass and removed one skip |
 
-`scripts/ci_parity.sh` reported **532 passed / 15 skipped** (it sets
-`SIM2REAL_SKIP_RENDER=1`) and `colcon test-result` **7 tests / 0 failures /
-0 errors / 0 skipped**; `.venv-ros` was **547/5** and `run_ml_tests.sh` **4
-passed / 1 deselected**. `scripts/ci_parity.sh --clean-clone` passed at
-`3ddf112` with **531 passed / 16 skipped** (one extra skip: no `.venv-ml`, so
-the real-pin test skips). `.venv-ml` was not rebuilt; see the deviations below.
+`scripts/ci_parity.sh` reported **606 passed / 22 skipped** (it sets
+`SIM2REAL_SKIP_RENDER=1`) and `colcon test-result` now counts the
+`sim2real_vla` pytest results: **13 tests / 0 failures / 0 errors / 0
+skipped** (6 `sim2real_msgs` + 1 CTest + 6 pytest). `.venv-ros` was **627/6**
+and `run_ml_tests.sh` **4 passed / 1 deselected**. `.venv-ml` was not rebuilt;
+see the deviations below.
 
 ## Task 10 status: ROS 2 VLA inference node (2026-11-17)
 
@@ -93,6 +94,24 @@ Isaac Sim.
 `.venv-ml` still holds unapproved `scipy 1.18.1` and `mujoco 4.0.1` and needs a
 clean rebuild before Task 12; `sim_node` wrist-camera starvation needs its own
 fix; the manual checkpoint below is **PENDING** user confirmation.
+
+## Task 10b status: wrist camera fix and live latency budget (2026-11-17)
+
+**Cause (file/line evidence).** `sim_node._camera_tick` (`ros2_ws/src/sim2real_sim/sim2real_sim/sim_node.py`, Task 10 lines 318-333) looped over `contracts.CAMERAS` and called `RenderCoordinator.submit`. `RenderCoordinator` has one slot (`src/sim2real/sim/rendering.py:73-90`); the first submit sets `_busy`, so the second camera was always rejected as `skipped_busy` when a render outlasted the 0.1 s camera tick. The order was fixed (`overhead` first). Before `51fc817` (2026-10-31, `fix: submit camera renders asynchronously`) `_camera_tick` used blocking `render()` for both cameras, so both were served. The Task 2b docs' "images 2.67 Hz" and its rate test covered overhead only; they are not evidence that the wrist topic worked.
+
+**Fix.** `CameraPairScheduler` in `src/sim2real/sim/rendering.py` keeps one pending snapshot, submits at most one camera per slot, retries the same camera while the coordinator is busy, and advances only after every camera in the pair has been submitted. The first camera alternates round-robin between pairs. Both cameras therefore share the snapshot stamp. `RenderCoordinator` now also exposes per-camera `published` and `skipped_busy` counters. State/TF/joint-state publication is unchanged and remains independent of rendering; the reset quiesce clears the pending pair.
+
+**Measured live result (throttled, not a performance figure).** Pre-fix: overhead color 3.25 Hz, wrist color/depth/camera_info **0** in 20 s, stats `published=123 skipped_busy=600`. Post-fix: overhead color/depth/info **1.85 Hz**, wrist color/depth/info **1.80 Hz**, stats `published=134`, `published_by_camera={overhead: 67, wrist: 67}`, `skipped_busy=387`, `failed=0`. A 100-pair stamp probe: **100/100 same-stamp pairs, 0.0 s skew** (sequential arrival gap median ~0.25 s). The rate test passed **3/3 alone at 20.00 Hz** (`published_by_camera={overhead: 4, wrist: 4}`, `skipped_busy=28`).
+
+**Inference on the real two-camera stream (fake policy, no shim).** 100 actions in 60 s; status `READY`; no failures/restarts; `image_pairs_received` and `observations_submitted` increased. `latency_compensation=true` published **9 points at 0.1-0.9 s**; `latency_compensation=false` published **10 points at 0.0-0.9 s**. Explanation from code: `trim_for_latency` keeps `time_from_start >= elapsed`; any positive elapsed time (even the fake call's ~0.0003 s) drops the 0.0 s point. The raw chunk still carries the observation stamp and offsets.
+
+**Latency budget.** Cold start measured directly: **77.33 s**. The approved 16-minute GPU block was hard-stopped after run 2; runs 3 and 4 are **NOT RUN**. Valid run 2 (sim_node, real server, `latency_compensation=false`, `n_action_steps=10`, 90 s after ready): time to ready **107.38 s**; chunks received/published **43/42**; stale **0**; **42** per-call latency samples; median **1.88085 s**, p95 **3.61568 s**, max **5.90400 s**; submitted/replaced **149/105**; median action interval 1.88091 s; published future fraction **0.0** (all selected points already past at publish). Run 1 (server alone, synthetic 10 Hz stream) reached ready at **74.41 s** but the synthetic stream stalled after ready (cameras stale); it produced 5 chunks (median 3.69 s, max 6.21 s) and is **not** a valid 90 s window. The earlier "21 chunks vs 53 latency samples" is reconciled as 1 Hz sampling of `last_latency_s`; the new status tracks per-call samples (42 for 43 chunks in run 2). The median 1.88 s is above the earlier 1.33-1.39 s; only the measured conditions (sim rendering/CPU contention and a longer cold start) are stated, no causal claim. Consequence: a 10-point chunk covers 0.9 s while calls took 1.88-5.90 s, so Task 11 must choose stale handling and retiming; no default or convention changed.
+
+**Colcon visibility.** Root cause: `colcon`'s pytest extension only matches when the package declares a pytest test dependency; otherwise it runs `python -m unittest`, which emits no xunit. Added `tests_require`/`extras_require={"test": ["pytest"]}` and a package-local `pytest.ini`; `colcon test-result` now reads `build/sim2real_vla/pytest.xml` and reports **13 tests / 0 failures** (6 msgs + 1 CTest + 6 vla).
+
+**Test counts (measured, sklearn absent in the core `.venv`):** core **608 passed / 0 failed / 20 skipped / 0 errors**; `.venv-ros` **627 / 0 / 6 / 0**; colcon **13 / 0 / 0 / 0**; `run_ml_tests.sh` **4 passed / 1 deselected**; `ci_parity` **606 / 22**; `ci_parity --clean-clone` **605 passed / 23 skipped** (one extra `.venv-ml`-absent skip). New tests cover the pair scheduler, per-camera fairness, reset clearing, per-call latency/future-fraction summaries, time-to-ready, and the node status fields.
+
+**Unverified:** remote provenance (user-reported; no `as_used/`); ros2_controllers `JointTrajectoryController` timing semantics (not fetched); MoveIt; Isaac Sim. **Open:** policy remains under-trained; `.venv-ml` still has unapproved `scipy 1.18.1`/`mujoco 4.0.1` and needs a clean rebuild before Task 12; manual checkpoint PENDING.
 
 ## Documented exception for starting Task 10
 
@@ -174,9 +193,9 @@ unmet; (4) retraining remains an open item.
   `max_steps` 1,000 -> 2,000 at the same lr/batch. Estimated 0.023 rad
   single-sample L1 at 2,000 steps (probably still above 0.010) and ~40.3 min on
   the measured 1.21 s/step T4 rate; both are estimates.
-- **Task 10 remains blocked.** Criteria fail, the loop is 0/6 on training
-  seeds, and the run carried protocol overrides. The pre-registered rule and
-  bars were not edited.
+- **Task 10 was started under the documented exception below.** Criteria fail,
+  the loop is 0/6 on training seeds, and the run carried protocol overrides.
+  The pre-registered rule and bars were not edited.
 
 ## Authoritative bundle after Task 9i
 
@@ -210,7 +229,8 @@ provenance record and must not be used for new runs.
   Requires-Python `>=3.12`, GPU/driver printed, no install/download/training.
 - `scripts/ci_parity.sh --clean-clone` was added and passed; the flag is
   covered by a test.
-- Task 10 remains blocked pending a healthy-GPU overfit result.
+- Task 10 was subsequently started under the documented exception (the rule is
+  still unmet and retraining is open).
 
 ## Task 9g cleanup-and-hardening status (2026-11-15)
 
@@ -297,9 +317,16 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   contract/QoS rows, and CPU/ROS tests (Task 10).
 - [x] Run the core, `.venv-ros`, colcon, ML, CI-parity, clean-clone, and
   fake-backend live graph checks; record the real-checkpoint smoke above.
-- [ ] **Manual checkpoint (PENDING user confirmation):** inspect the fake
-  backend, `/vla/status`, and server-kill recovery with the commands in the
-  Task 10 handoff. Do not mark this passed without the user.
+- [x] Fix the sim_node wrist starvation fairly, prove both cameras and same-stamp
+  pairs live, add deterministic scheduler/reset tests, and measure the 20 Hz
+  control rate 3/3 (Task 10b).
+- [x] Add per-call latency/future-fraction and `time_to_ready_s` status fields;
+  measure one valid real-checkpoint run (run 2) and record runs 3/4 as NOT RUN
+  under the approved 16-minute hard stop.
+- [x] Make colcon count the `sim2real_vla` tests (13 tests / 0 failures).
+- [ ] **Manual checkpoint (PENDING user confirmation):** inspect both cameras,
+  `/vla/status`, `/vla/raw_action`, and server-kill recovery with the commands
+  in `docs/VLA_INFERENCE.md`. Do not mark this passed without the user.
 - [ ] Confirm this push's GitHub Actions tab (supporting evidence only; the user
   confirms the Actions tab).
 - [ ] Run the prepared 2,000-step follow-up
@@ -307,8 +334,9 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   passes the clock/memory gate; not run and not uploaded in Task 9i.
 - [ ] Rebuild `.venv-ml` from `scripts/setup_envs.sh --with-ml` before final
   validation (removes the unapproved scipy/mujoco installs); needs approval.
-- [x] Task 10 interpretation: **blocked**. Criteria 1-3 fail, the closed loop is
-  0/6 on training seeds, and the run carried protocol overrides.
+- [x] Task 10 interpretation: **started under the documented exception**. Criteria
+  1-3 fail, the closed loop is 0/6 on training seeds, and the run carried
+  protocol overrides; the rule remains unmet.
 
 ## GPU finding
 
