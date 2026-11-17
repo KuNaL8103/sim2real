@@ -8,6 +8,11 @@ Checks provenance and semantics before any evaluation:
 * the config hash, dataset stats hash, rename map, action representation,
   chunk size, ``n_action_steps`` and fps match the local config/dataset;
 * the adapter directory hash matches the metadata (and RUN_REPORT, if supplied);
+* RUN_REPORT overrides (e.g. ``low_clock``) are printed and, unless
+  ``--accept-overrides`` is passed, make the verification fail;
+* with ``--bundle-info``, the MANIFEST.json/requirements.txt hashes recorded by
+  the remote run are compared to the exporter's ``bundle_info.json`` sidecar;
+  without it the result prints ``UNVERIFIED: bundle provenance not checked``;
 * the policy server handshake accepts the checkpoint.
 
 The handshake defaults to CPU (``CUDA_VISIBLE_DEVICES`` is emptied) so a
@@ -67,7 +72,7 @@ def _verify_run_report(
     checkpoint: Path,
     metadata_sha256: str,
     adapter_sha256: str,
-) -> None:
+) -> dict[str, Any]:
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -102,6 +107,35 @@ def _verify_run_report(
                 reported.name == checkpoint.name,
                 f"RUN_REPORT checkpoint {key} {reported.name!r} != {checkpoint.name!r}",
             )
+    return report
+
+
+def _verify_bundle_provenance(
+    bundle_info_path: Path, preflight_bundle: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Compare the hashes the remote run used against the exporter's sidecar."""
+    try:
+        sidecar = json.loads(bundle_info_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise VerificationError(f"{bundle_info_path}: unreadable bundle_info.json: {exc}") from exc
+    _require(
+        preflight_bundle is not None,
+        "--bundle-info was given but RUN_REPORT/preflight.json records no bundle hashes; "
+        "the run was produced by an older bundle",
+    )
+    for key in ("manifest", "requirements"):
+        expected = (sidecar.get(key) or {}).get("sha256")
+        actual = (preflight_bundle.get(key) or {}).get("sha256")
+        _require(
+            bool(expected) and bool(actual),
+            f"bundle {key} sha256 missing (sidecar={expected!r}, as-used={actual!r})",
+        )
+        _require(
+            expected == actual,
+            f"{key} sha256 as used on the remote ({actual}) does not match the "
+            f"exported bundle_info.json ({expected}); the run did not use this bundle",
+        )
+    return sidecar
 
 
 def verify_checkpoint(
@@ -112,6 +146,8 @@ def verify_checkpoint(
     dataset_root: Path | None = None,
     handshake: str = "cpu",
     allow_no_run_report: bool = False,
+    bundle_info: Path | None = None,
+    accept_overrides: bool = False,
     server_python: Path | None = None,
     timeout_s: float = 600.0,
     seed: int = 0,
@@ -190,8 +226,10 @@ def verify_checkpoint(
         "adapter directory hash does not match checkpoint metadata "
         f"({adapter_sha256} != {recorded_adapter})",
     )
+    overrides: list[str] = []
+    preflight_bundle: dict[str, Any] | None = None
     if run_report is not None:
-        _verify_run_report(
+        report = _verify_run_report(
             Path(run_report),
             metadata=metadata,
             checkpoint=checkpoint,
@@ -199,6 +237,11 @@ def verify_checkpoint(
             adapter_sha256=adapter_sha256,
         )
         run_report_status = "verified"
+        overrides = [str(item) for item in (report.get("overrides") or [])]
+        preflight = report.get("preflight")
+        if isinstance(preflight, dict):
+            candidate = preflight.get("bundle")
+            preflight_bundle = candidate if isinstance(candidate, dict) else None
     elif allow_no_run_report:
         run_report_status = "UNVERIFIED: no run report"
         print("UNVERIFIED: no run report", file=sys.stderr)
@@ -207,6 +250,22 @@ def verify_checkpoint(
             "no RUN_REPORT.json supplied; pass --run-report, or explicitly "
             "opt into --no-run-report to continue with an UNVERIFIED result"
         )
+
+    print(f"overrides: {overrides}")
+    if overrides and not accept_overrides:
+        raise VerificationError(
+            f"the run recorded overrides {overrides}; it is not a clean-protocol run. "
+            "Re-run without them, or pass --accept-overrides to record the deviation"
+        )
+
+    if bundle_info is not None:
+        sidecar = _verify_bundle_provenance(Path(bundle_info), preflight_bundle)
+        bundle_status = "verified"
+        archive_sha256 = (sidecar.get("archive") or {}).get("sha256")
+    else:
+        print("UNVERIFIED: bundle provenance not checked", file=sys.stderr)
+        bundle_status = "UNVERIFIED: bundle provenance not checked"
+        archive_sha256 = None
 
     handshake_used = handshake
     if handshake != "skip":
@@ -255,6 +314,9 @@ def verify_checkpoint(
         "adapter_hash": adapter_sha256,
         "metadata_sha256": metadata_sha256,
         "run_report": run_report_status,
+        "overrides": overrides,
+        "bundle_provenance": bundle_status,
+        "archive_sha256": archive_sha256,
         "handshake": handshake_used,
         "handshake_note": handshake_note,
     }
@@ -272,6 +334,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument(
+        "--bundle-info",
+        default=None,
+        help="path to the exporter's <archive>.bundle_info.json sidecar; compares the "
+        "MANIFEST.json/requirements.txt hashes the remote run recorded",
+    )
+    parser.add_argument(
+        "--accept-overrides",
+        action="store_true",
+        help="continue when RUN_REPORT.json records overrides such as low_clock "
+        "(the deviations are still printed and kept in the summary)",
+    )
+    parser.add_argument(
         "--handshake",
         choices=("cpu", "cuda", "fake", "skip"),
         default="cpu",
@@ -287,6 +361,8 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.config),
             run_report=Path(args.run_report) if args.run_report else None,
             allow_no_run_report=bool(args.no_run_report),
+            bundle_info=Path(args.bundle_info) if args.bundle_info else None,
+            accept_overrides=bool(args.accept_overrides),
             dataset_root=Path(args.dataset_root) if args.dataset_root else None,
             handshake=args.handshake,
             server_python=Path(args.server_python) if args.server_python else None,

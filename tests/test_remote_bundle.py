@@ -310,6 +310,144 @@ def test_verifier_requires_run_report_unless_explicitly_overridden(tmp_path, cap
     assert "UNVERIFIED: no run report" in capsys.readouterr().err
 
 
+def test_requirements_strip_local_version_labels():
+    bundle = _load_script("export_remote_bundle")
+    versions = {name: "1.2.3" for name in bundle.PINNED_PACKAGES}
+    versions["torch"] = "2.11.0+cu126"
+    versions["torchvision"] = "0.26.0+cu126"
+    versions["torchcodec"] = "0.11.1+cpu"
+    text = bundle.render_requirements(versions, "/x/.venv-ml/bin/python")
+    pins = bundle.requirement_pins(text)
+    assert pins["torch"] == "2.11.0"
+    assert pins["torchvision"] == "0.26.0"
+    assert pins["torchcodec"] == "0.11.1"
+    assert not any("+" in value for value in pins.values())
+    assert f"--extra-index-url {bundle.TORCH_INDEX}" in text
+    # the index is documented as the CUDA wheel source, not a bare option
+    assert "# The CUDA build comes from the wheel index on the next line." in text
+
+
+def test_real_pin_file_has_no_local_version_pins(tmp_path):
+    """The pins read from the real .venv-ml must render without +cpu/+cu126."""
+    python = ROOT / ".venv-ml" / "bin" / "python"
+    if not python.is_file():
+        pytest.skip("optional .venv-ml is absent")
+    bundle = _load_script("export_remote_bundle")
+    pins = bundle.requirement_pins(bundle.render_requirements(bundle._python_versions(python)))
+    offenders = {name: value for name, value in pins.items() if "+" in value}
+    assert not offenders, offenders
+
+
+def test_export_writes_bundle_info_sidecar(tmp_path):
+    bundle = _load_script("export_remote_bundle")
+    dataset = _write_dataset(tmp_path / "dataset")
+    config = _write_config(tmp_path, dataset)
+    result = bundle.export_bundle(
+        dataset_root=dataset,
+        config_paths=[config],
+        output_dir=tmp_path / "bundle",
+        versions=_versions(bundle),
+        python_metadata=_python_metadata(),
+        commit=_head(),
+        timestamp="20260101T000000Z",
+        allow_dirty=True,
+    )
+    assert result.bundle_info.is_file()
+    info = json.loads(result.bundle_info.read_text(encoding="utf-8"))
+    assert info["archive"]["name"] == result.archive.name
+    assert info["archive"]["sha256"] == result.archive_sha256
+    assert info["archive"]["size"] == result.archive_bytes
+    with tarfile.open(result.archive) as archive:
+        manifest_bytes = archive.extractfile("outputs/remote_bundle_payload/MANIFEST.json").read()
+    assert info["manifest"]["sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+    assert info["requirements"]["sha256"] == result.manifest["requirements"]["sha256"]
+    assert info["git_commit"] == result.commit
+
+
+def test_verifier_rejects_and_accepts_recorded_overrides(tmp_path, capsys):
+    verifier = _load_script("verify_remote_checkpoint")
+    dataset = _write_dataset(tmp_path / "dataset")
+    config = _write_config(tmp_path, dataset)
+    checkpoint = _checkpoint(tmp_path, config, dataset)
+    report = _run_report(checkpoint)
+    report["overrides"] = ["low_clock"]
+    report_path = tmp_path / "RUN_REPORT.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(verifier.VerificationError, match="overrides"):
+        verifier.verify_checkpoint(checkpoint, config, run_report=report_path, handshake="skip")
+    summary = verifier.verify_checkpoint(
+        checkpoint,
+        config,
+        run_report=report_path,
+        handshake="skip",
+        accept_overrides=True,
+    )
+    assert summary["overrides"] == ["low_clock"]
+    assert "overrides: ['low_clock']" in capsys.readouterr().out
+
+
+def test_verifier_bundle_info_paths(tmp_path, capsys):
+    verifier = _load_script("verify_remote_checkpoint")
+    dataset = _write_dataset(tmp_path / "dataset")
+    config = _write_config(tmp_path, dataset)
+    checkpoint = _checkpoint(tmp_path, config, dataset)
+    report = _run_report(checkpoint)
+    report["preflight"] = {
+        "bundle": {
+            "manifest": {"sha256": "a" * 64},
+            "requirements": {"sha256": "b" * 64},
+        }
+    }
+    report_path = tmp_path / "RUN_REPORT.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    sidecar = tmp_path / "archive.tar.gz.bundle_info.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "archive": {"name": "archive.tar.gz", "sha256": "c" * 64},
+                "manifest": {"sha256": "a" * 64},
+                "requirements": {"sha256": "b" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = verifier.verify_checkpoint(
+        checkpoint, config, run_report=report_path, bundle_info=sidecar, handshake="skip"
+    )
+    assert summary["bundle_provenance"] == "verified"
+    assert summary["archive_sha256"] == "c" * 64
+
+    bad = tmp_path / "bad.bundle_info.json"
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["requirements"]["sha256"] = "9" * 64
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(verifier.VerificationError, match="does not match the exported"):
+        verifier.verify_checkpoint(
+            checkpoint, config, run_report=report_path, bundle_info=bad, handshake="skip"
+        )
+
+    unverified = verifier.verify_checkpoint(
+        checkpoint, config, run_report=report_path, handshake="skip"
+    )
+    assert unverified["bundle_provenance"] == "UNVERIFIED: bundle provenance not checked"
+    assert "UNVERIFIED: bundle provenance not checked" in capsys.readouterr().err
+
+
+def test_remote_train_low_clock_override_is_explicit_and_memory_is_hard():
+    text = (ROOT / "scripts" / "remote_train.sh").read_text(encoding="utf-8")
+    assert "ALLOW_LOW_CLOCK=0" in text
+    assert "--allow-low-clock" in text
+    assert 'overrides.append("low_clock")' in text
+    assert '"overrides": overrides' in text
+    memory = text[
+        text.index("if total_mib < min_memory_mib") : text.index("if median_clock < min_clock")
+    ]
+    assert "allow_low_clock" not in memory
+    assert "min_memory_mib" in memory
+
+
 def test_remote_train_script_has_required_guards():
     script = ROOT / "scripts/remote_train.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)

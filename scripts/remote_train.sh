@@ -24,6 +24,7 @@ FROM_BUNDLE=""
 WORKDIR=""
 MIN_MEMORY_MIB=8192
 MIN_MEDIAN_SM_MHZ=1000
+ALLOW_LOW_CLOCK=0
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,9 @@ Usage: scripts/remote_train.sh [options]
   --python PATH       interpreter used to create the venv (default python3)
   --max-steps N       override config training.max_steps
   --check-only        verify and print preflight, then exit before install/train
+  --allow-low-clock   continue when the median SM clock is below the floor,
+                      print a loud WARNING and record overrides: ["low_clock"]
+                      in RUN_REPORT.json (the memory floor is never overridable)
   --from-bundle FILE  clone/verify repository from repo.bundle
   --workdir DIR       clone target for --from-bundle (default a unique /tmp path)
 EOF
@@ -65,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --python) PYTHON="${2:?}"; shift 2 ;;
     --max-steps) MAX_STEPS="${2:?}"; shift 2 ;;
     --check-only) CHECK_ONLY=1; shift ;;
+    --allow-low-clock) ALLOW_LOW_CLOCK=1; shift ;;
     --from-bundle) FROM_BUNDLE="${2:?}"; shift 2 ;;
     --workdir) WORKDIR="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -123,6 +128,7 @@ if [[ -n "$FROM_BUNDLE" && ( -z "$CURRENT_ROOT" || "$CURRENT_HEAD" != "$MANIFEST
     --python "$PYTHON"
   )
   [[ "$CHECK_ONLY" -eq 1 ]] && REARGS+=(--check-only)
+  [[ "$ALLOW_LOW_CLOCK" -eq 1 ]] && REARGS+=(--allow-low-clock)
   [[ -n "$MAX_STEPS" ]] && REARGS+=(--max-steps "$MAX_STEPS")
   cd "$WORKDIR"
   exec env SIM2REAL_BOOTSTRAPPED=1 "$WORKDIR/scripts/remote_train.sh" "${REARGS[@]}"
@@ -312,7 +318,7 @@ fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -r "$BUNDLE_DIR/requirements.txt"
 
 log "CUDA matmul test and clock/power sample"
-if ! "$VENV/bin/python" - "$MIN_MEMORY_MIB" "$MIN_MEDIAN_SM_MHZ" "$DRIVER_VERSION" > "$MATMUL_JSON" <<'PY'
+if ! "$VENV/bin/python" - "$MIN_MEMORY_MIB" "$MIN_MEDIAN_SM_MHZ" "$DRIVER_VERSION" "$ALLOW_LOW_CLOCK" > "$MATMUL_JSON" <<'PY'
 import json
 import statistics
 import subprocess
@@ -324,6 +330,7 @@ import torch
 min_memory_mib = int(sys.argv[1])
 min_clock = float(sys.argv[2])
 driver = sys.argv[3]
+allow_low_clock = sys.argv[4] == "1"
 build = {
     "torch": torch.__version__,
     "torch_cuda": torch.version.cuda,
@@ -375,27 +382,41 @@ while time.time() < deadline:
         if "SW Thermal Slowdown" in line and "Active" in line:
             reasons.add("SW Thermal Slowdown")
 elapsed = time.perf_counter() - started
+median_clock = statistics.median(clocks)
+overrides = []
+if allow_low_clock and median_clock < min_clock:
+    overrides.append("low_clock")
 report = {
     **build,
     "gpu": name,
     "total_memory_mib": round(total_mib, 1),
     "checksum": float(c.sum().item()),
     "matmul_seconds": round(elapsed, 3),
-    "median_sm_clock_mhz": statistics.median(clocks),
+    "median_sm_clock_mhz": median_clock,
     "min_sm_clock_mhz": min(clocks),
     "max_sm_clock_mhz": max(clocks),
     "median_power_w": statistics.median(powers),
     "max_power_w": max(powers),
     "max_temperature_c": max(temps),
     "throttle_reasons": sorted(reasons),
+    "overrides": overrides,
 }
 print(json.dumps(report, indent=2))
 if total_mib < min_memory_mib:
     raise SystemExit(f"GPU has {total_mib:.0f} MiB; decision rule requires >= {min_memory_mib} MiB")
-if statistics.median(clocks) < min_clock:
-    raise SystemExit(
-        f"median SM clock {statistics.median(clocks):.0f} MHz is below the "
-        f"{min_clock:.0f} MHz floor; this GPU is capped/degraded"
+if median_clock < min_clock:
+    if not allow_low_clock:
+        raise SystemExit(
+            f"median SM clock {median_clock:.0f} MHz is below the "
+            f"{min_clock:.0f} MHz floor; this GPU is capped/degraded "
+            f"(pass --allow-low-clock to record an explicit override)"
+        )
+    print(
+        "\nWARNING: LOW CLOCK OVERRIDE\n"
+        f"  median SM clock {median_clock:.0f} MHz is below the {min_clock:.0f} MHz floor\n"
+        "  overrides=['low_clock'] will be recorded in RUN_REPORT.json\n"
+        "  this run is NOT a healthy-GPU result\n",
+        file=sys.stderr,
     )
 PY
 then
@@ -404,13 +425,32 @@ then
 fi
 cat "$MATMUL_JSON"
 
-"$PYTHON" - "$PREFLIGHT" "$MANIFEST" "$NETWORK_JSON" "$MATMUL_JSON" "$PY_VERSION" "$DRIVER_VERSION" "$CUDA_VERSION" "$GPU_NAME" "$GPU_MEMORY_MIB" <<'PY'
+"$PYTHON" - "$PREFLIGHT" "$MANIFEST" "$NETWORK_JSON" "$MATMUL_JSON" "$PY_VERSION" "$DRIVER_VERSION" "$CUDA_VERSION" "$GPU_NAME" "$GPU_MEMORY_MIB" "$BUNDLE_DIR/requirements.txt" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 preflight_path = Path(sys.argv[1])
 manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+manifest_path = Path(sys.argv[2])
+requirements_path = Path(sys.argv[10])
+
+
+def sha256_file(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def bundle_entry(path):
+    if not path.is_file():
+        return {"path": str(path), "sha256": None, "present": False}
+    return {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "size": path.stat().st_size,
+        "present": True,
+    }
+
 payload = {
     "check_only": False,
     "python": {
@@ -426,6 +466,10 @@ payload = {
     },
     "network": json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")),
     "matmul": json.loads(Path(sys.argv[4]).read_text(encoding="utf-8")),
+    "bundle": {
+        "manifest": bundle_entry(manifest_path),
+        "requirements": bundle_entry(requirements_path),
+    },
 }
 preflight_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -523,6 +567,7 @@ if not checkpoints:
     raise SystemExit("no checkpoints were written")
 
 preflight = json.loads((out / "preflight.json").read_text(encoding="utf-8"))
+overrides = list((preflight.get("matmul") or {}).get("overrides") or [])
 report = {
     "schema_version": 1,
     "run_name": out.name,
@@ -542,6 +587,7 @@ report = {
     },
     "peak_vram_mib": summary.get("peak_vram_mib"),
     "peak_rss_mib": summary.get("peak_rss_mib"),
+    "overrides": overrides,
     "preflight": preflight,
     "gpu": {
         "samples": len(rows),
@@ -557,6 +603,11 @@ report = {
     encoding="utf-8",
 )
 print(json.dumps(report, indent=2))
+if overrides:
+    print(
+        f"WARNING: this run used overrides {overrides}; it is NOT a healthy-GPU result",
+        file=sys.stderr,
+    )
 PY
 
 log "done: $OUTPUT_DIR/RUN_REPORT.json"
