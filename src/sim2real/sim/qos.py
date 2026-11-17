@@ -42,3 +42,12 @@ VLA_RAW_ACTION_QOS = QosSpec(reliability="reliable", durability="volatile", dept
 # Status is diagnostic: latest history is enough, and a late subscriber may
 # still see the last few seconds of state transitions.
 VLA_STATUS_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+# Safety status is a state signal for supervisors and recorders. Keep a short
+# history so a brief scheduler stall does not hide the latest state.
+SAFETY_STATUS_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+# Safety diagnostics are low-rate JSON counters; the latest few are enough.
+SAFETY_DIAGNOSTICS_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+# The controller trajectory is a command. Only the safety node publishes it;
+# reliable keep-last 10 matches a typical JointTrajectoryController subscription
+# and lets a short stall deliver the newest command.
+CONTROLLER_TRAJECTORY_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)

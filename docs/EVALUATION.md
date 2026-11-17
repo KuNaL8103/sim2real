@@ -272,6 +272,26 @@ uses **30000-30999** (training data). Episode seeds are derived with
 `SeedSequence` and stored in the run manifest; the base evaluation seed is also
 recorded.
 
+### Seed ledger
+
+| range | owner | status |
+| --- | --- | --- |
+| 1000-1099 | filter tuning | used |
+| 2000-2059 | reserved | used |
+| 3000-3039 | reserved | used |
+| 4000-4129 | reserved | used |
+| 6000-6059 | filter hold-out | used |
+| 7000-7002 | replay prototype | used |
+| 8000-8059 | reserved | used |
+| 10000-10199 | training/evaluation diagnosis | used |
+| 20000-20999 | closed-loop evaluation | used |
+| **20900-20919** | **Task 11 expert false-positive check** | **20900-20909 used; 20910-20919 reserved** |
+| 30000-30999 | targeted generation | used |
+
+The Task 11 range is carved out of the evaluation range for this one diagnostic
+only. It is not an evaluation seed set and must not be reused for a new choice
+without updating this ledger.
+
 ## Renderer
 
 The training dataset was rendered with **llvmpipe**. Evaluation records

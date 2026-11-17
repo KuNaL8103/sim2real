@@ -6,6 +6,12 @@
 container image publication, or hardware bring-up. The Dockerfile in this
 repository is a CPU-only development image and has **not** been built or pulled.
 
+Task 11 adds a **mock-hardware** control stack
+(`ros2_ws/src/sim2real_control/launch/control_mock.launch.py`) and a software
+safety watchdog. That is plumbing evidence only. Mock hardware does not model
+dynamics, latency, torque, velocity enforcement, or collisions, and it says
+nothing about physical safety.
+
 ## Tiers
 
 | Tier | Target | Status |
@@ -13,6 +19,25 @@ repository is a CPU-only development image and has **not** been built or pulled.
 | dev/test | CPU-only, fake backend | **available**; deterministic `FakeBackend` is the CI default |
 | high-fidelity | MuJoCo, optional Isaac Sim | **MuJoCo headless available**; Isaac Sim **unavailable on this machine** per published requirements (see `ARCHITECTURE.md`) |
 | physical | Franka Panda via ROS 2 / ros2_control | out of scope |
+
+## Physical bring-up
+
+**Physical bring-up is a separate step requiring the user's explicit
+confirmation.** It is not part of Task 11 and was not run. No physical Franka is
+connected to this repository.
+
+The full deployment guide is Task 12. Before any physical bring-up, at minimum:
+
+1. a hardware e-stop in the safety-rated circuit (a software `/estop` is not a
+   safety-rated emergency stop);
+2. a hazard analysis and workspace/limit review against the actual robot model;
+3. a separate gripper action path (on a real Franka the gripper is not an 8th
+   JointTrajectoryController joint);
+4. verified controller/hardware limits, torque/velocity enforcement, and
+   communication-loss behaviour;
+5. a documented safe-state, recovery, and operator procedure.
+
+Do not connect this stack to a physical robot without explicit approval.
 
 ## Container image
 
@@ -57,6 +82,7 @@ shows a green run after the first push.
 
 - Model artifact storage and versioning.
 - Deployment target and rollout procedure.
-- ROS 2 launch composition.
-- Hardware interface and ros2_control configuration.
+- Real robot hardware interface and real ros2_control configuration (Task 11
+  provides only `mock_components/GenericSystem`).
 - Reproducibility pins for GPU environments.
+- Full physical bring-up guide and validation matrix (Task 12).

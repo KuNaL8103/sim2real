@@ -46,6 +46,7 @@ VLA_RAW_ACTION_TOPIC: Final = "/vla/raw_action"
 VLA_STATUS_TOPIC: Final = "/vla/status"
 CONTROLLER_TRAJECTORY_TOPIC: Final = "/joint_trajectory_controller/joint_trajectory"
 SAFETY_STATUS_TOPIC: Final = "/safety/status"
+SAFETY_DIAGNOSTICS_TOPIC: Final = "/safety/diagnostics"
 EVAL_SUMMARY_TOPIC: Final = "/sim2real/eval_summary"
 
 TOPICS: Final[dict[str, str]] = {
@@ -68,6 +69,7 @@ TOPICS: Final[dict[str, str]] = {
     VLA_STATUS_TOPIC: STRING_TYPE,
     CONTROLLER_TRAJECTORY_TOPIC: JOINT_TRAJECTORY_TYPE,
     SAFETY_STATUS_TOPIC: SAFETY_STATUS_TYPE,
+    SAFETY_DIAGNOSTICS_TOPIC: STRING_TYPE,
     EVAL_SUMMARY_TOPIC: STRING_TYPE,
 }
 

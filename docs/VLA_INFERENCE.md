@@ -195,9 +195,13 @@ not a safety or quality claim.
   `/joint_trajectory_controller/joint_trajectory`.
 - No claim that "the VLA controls the robot successfully".
 
-The **Task 11 safety watchdog** is the only consumer allowed to forward
-`/vla/raw_action` to a controller. It must choose the final time convention and
-add the missing jerk/effort limits to `panda.yaml` first.
+The **Task 11 safety watchdog** (`sim2real_control/safety_watchdog_node`) is
+the only consumer allowed to forward `/vla/raw_action` to a controller. It now
+validates workspace/joint/obstacle constraints, applies EMA, chooses the final
+time convention, and publishes only the final command. See `docs/SAFETY.md`
+for the limits, stale-chunk policy, hold behaviour, and the explicit statement
+that mock hardware is not physical safety. The raw `/vla/raw_action`
+convention in this document is unchanged.
 
 ## Live two-camera validation (Task 10b)
 

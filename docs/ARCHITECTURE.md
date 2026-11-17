@@ -1,15 +1,14 @@
 # Architecture
 
-Status: **Task 9.** Simulator backends, `sim_node`, seeded domain randomization,
-a scripted pick-and-place expert, an atomic staging buffer, trajectory filtering,
-a versioned `curated_v1` dataset writer, RGB-D workspace mapping, the
-two-layer LeRobot/Open X dataset builder, and an offline SmolVLA + PEFT LoRA
-fine-tuning pipeline are implemented. Task 9 adds closed-loop policy
-evaluation with reserved seeds, rich per-episode records, paired expert
-comparison, failure-mode sampling (GMM/KDE/neighbour), failure-targeted rollout
-generation, and flywheel guards with a persistent ledger. Task 9 never trains.
-Real Bridge data, physical safety, and Task 10 inference bridging remain
-unimplemented.
+Status: **Task 11.** Simulator backends, `sim_node`, seeded domain
+randomization, a scripted pick-and-place expert, an atomic staging buffer,
+trajectory filtering, a versioned `curated_v1` dataset writer, RGB-D workspace
+mapping, the two-layer LeRobot/Open X dataset builder, an offline SmolVLA +
+PEFT LoRA fine-tuning pipeline, closed-loop evaluation, and the Task 10 ROS 2
+VLA inference bridge are implemented. Task 11 adds the safety watchdog, the
+latched e-stop services, and a **mock-hardware** ros2_control stack. A physical
+robot, physical safety, and the Task 12 orchestrator remain unimplemented;
+mock-hardware tests do not establish physical safety.
 Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
 adds validated randomization profiles and reset-service integration; Task 4 adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
@@ -246,9 +245,9 @@ ROS adapter rules:
 | `sim2real_sim` | `ament_python` | Simulator backend adapter, `/joint_states` owner, reset service | **implemented** (fake, MuJoCo, guarded Isaac) |
 | `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | **implemented** (workspace mapper) |
 | `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node; skeleton otherwise) |
-| `sim2real_control` | `ament_python` | Safety watchdog, trajectory dispatch, e-stop handling | skeleton only |
+| `sim2real_control` | `ament_python` | Safety watchdog, final trajectory dispatch, e-stop services, mock-hardware launch | **implemented** (Task 11; mock hardware only, no physical safety claim) |
 
-## Data flow (planned)
+## Data flow
 
 ```
 scripted expert (Task 4)
@@ -266,11 +265,18 @@ inference (Task 10)
     -> /vla/raw_action                 (JointTrajectory, raw and UNSAFE)
     -> /vla/status                     (String, JSON diagnostics)
 safety/control (Task 11)
-    -> /joint_trajectory_controller/joint_trajectory
-    -> /safety/status
+    -> validate -> EMA -> retime -> final validation
+    -> /joint_trajectory_controller/joint_trajectory   (safety node is the only publisher)
+    -> /safety/status, /safety/diagnostics
+    -> /estop, /estop_reset
+    -> ros2_control (mock_components/GenericSystem in this repository)
 perception (Task 6)
     -> /workspace/pointcloud, /workspace/tsdf_mesh
 ```
+
+`/joint_states` has exactly one owner: `sim_node` **or** the ros2_control
+`joint_state_broadcaster`, never both. The Task 11 launch files refuse the
+combination.
 
 Task 5 writes three separate areas:
 
@@ -304,10 +310,11 @@ left as `TBD` where no decision has been made.
 | `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | `TRIANGLE_LIST` marker; not a collision mesh. |
 | `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter (Task 11 only) | on completed inference, at most `max_inference_rate_hz` (10 Hz default) | reliable, keep-last 10 | **RAW and UNSAFE.** `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `k*dt` relative to `header.stamp`; `header.stamp` = the observation stamp, never the publish time. `frame_id` is empty (joint trajectories are frame-agnostic). Nothing except Task 11's safety node may forward this topic to a controller. |
 | `/vla/status` | `std_msgs/msg/String` | VLA adapter | operator/UI, recorder | 1 Hz | reliable, keep-last 10 | JSON state machine, counters, last latency, and last error. Diagnostic only; never a safety signal. |
-| `/joint_trajectory_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` | safety/control adapter | ros2_control trajectory controller | TBD (task 11) | TBD (task 11) | Only the safety adapter may publish here; raw VLA output must never reach the controller. |
-| `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | TBD (task 11) | TBD (task 11) | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. |
-| `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | latched, depth TBD (task 11) | Latched stop. Recovery requires `/estop_reset` (Task 11); no automatic clearing. |
-| `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | TBD (task 11) | Defined in Task 11. Must only clear the latch after an explicit operator action. |
+| `/joint_trajectory_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` | safety watchdog (only) | ros2_control trajectory controller | on accepted chunk / hold | reliable, keep-last 10 | Only the safety watchdog may publish here; raw VLA output must never reach the controller. Header stamp is zero and point `j` is `(j+1)*command_period_s` from now. |
+| `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | 10 Hz | reliable, keep-last 10 | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. `state` maps STARTING->DEGRADED, OK->NOMINAL, UNSAFE->SAFE_STOP, ESTOP->ESTOP. |
+| `/safety/diagnostics` | `std_msgs/msg/String` | safety watchdog | operator/UI, recorder | 1 Hz | reliable, keep-last 10 | Additive JSON: last decision/reason, per-reason counters, map age/coverage, EMA/retime settings. Diagnostic only; never a safety signal. |
+| `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | on request | reliable service; latched **state** | Latched stop. Idempotent. Recovery requires `/estop_reset`; no automatic clearing. A software e-stop is not a safety-rated emergency stop. |
+| `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | on request | reliable service | Clears the latch only after joint/map inputs have been fresh and valid for `estop_reset_hold_s` and no other unsafe condition holds. No motion is commanded by the reset. |
 | `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
 | `/sim2real/finalize_dataset` | `std_srvs/srv/Trigger` | operator/UI | filter | on request | reliable | Writes the buffered accepted episodes as a new `curated_v1` minor version. Returns `success=false` when nothing is buffered or the write fails; an existing version is never overwritten. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` and `SAMPLING_FAILURE_TARGETED` are supported. A targeted call needs a hash-valid `failure_distribution_ref` and a seed in 30000-30999. A batch runs on one worker thread and a concurrent call is rejected. |
@@ -850,6 +857,91 @@ hash-valid failure distribution, samples feature vectors from the seeded mixture
 maps each to a full valid `RandomizationSample`, and runs the expert with that
 sample applied directly; staged episode metadata carries the distribution id and
 every seed is inside 30000-30999.
+
+## Safety watchdog and mock control (Task 11)
+
+### Module layout
+
+```
+src/sim2real/safety/
+  config.py      strict YAML + Panda limits, margin-shrunk effective bounds
+  types.py       RawChunk, SafetyCommand, ChunkDecision, LimitRatios, reasons
+  limits.py      position/velocity/acceleration/jerk finite differences
+  workspace.py   TCP workspace bounds via sim.kinematics
+  obstacle.py    ObstacleQuery + MapStatus gating
+  smoothing.py   EMA initialised from the measured state
+  retime.py      stale policy and the zero-stamp/(j+1)*dt convention
+  gate.py        STARTING/OK/UNSAFE/ESTOP, counters, no latch on rejected chunks
+  validator.py   end-to-end final-trajectory validation
+configs/safety/default.yaml
+ros2_ws/src/sim2real_control/
+  safety_watchdog_node.py
+  single_owner.py
+  launch/{safety,control_mock}.launch.py
+  urdf/panda_mock.urdf
+  config/ros2_control.yaml
+```
+
+The core is ROS-free. The node converts messages, owns the map worker thread,
+services, timers, status/diagnostics, and the hold command. The controller
+trajectory publisher is the safety node only.
+
+### Validation order
+
+1. joint names/order, finite values, point count, increasing times, future stamp;
+2. finger clip and counter;
+3. stale policy (`reject` or `retime_if_continuous`);
+4. EMA from the measured state;
+5. continuity gate;
+6. TCP workspace + obstacle distance;
+7. position/velocity/acceleration/jerk on the **final** trajectory, with the
+   measured state prepended at `t=0`.
+
+The node never forwards raw input. A rejected chunk does not latch; a watchdog
+failure enters `UNSAFE` and publishes one hold built from the current measured
+state; `ESTOP` latches until `/estop_reset` succeeds after the hold time.
+
+### Command time convention
+
+The safety node emits `header.stamp = 0` and point `j` at
+`(j+1)*command_period_s` from "now". The Jazzy controller documentation says a
+zero stamp means start now (fetched 2026-11-17,
+<https://control.ros.org/jazzy/doc/ros2_controllers/joint_trajectory_controller/doc/trajectory.html>).
+This differs from the raw chunk's `k*dt` from the observation stamp because
+inference latency makes part of the raw schedule past. The raw convention is
+unchanged.
+
+### Map ingestion
+
+`/workspace/pointcloud` is frame `world`, which is the configured safety frame;
+no tf2 lookup is used. A different frame is rejected with
+`TRANSFORM_UNAVAILABLE`. A worker thread converts at most
+`pointcloud_max_points`/`pointcloud_max_bytes`, builds an `ObstacleQuery` on a
+grid expanded by one cell so float32 boundary points (the table top) are
+indexed, and publishes no map if the cloud is malformed. Only the TCP point is
+checked: no whole-arm, swept-volume, or self-collision check. The table and
+manipulated object are in the map; the measured expert false-positive result is
+in `docs/SAFETY.md`.
+
+### Mock control stack
+
+`control_mock.launch.py` starts `controller_manager`, `robot_state_publisher`,
+the `joint_state_broadcaster` and `joint_trajectory_controller` spawners, and
+the safety node. The URDF is a plain kinematic mock (no meshes/xacro), clearly
+labelled not the official Franka description.
+`mock_components/GenericSystem` is documented to mirror commands to states with
+optional Euler/finite-difference dynamics; this launch leaves
+`calculate_dynamics=false`. It does not model dynamics, latency, torque,
+velocity enforcement, or collisions. On a real Franka the gripper is a separate
+action server, so the real path must split the 8th value off (documented, not
+implemented).
+
+### Single-owner rule
+
+`sim_launch.py` refuses `start_ros2_control:=true`; `control_mock.launch.py`
+refuses `start_sim:=true`. The pure `check_single_owner` helper is tested. This
+is a launch-time guard, not a runtime arbitration mechanism: an operator can
+still start two processes manually, which remains a configuration error.
 
 ## Closed-loop evaluation (Task 9)
 
@@ -1714,6 +1806,13 @@ Apache-2.0 LICENSE before copying.
 | 67 | 2026-11-17 | Inference uses a single-slot, latest-observation-wins mailbox and one worker thread | The measured throttled call is ~1.33-1.39 s versus a 0.1 s policy period; an unbounded queue would publish obsolete actions. Callbacks only copy data, so the executor is never blocked |
 | 68 | 2026-11-17 | No torch in the ROS process; the model lives behind the verified policy-server protocol | Keeps ROS and ML ABI/install constraints separate and makes the node testable with fake servers. The node asserts `torch` is absent from `sys.modules` |
 | 69 | 2026-11-17 | The launch file defaults to `policy_backend:=fake` | Nothing heavy starts by default; selecting a checkpoint is explicit. The fake backend holds the current state and makes no policy-quality claim |
+| 71 | 2026-11-17 | Safety command convention is `header.stamp=0` + `(j+1)*command_period_s` from now | The official Jazzy controller docs say zero means start now. The raw chunk's observation-stamped `k*dt` schedule is partly past after inference latency; the safety node retimes only the final command, leaving `/vla/raw_action` unchanged |
+| 72 | 2026-11-17 | `stale_chunk_policy=reject` by default; `retime_if_continuous` is opt-in | With the measured 1.88 s median / 5.90 s max calls, every real 0.9 s chunk is older than the 0.5 s limit; the default deliberately refuses motion rather than replaying stale targets. Reject keeps surviving original offsets; retime replays from now and still passes the continuity/limit checks |
+| 73 | 2026-11-17 | Validate the final smoothed/retimed trajectory, with the measured state at `t=0` | Checking raw input would miss the EMA first step and the controller's interpolation from the current state to the first command point |
+| 74 | 2026-11-17 | On `UNSAFE`/`ESTOP`, publish one hold from the measured state, never zeros or the last chunk | A hold cancels the running trajectory. If the measured state is invalid, publish nothing and report; a fabricated fallback would be unvalidated motion |
+| 75 | 2026-11-17 | `ESTOP` latches; reset requires fresh valid inputs for `estop_reset_hold_s` since the e-stop and no other unsafe condition | A single service call must not clear a stop while the map/joint state is stale. Reset commands no motion; a new validated chunk is required |
+| 76 | 2026-11-17 | `/joint_states` has one owner; launch files refuse `sim_node` + `ros2_control` | Two reliable publishers corrupt state estimation for every consumer. The guard is tested; manual process starts remain a configuration error |
+| 77 | 2026-11-17 | Map query grid is expanded by one cell; point cloud is frame `world` and rejected otherwise | Float32 table-top points sit a few microns below `z=0.42`; expanding the query grid keeps them indexed. The mapper already publishes `world`, so rejecting a different frame is smaller and clearer than adding an unexercised tf2 path |
 
 ## Interface changelog
 
@@ -1722,6 +1821,7 @@ Apache-2.0 LICENSE before copying.
 | v0 | 2026-10-30 | Initial six interfaces: `TrajectoryStep`, `RolloutEpisode`, `FilterMetrics`, `SafetyStatus`, `ResetEnv`, `GenerateRollouts` | Task 1 proposal accepted without field/type refinements |
 | v1 | 2026-11-01 | `TrajectoryStep` adds measured `gripper_position` and `unintended_collision`; new `/sim2real/finalize_dataset` `std_srvs/Trigger` service | Task 5 filtering needs measured gripper state and collision flags; the finalize trigger writes curated output |
 | v2 | 2026-11-01 | New `/workspace/reset_map` `std_srvs/Trigger` service; `/workspace/pointcloud` and `/workspace/tsdf_mesh` now have fixed reliable keep-last 1 QoS and are produced by `sim2real_perception` | Task 6 mapping: consumers need an explicit reset after a scene change without camera jitter, and the latest complete map replaces the previous one |
+| v3 | 2026-11-17 | `/joint_trajectory_controller/joint_trajectory` is produced only by `sim2real_control`; `/safety/status` is reliable keep-last 10; new additive `/safety/diagnostics` `std_msgs/String`; `/estop` and `/estop_reset` are implemented `std_srvs/Trigger` services | Task 11 safety watchdog: the controller needs one validated command source, supervisors need a fixed status rate, and the additive diagnostics keep per-decision counters without changing `SafetyStatus` |
 
 Wire types in `ros2_ws/src/sim2real_msgs` are the source of truth for ROS.
 `src/sim2real/contracts.py` mirrors names and enum values for the pure-Python

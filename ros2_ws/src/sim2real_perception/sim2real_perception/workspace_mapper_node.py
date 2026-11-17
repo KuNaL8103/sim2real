@@ -292,7 +292,8 @@ class WorkspaceMapperNode(Node):
                 self.get_logger().info(
                     "integration mean="
                     f"{self._integration_ms_total / self._integration_count:.1f} ms "
-                    f"(n={self._integration_count}), last={elapsed_ms:.1f} ms"
+                    f"(n={self._integration_count}), last={elapsed_ms:.1f} ms, "
+                    f"by_camera={self.mapper.counters.integrated_by_camera}"
                 )
             if (
                 not result.accepted

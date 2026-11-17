@@ -64,6 +64,11 @@ class PandaConfig:
     acceleration_limits: np.ndarray
     tcp_offset: np.ndarray
     body_frames: tuple[tuple[str, str], ...]
+    # Official FER limits added for the Task 11 safety layer. They are optional
+    # so older configs and tests remain valid; the safety config requires them.
+    jerk_limits: np.ndarray | None = None
+    effort_limits: np.ndarray | None = None
+    torque_rate_limits: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +129,12 @@ def _vec(value: Any, length: int, path: Path, key: str) -> np.ndarray:
     if not np.all(np.isfinite(array)):
         raise ConfigError(f"{path}: {key} must be finite")
     return array
+
+
+def _optional_vec(data: Mapping[str, Any], key: str, length: int, path: Path) -> np.ndarray | None:
+    if key not in data:
+        return None
+    return _vec(data[key], length, path, key)
 
 
 def _positive(value: Any, path: Path, key: str) -> float:
@@ -239,6 +250,17 @@ def _load_panda(path: Path) -> PandaConfig:
     if np.any(velocity_limits <= 0.0) or np.any(acceleration_limits <= 0.0):
         raise ConfigError(f"{path}: velocity_limits and acceleration_limits must be positive")
 
+    jerk_limits = _optional_vec(data, "jerk_limits", 7, path)
+    effort_limits = _optional_vec(data, "effort_limits", 7, path)
+    torque_rate_limits = _optional_vec(data, "torque_rate_limits", 7, path)
+    for name, values in (
+        ("jerk_limits", jerk_limits),
+        ("effort_limits", effort_limits),
+        ("torque_rate_limits", torque_rate_limits),
+    ):
+        if values is not None and np.any(values <= 0.0):
+            raise ConfigError(f"{path}: {name} must be positive")
+
     gripper = _vec(_require(data, "gripper_limits", path), 2, path, "gripper_limits")
     if gripper[0] >= gripper[1]:
         raise ConfigError(f"{path}: gripper_limits must have lower < upper")
@@ -266,6 +288,9 @@ def _load_panda(path: Path) -> PandaConfig:
         acceleration_limits=acceleration_limits,
         tcp_offset=_vec(_require(data, "tcp_offset", path), 3, path, "tcp_offset"),
         body_frames=tuple(body_frames),
+        jerk_limits=jerk_limits,
+        effort_limits=effort_limits,
+        torque_rate_limits=torque_rate_limits,
     )
 
 
@@ -304,6 +329,11 @@ def _load_cameras(path: Path) -> dict[str, CameraConfig]:
                 f"{path}: cameras.{camera.name}.frame_id must be camera_{camera.name}_optical_frame"
             )
     return cameras
+
+
+def load_panda_config(path: str | Path) -> PandaConfig:
+    """Load only ``panda.yaml`` (used by the safety layer and its tests)."""
+    return _load_panda(Path(path))
 
 
 def load_sim_configs(config_dir: str | Path) -> SimConfigs:

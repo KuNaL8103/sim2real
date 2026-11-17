@@ -17,10 +17,20 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+
+
+def _refuse_double_owner(context) -> list:
+    requested = context.perform_substitution(LaunchConfiguration("start_ros2_control"))
+    if requested.lower() in {"1", "true", "yes"}:
+        raise RuntimeError(
+            "sim.launch.py refuses start_ros2_control:=true: sim_node and the "
+            "ros2_control broadcaster must not both publish /joint_states"
+        )
+    return []
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -39,6 +49,12 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument("config_dir", default_value=default_config),
+            DeclareLaunchArgument(
+                "start_ros2_control",
+                default_value="false",
+                description="Must stay false; sim_node and ros2_control cannot share /joint_states",
+            ),
+            OpaqueFunction(function=_refuse_double_owner),
             Node(
                 package="sim2real_sim",
                 executable="sim_node",

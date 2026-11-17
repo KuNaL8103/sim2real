@@ -8,9 +8,12 @@ from pathlib import Path
 from sim2real import contracts
 from sim2real.sim.qos import (
     CAMERA_QOS,
+    CONTROLLER_TRAJECTORY_QOS,
     FILTER_QOS,
     JOINT_STATES_QOS,
     MAP_QOS,
+    SAFETY_DIAGNOSTICS_QOS,
+    SAFETY_STATUS_QOS,
     TASK_INSTRUCTION_QOS,
     TF_QOS,
     TF_STATIC_QOS,
@@ -109,6 +112,28 @@ def test_vla_topics_are_in_the_contract_table():
     documented = parse_contract_table(ARCHITECTURE.read_text(encoding="utf-8"))
     assert documented[contracts.VLA_RAW_ACTION_TOPIC] == contracts.JOINT_TRAJECTORY_TYPE
     assert documented[contracts.VLA_STATUS_TOPIC] == contracts.STRING_TYPE
+
+
+def test_safety_qos_matches_docs():
+    controller_cell = _qos_cell(contracts.CONTROLLER_TRAJECTORY_TOPIC)
+    assert "reliable" in controller_cell and "keep-last 10" in controller_cell
+    assert CONTROLLER_TRAJECTORY_QOS.reliability == "reliable"
+    assert CONTROLLER_TRAJECTORY_QOS.depth == 10
+
+    status_cell = _qos_cell(contracts.SAFETY_STATUS_TOPIC)
+    assert "reliable" in status_cell and "keep-last 10" in status_cell
+    assert SAFETY_STATUS_QOS.reliability == "reliable"
+    assert SAFETY_STATUS_QOS.depth == 10
+
+    diagnostics_cell = _qos_cell(contracts.SAFETY_DIAGNOSTICS_TOPIC)
+    assert "reliable" in diagnostics_cell and "keep-last 10" in diagnostics_cell
+    assert SAFETY_DIAGNOSTICS_QOS.reliability == "reliable"
+    assert SAFETY_DIAGNOSTICS_QOS.depth == 10
+
+    text = ARCHITECTURE.read_text(encoding="utf-8")
+    for service in (contracts.ESTOP_SERVICE, contracts.ESTOP_RESET_SERVICE):
+        row = next(line for line in text.splitlines() if f"`{service}`" in line)
+        assert "reliable service" in row
 
 
 def test_reset_map_service_is_documented():

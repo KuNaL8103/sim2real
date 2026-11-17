@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -41,10 +41,12 @@ class MapperCounters:
     resets_static_tf: int = 0
     resets_service: int = 0
     static_tf_updates: int = 0
+    integrated_by_camera: dict[str, int] = field(default_factory=dict)
 
-    def as_dict(self) -> dict[str, int]:
+    def as_dict(self) -> dict[str, int | dict[str, int]]:
         return {
             "integrated": self.integrated,
+            "integrated_by_camera": dict(self.integrated_by_camera),
             "skipped_no_tf": self.skipped_no_tf,
             "skipped_invalid_depth": self.skipped_invalid_depth,
             "resets_static_tf": self.resets_static_tf,
@@ -93,6 +95,9 @@ class WorkspaceMapper:
         result = self.map.integrate(rgb, depth_m, intrinsics, transform, stamp=stamp_ns)
         if result.accepted:
             self.counters.integrated += 1
+            self.counters.integrated_by_camera[camera] = (
+                self.counters.integrated_by_camera.get(camera, 0) + 1
+            )
             self._last_wall = self.clock()
             self._last_stamp = stamp_ns
         else:

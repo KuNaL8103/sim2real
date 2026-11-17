@@ -1,0 +1,150 @@
+<?xml version="1.0"?>
+<!--
+  KINEMATIC MOCK MODEL, NOT THE OFFICIAL FRANKA DESCRIPTION.
+
+  No meshes and no xacro: this is a deliberately small URDF for exercising the
+  ros2_control plumbing with mock_components/GenericSystem.  Joint position,
+  velocity, acceleration, and effort limits are copied from
+  configs/sim/panda.yaml (official FER values, fetched 2026-11-17).  The link
+  geometry is schematic and must not be used for collision checking.
+-->
+<robot name="sim2real_panda_mock">
+  <link name="panda_link0"/>
+  <link name="panda_link1"/>
+  <link name="panda_link2"/>
+  <link name="panda_link3"/>
+  <link name="panda_link4"/>
+  <link name="panda_link5"/>
+  <link name="panda_link6"/>
+  <link name="panda_link7"/>
+  <link name="panda_hand"/>
+  <link name="panda_finger_joint1"/>
+
+  <joint name="panda_joint1" type="revolute">
+    <parent link="panda_link0"/>
+    <child link="panda_link1"/>
+    <origin xyz="0 0 0.333" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" velocity="2.175" acceleration="15" effort="87"/>
+  </joint>
+  <joint name="panda_joint2" type="revolute">
+    <parent link="panda_link1"/>
+    <child link="panda_link2"/>
+    <origin xyz="0 0 0" rpy="-1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.7628" upper="1.7628" velocity="2.175" acceleration="7.5" effort="87"/>
+  </joint>
+  <joint name="panda_joint3" type="revolute">
+    <parent link="panda_link2"/>
+    <child link="panda_link3"/>
+    <origin xyz="0 -0.316 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" velocity="2.175" acceleration="10" effort="87"/>
+  </joint>
+  <joint name="panda_joint4" type="revolute">
+    <parent link="panda_link3"/>
+    <child link="panda_link4"/>
+    <origin xyz="0.0825 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0718" upper="-0.0698" velocity="2.175" acceleration="12.5" effort="87"/>
+  </joint>
+  <joint name="panda_joint5" type="revolute">
+    <parent link="panda_link4"/>
+    <child link="panda_link5"/>
+    <origin xyz="-0.0825 0.384 0" rpy="-1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" velocity="2.61" acceleration="15" effort="12"/>
+  </joint>
+  <joint name="panda_joint6" type="revolute">
+    <parent link="panda_link5"/>
+    <child link="panda_link6"/>
+    <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.0175" upper="3.7525" velocity="2.61" acceleration="20" effort="12"/>
+  </joint>
+  <joint name="panda_joint7" type="revolute">
+    <parent link="panda_link6"/>
+    <child link="panda_link7"/>
+    <origin xyz="0.088 0 0" rpy="1.57079632679 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" velocity="2.61" acceleration="20" effort="12"/>
+  </joint>
+  <joint name="panda_hand_joint" type="fixed">
+    <parent link="panda_link7"/>
+    <child link="panda_hand"/>
+    <origin xyz="0 0 0.107" rpy="0 0 0"/>
+  </joint>
+  <joint name="panda_finger_joint1" type="prismatic">
+    <parent link="panda_hand"/>
+    <child link="panda_finger_joint1"/>
+    <origin xyz="0 0 0.107" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="0.04" velocity="0.2" acceleration="1.0" effort="20"/>
+  </joint>
+
+  <ros2_control name="PandaMockSystem" type="system">
+    <hardware>
+      <plugin>mock_components/GenericSystem</plugin>
+      <!-- Mirror position commands to position states; no dynamics, latency,
+           torque, velocity enforcement, or collision model. -->
+      <param name="calculate_dynamics">false</param>
+      <param name="disable_commands">false</param>
+    </hardware>
+    <joint name="panda_joint1">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint2">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint3">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint4">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">-1.57079</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint5">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint6">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">1.57079</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_joint7">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">-0.7853</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="panda_finger_joint1">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.04</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+</robot>

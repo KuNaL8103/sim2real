@@ -1,110 +1,372 @@
 # Safety
 
-## Status
+## Status (Task 11)
 
-**Safety logic is not implemented.** Task 1 defines interfaces only. There is no
-safety watchdog, limit checker, obstacle monitor, watchdog timer, or e-stop
-handler in this repository yet. Task 6 adds a workspace map and an
-obstacle-distance query, but that query is a **helper for Task 11**, not a
-safety layer.
+The software safety watchdog and a **mock-hardware** control stack are
+implemented. The watchdog is the only component allowed to forward
+`/vla/raw_action` to a controller. It validates, smooths, retimes, and publishes
+to `/joint_trajectory_controller/joint_trajectory`; raw VLA output is never
+connected to a controller directly.
 
-The interfaces reserved for Task 11 are:
+**Mock hardware is not physical safety.** The control stack uses
+`mock_components/GenericSystem`, which mirrors position commands to position
+states. It does not model dynamics, latency, torque, velocity enforcement, or
+collisions. Passing these tests says nothing about a real robot, a real person,
+or a real workspace. This repository makes no functional-safety, ISO 10218 /
+ISO/TS 15066, or deployment-readiness claim. A software `/estop` is **not** a
+safety-rated emergency stop; a real robot needs a hardware e-stop in the
+safety-rated circuit.
 
-- `/safety/status` (`sim2real_msgs/msg/SafetyStatus`)
-- `/estop` (`std_srvs/srv/Trigger`, latched)
-- `/estop_reset` (`std_srvs/srv/Trigger`, defined in Task 11)
+## Data flow
 
-## What the Task 6 workspace map can and cannot guarantee
+```
+vla_inference_node
+  -> /vla/raw_action        JointTrajectory, RAW and UNSAFE
+  -> safety_watchdog_node   validate -> EMA -> retime -> final check
+  -> /joint_trajectory_controller/joint_trajectory
+  -> ros2_control (mock in this repository)
+  -> /safety/status         SafetyStatus (10 Hz)
+  -> /safety/diagnostics    JSON counters (1 Hz)
+```
 
-The map is a **surface** TSDF over a bounded workspace:
+`/safety/status` is a state signal for supervisors and recorders.
+`/safety/diagnostics` is diagnostic only. Neither is a certified safety bus.
 
-- It stores measured surface geometry within `sdf_trunc_m` of a depth return.
-- It does **not** carve free space, so it cannot prove that a region is clear.
-- It does not model unknown space explicitly. Unknown space is expressed only by
-  `MapStatus` (`NO_DATA`, `STALE`, `LOW_COVERAGE`).
-- A moved object leaves a ghost until the map is reset.
-- The robot self-filter is a coarse sphere-per-link approximation. A grasped
-  object near the hand can be removed with the hand, and geometry between links
-  is not covered.
-- Coverage is an xy-column proxy, not a completeness metric.
+## Layer-by-layer design
 
-Therefore:
+### 1. Input validation (before any motion)
 
-1. **An invalid `MapStatus` is unsafe.** `valid=False`, a stale age, or low
-   coverage must stop or degrade motion; it must never be read as "no obstacle".
-2. A distance above `max_query_distance_m` is a **clamp**, not proof of
-   clearance. Points outside the grid are flagged by `outside_workspace`.
-3. The map is not a collision mesh and must not be treated as one.
-4. Task 11 must rebuild its `ObstacleQuery` from `/workspace/pointcloud` and
-   must not share mutable map state across processes.
+- The chunk must be a `JointTrajectory` with exactly
+  `panda_joint1..7` followed by `panda_finger_joint1`, in that order.
+- `positions` must be finite, have 8 values per point, contain at least one
+  point, and contain at most `max_chunk_points` (50).
+- `time_from_start` must be finite, non-negative, and strictly increasing.
+- The header stamp must not be more than `future_stamp_tolerance_s` in the
+  future.
+- The finger target is clipped into `[0.0, 0.04]` m. The number of clipped raw
+  points is counted and reported (`finger_clipped`, `finger_clipped_points`);
+  clipping is not a rejection by itself.
 
+### 2. Stale-chunk policy (default `reject`)
 
-## Non-negotiable rules
+Points at or before the current age are dropped. This always drops the raw
+`k=0` point once measurable time has passed, matching the Task 10b observation
+that a real chunk's first point is usually already gone.
 
-1. **Mock hardware is not physical safety.** Passing simulator tests says
-   nothing about a real robot, a real person, or a real workspace.
-2. **No physical robot is connected.** This project targets simulation only.
-3. **Raw VLA output never reaches a controller directly.** It must pass through
-   the safety/control adapter (Task 11).
-4. **`NaN` means unknown, not safe.** A missing obstacle distance or stale
-   observation must never be interpreted as clearance.
-5. **E-stop is latched.** It must not clear automatically; recovery is an
-   explicit operator action via `/estop_reset` (Task 11).
-6. **One `/joint_states` publisher.** Running the sim node and ros2_control
-   together is a configuration error.
-7. Safety thresholds must live in configuration, not in scattered literals.
-8. **An invalid workspace map is unsafe.** `NO_DATA`, `STALE`, and
-   `LOW_COVERAGE` block motion; they are not "clear".
-9. **No free-space carving.** A missing obstacle point is not evidence that the
-   space is free.
-10. **The robot self-filter is coarse.** It removes link-centred spheres, not
-    the true robot geometry, and can remove a grasped object.
+- `reject`: reject the whole chunk with `STALE_CHUNK` when every point is past
+  or the age exceeds `max_chunk_age_s`; otherwise forward the surviving points at
+  their **original** offsets. This can only delay motion, never speed it up.
+- `retime_if_continuous`: drop past points and replay the surviving points from
+  now as `(j+1)*command_period_s`. The continuity gate and every limit check
+  still apply to the final retimed trajectory.
 
+**Measured consequence (Task 10b, user-reported):** with a 0.9 s chunk and
+1.88 s median / 5.90 s max calls on the throttled local GPU, the default
+`reject` policy rejects essentially every real chunk: all points are past the
+0.5 s `max_chunk_age_s`. The live chain will not move with the real checkpoint
+on this machine. A 50-point chunk spans 4.9 s (arithmetic estimate, not
+measured). This is a deliberate safe default, not a policy-quality claim.
 
-## Limits verification (2026-11-02)
+### 3. EMA smoothing
 
-The official Franka Emika Robot (FER) limits are in the FCI page
-<https://frankarobotics.github.io/docs/robot_specifications.html> (section
-"Limits for Franka Emika Robot (FER)"). Values below are Joint 1..7 in order.
-`configs/sim/panda.yaml` uses per-joint lists, not a single value.
+`y_k = alpha * x_k + (1-alpha) * y_{k-1}`, with `y_{-1}` = the measured 8-D
+state. `alpha` defaults to 0.5 and must be in `(0, 1]`; `alpha = 1` is an exact
+passthrough. The **final** smoothed trajectory is what is validated, not the
+raw input.
 
-| Quantity | `configs/sim/panda.yaml` | Official FER | Match? |
+### 4. Continuity gate
+
+The smoothed first command point must be within
+`max_first_point_distance_rad` (0.5 rad) of the measured arm state. This catches
+a plausible-looking chunk that starts somewhere else.
+
+### 5. Workspace check
+
+The end-effector (TCP) position is computed with the single-source
+`sim2real.sim.kinematics.tcp_pose` for every command point. It must lie inside
+the configured safety-frame bounds. The bounds are derived from
+`configs/sim/scene.yaml`:
+
+- table top: `z = 0.40 + 0.04/2 = 0.42 m`;
+- table extents: `x in [0.45 - 0.35, 0.45 + 0.35] = [0.10, 0.80]`,
+  `y in [-0.35, 0.35]`;
+- scene workspace, which is the table/zone region of interest:
+  `x in [0.25, 0.65]`, `y in [-0.30, 0.30]`, `z in [0.42, 0.75]`.
+
+The safety config uses those exact scene bounds. Only the TCP point is checked;
+there is no whole-arm or self-collision check.
+
+### 6. Joint limits
+
+Every command is checked with finite differences over the **final** command
+times, with the measured state prepended at `t = 0` because the controller
+interpolates from the current state to the first point. Ratios are reported
+against margin-shrunk limits (`1.0` means exactly at the configured limit).
+
+| quantity | source | applied bound |
+| --- | --- | --- |
+| position | `configs/sim/panda.yaml` `joint_limits` | each joint's range shrunk by `safety_margin_fraction` toward its centre |
+| velocity | `velocity_limits` | `0.8 *` FER limit |
+| acceleration | `acceleration_limits` | `0.8 *` FER limit |
+| jerk | `jerk_limits` | `0.8 *` FER limit |
+| effort / torque rate | `effort_limits`, `torque_rate_limits` | recorded for completeness; **not enforced** because this layer has no dynamics model |
+
+`safety_margin_fraction: 0.8` leaves a 20% reserve for controller tracking
+error, model mismatch, and unmodeled dynamics. It is an engineering margin, not
+a certification or a claim that 20% is sufficient on hardware.
+
+The finger has no FER velocity/acceleration/jerk limit in this project; it is
+clipped to `[0, 0.04]` m and otherwise follows the command. A real Franka
+gripper uses a separate action server, so the real path must split the 8th
+value off instead of sending it to the JointTrajectoryController (documented,
+not implemented).
+
+### 7. Obstacle distance
+
+The node rebuilds an `ObstacleQuery` from `/workspace/pointcloud` in a worker
+thread. The mapper publishes frame `world`, which is also the configured safety
+frame, so no tf2 lookup is needed. A cloud in any other frame is rejected with
+`TRANSFORM_UNAVAILABLE`; the smallest correct option here is to reject rather
+than add a transform path that has not been exercised.
+
+Unknown is not safe:
+
+- missing map -> `MAP_UNAVAILABLE`;
+- `MapStatus` `NO_DATA` -> `MAP_NO_DATA`;
+- `STALE` or an age over `max_map_age_s` -> `MAP_STALE`;
+- `LOW_COVERAGE` or coverage below the configured proxy -> `MAP_LOW_COVERAGE`;
+- an end effector outside the query grid -> `OUTSIDE_MAP` (a clamp is not proof
+  of clearance).
+
+`map_required: false` is an explicit commissioning/test mode: an unavailable
+map is then reported as unknown (`NaN`, `obstacle_map_valid=false`) rather than
+blocking. It is not a safe production setting.
+
+**Limitations.** Only the end-effector point plus a configured safety radius is
+checked. There is no swept volume, whole-arm, or self-collision checking.
+The table and the manipulated object appear in the map. A naive threshold can
+reject a legitimate grasp, so the default threshold is deliberately small
+(1 cm) and the effect is measured rather than assumed.
+
+**Measured effect (Task 11 H21, seeds 20900-20909, fake backend, synthetic
+table + cube map):** 40 chunks from 10 clean expert episodes; **10 rejected**,
+all with `OBSTACLE_TOO_CLOSE` (one chunk per episode, at the grasp/place
+approach). Nine-tenths of the clean chunks passed. The limits were **not**
+loosened to make the check pass. The rejected chunks are a real limitation of a
+TCP-only 1 cm gate near the manipulated object; options are to mask the known
+grasp volume, use a smaller approach radius, or add a real collision model.
+Each option changes what the safety layer can claim and needs review.
+
+The map is a surface TSDF; it does not carve free space, and a moved object
+leaves a ghost until reset.
+
+### 8. Final command time convention
+
+The controller documentation (Jazzy, fetched 2026-11-17,
+<https://control.ros.org/jazzy/doc/ros2_controllers/joint_trajectory_controller/doc/trajectory.html>)
+states that a zero `header.stamp` means "start now" and that
+`time_from_start` is relative to that start. The safety node therefore emits:
+
+- `header.stamp = 0`;
+- point `j` at `(j+1) * command_period_s` (0.1 s default);
+- absolute positions only (no velocities/accelerations/effort).
+
+This differs from the raw chunk's `k*dt` from the observation stamp and from
+the evaluation's linear execution at `observation + k*dt`: after inference
+latency the original schedule is partly in the past, so the retained targets are
+replayed from "now". The raw `/vla/raw_action` convention is unchanged.
+
+The controller documentation also says a new trajectory **replaces** the old
+one (the current implementation forgets the old trajectory), and that
+positions-only interpolation is linear with discontinuous velocity at waypoints.
+A header stamp in the past and elapsed `time_from_start` points are **not**
+specified on the official Jazzy page; those behaviours are **UNVERIFIED**.
+
+### 9. Watchdog and hold
+
+The watchdog runs at 20 Hz. It enters `UNSAFE` when:
+
+- the latest `/joint_states` is older than `max_joint_state_age_s` (0.25 s), or
+- the map is required and missing/stale (or older than `max_map_age_s`), or
+- the configured watchdog/outage bound is exceeded.
+
+On entering `UNSAFE` or `ESTOP`, it publishes **exactly one** hold command:
+the current measured 8-D positions, with one point at `hold_duration_s`. It
+never publishes zeros, the last chunk, or an unvalidated fallback. If the
+measured state itself is invalid (non-finite, wrong size, outside hardware joint
+limits, or finger outside `[0, 0.04]`), it publishes nothing and reports that.
+It recovers automatically from `UNSAFE` when fresh inputs return; it does not
+resume the old chunk.
+
+A rejected chunk does **not** latch and does not by itself publish a hold. A
+previously accepted trajectory may finish, but no new chunk is forwarded until
+one passes every check.
+
+### 10. E-stop and recovery
+
+`/estop` (`std_srvs/Trigger`) latches `ESTOP`, publishes one hold, and returns
+success. Calling it again is idempotent.
+
+`/estop_reset` (`std_srvs/Trigger`) is the only way out:
+
+1. the latch must be set;
+2. joint states and the required map must be fresh and valid;
+3. they must have stayed fresh for `estop_reset_hold_s` (2 s default) **since
+   the e-stop**;
+4. no other unsafe condition may hold.
+
+Otherwise the service returns `success=false` with a clear message. A
+successful reset clears the latch and enters `STARTING`/`OK`; it does **not**
+command motion. The next motion requires a new validated chunk.
+
+**A software `/estop` is not a safety-rated emergency stop.** It depends on the
+ROS process, the OS scheduler, DDS delivery, and the controller. A real robot
+requires a hardware e-stop in the safety-rated circuit and a documented
+safe-state procedure.
+
+## Limits verification
+
+The model is the Franka Emika Robot (FER)/Panda represented by the pinned
+Menagerie `panda.xml`, **not FR3**. Values below are from the official Franka
+page, section "Limits for Franka Emika Robot (FER)", fetched **2026-11-17**:
+<https://frankarobotics.github.io/docs/robot_specifications.html>
+
+| Quantity | Joint 1..7 | In `configs/sim/panda.yaml` |
+| --- | --- | --- |
+| `q_min` (rad) | -2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973 | **yes** |
+| `q_max` (rad) | 2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973 | **yes** |
+| `dq_max` (rad/s) | 2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100 | **yes** |
+| `ddq_max` (rad/s^2) | 15, 7.5, 10, 12.5, 15, 20, 20 | **yes** |
+| `dddq_max` (rad/s^3) | 7500, 3750, 5000, 6250, 7500, 10000, 10000 | **yes** (added Task 11) |
+| `tau_max` (Nm) | 87, 87, 87, 87, 12, 12, 12 | **yes** (added Task 11) |
+| `dtau_max` (Nm/s) | 1000 | **yes** (added Task 11) |
+
+Position, velocity, and acceleration were already verified in Task 6b. Jerk,
+effort, and torque rate were added in Task 11 with the source and date in
+`configs/sim/panda.yaml`. The safety layer enforces position/velocity/
+acceleration/jerk; effort and torque rate are not computed because there is no
+dynamics model in this layer.
+
+## Safe-state behaviour summary
+
+| condition | state | forwarding | hold |
 | --- | --- | --- | --- |
-| `q_min` | -2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973 | same | **yes** |
-| `q_max` | 2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973 | same | **yes** |
-| `dq_max` | 2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61 | 2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100 | **yes** |
-| `ddq_max` | 15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0 | 15, 7.5, 10, 12.5, 15, 20, 20 | **yes** |
-| `dddq_max` (jerk) | **absent** | 7500, 3750, 5000, 6250, 7500, 10000, 10000 rad/s^3 | **MISSING** |
-| `tau_max` (effort) | **absent** | 87, 87, 87, 87, 12, 12, 12 Nm | **MISSING** |
-| `dtau_max` | **absent** | 1000 Nm/s | **MISSING** |
+| startup, no joint state yet | `STARTING` | blocked | no |
+| all inputs fresh, map valid | `OK` | validated chunks only | no |
+| stale joint state / stale or missing required map | `UNSAFE` | blocked | one, if measured state valid |
+| `/estop` | `ESTOP` (latched) | blocked | one, if measured state valid |
+| chunk rejected (limits/workspace/continuity/stale) | state unchanged | that chunk blocked | no |
 
-Position, velocity, and acceleration are verified, not invented. Jerk, effort,
-and torque rate are absent from the YAML and must be added deliberately before
-Task 11. Components that depend on these limits:
+`SafetyStatus` mapping: `STARTING -> STATE_DEGRADED`, `OK -> STATE_NOMINAL`,
+`UNSAFE -> STATE_SAFE_STOP`, `ESTOP -> STATE_ESTOP`. `is_safe` is true only in
+`OK` with no latch.
 
-- the expert planner uses `velocity_limits` and `acceleration_limits`;
-- the filter's limit margins use joint and velocity limits;
-- the future safety node needs position, velocity, acceleration, jerk, effort,
-  and torque rate.
+## What is NOT covered
 
-No YAML or limit code was changed in Task 6b. Recommendation: add the official
-jerk/effort/torque-rate values to `configs/sim/panda.yaml` in a separate,
-reviewed change before the safety work.
+- whole-arm, swept-volume, and self-collision checking;
+- singularity detection or avoidance;
+- payload, inertia, or external-force estimation;
+- torque/effort enforcement (no dynamics model in the safety layer);
+- controller-level torque, velocity, or jerk enforcement (the mock controller
+  mirrors positions);
+- hardware e-stop, safety-rated relays, or a safety PLC;
+- real-robot communication loss, watchdog wiring, or fieldbus timing;
+- calibration error, encoder faults, or frame/extrinsic errors;
+- the table/manipulated-object ambiguity near a grasp (measured above);
+- mutex/real-time guarantees under arbitrary OS load.
 
+## Evidence and non-claims
 
+- Core tests are hardware-free and cover the limit thresholds, workspace/FK,
+  obstacle/map states, EMA, malformed chunks, finger clipping, continuity,
+  stale policies, retiming, the gate/e-stop state machine, config validation,
+  contracts/QoS, and the expert false-positive check.
+- ROS tests cover the rclpy adapter, status fields, services, single-owner
+  launch guard, torch-free import, and a guarded mock-hardware HIL test.
+- The HIL test uses `mock_components/GenericSystem`. It is **not** a physical
+  safety test and does not establish that a real Franka would stop or follow
+  safely.
+- No physical robot is connected. No functional-safety certification is
+  claimed. A real deployment requires a separate hazard analysis, hardware
+  e-stop, validated controller limits, and a documented bring-up.
 
-## Planned Task 11 scope
+## Manual checkpoint (for the user; PENDING)
 
-- Joint position, velocity, acceleration, and jerk limit checks.
-- Observation and action age checks.
-- Obstacle map validity and minimum-distance checks, built from
-  `/workspace/pointcloud` with `sim2real.mapping.ObstacleQuery`.
-- `MapStatus` gating: `NO_DATA`, `STALE`, and `LOW_COVERAGE` are unsafe.
-- Latched e-stop and explicit reset.
-- Safe-stop behaviour when any check fails.
-- Tests for limit violations and stale data.
+These commands are **for the user**. Do not mark this checkpoint passed without
+your confirmation. Use three terminals after building the workspace
+(`source /opt/ros/jazzy/setup.bash && cd ros2_ws && colcon build`).
 
-## Explicit non-claims
+**Terminal A — mock control stack (yours):**
 
-This repository does not claim functional safety, ISO 10218 / ISO/TS 15066
-compliance, or readiness for physical deployment.
+```bash
+source /opt/ros/jazzy/setup.bash
+source ros2_ws/install/setup.bash
+ros2 launch sim2real_control control_mock.launch.py
+```
+
+Observe: `ros2_control_node` loads `mock_components/GenericSystem`;
+`joint_state_broadcaster` and `joint_trajectory_controller` activate; the
+safety node starts. Do **not** start `sim_node`; the launch refuses the
+combination.
+
+**Terminal B — fake map and chunks (yours):**
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ros2_ws/install/setup.bash
+.venv-ros/bin/python scripts/publish_fake_safety_inputs.py --duration-s 120
+```
+
+Observe: a synthetic table map is published at 2 Hz and a raw chunk every 1 s.
+This script never publishes `/joint_states`.
+
+**Terminal C — inspection (yours):**
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ros2_ws/install/setup.bash
+ros2 topic hz /joint_trajectory_controller/joint_trajectory
+ros2 topic echo /safety/status
+ros2 topic echo /safety/diagnostics --once
+```
+
+Expected: controller-topic messages arrive about once per second; status is
+`is_safe=true`, `state=0` (NOMINAL), `obstacle_map_valid=true`, finite
+observation/action ages, and the ratios are at or below 1.0. The mock joint
+follows the last target within 0.01 rad.
+
+**E-stop and reset (Terminal C, yours):**
+
+```bash
+ros2 service call /estop std_srvs/srv/Trigger {}
+# immediately:
+ros2 service call /estop_reset std_srvs/srv/Trigger {}
+# expected: success=false, "inputs fresh for ... < 2.0 s"
+# after at least 2 s of fresh inputs:
+ros2 service call /estop_reset std_srvs/srv/Trigger {}
+# expected: success=true; no motion is commanded by the reset
+```
+
+Expected after `/estop`: `estop_latched=true`, `state=3` (ESTOP), one hold
+command from the measured state, and no new multi-point chunks until reset.
+
+**UNSAFE check (yours):**
+
+Stop Terminal B with Ctrl-C. Within `max_joint_state_age_s`/`max_map_age_s`,
+`/safety/status` becomes `state=2` (SAFE_STOP), `is_safe=false`, and the safety
+node publishes one hold. Restart Terminal B; the status returns to NOMINAL
+without resuming the old chunk.
+
+**RViz (optional, yours):**
+
+```bash
+rviz2
+```
+
+Add a RobotModel display (the mock URDF is published by
+`robot_state_publisher`) and a PointCloud2 display on `/workspace/pointcloud`
+(frame `world`). The mock model should follow the commands. RViz mapping
+confirmation remains PENDING until you report it.
+
+A software `/estop` is not a safety-rated emergency stop. This checkpoint is
+mock-hardware evidence only.

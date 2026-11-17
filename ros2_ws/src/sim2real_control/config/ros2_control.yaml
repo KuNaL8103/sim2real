@@ -1,0 +1,67 @@
+# Mock-hardware ros2_control configuration (Task 11).
+#
+# This stack is for plumbing tests only.  mock_components/GenericSystem mirrors
+# position commands to position states; it does not model dynamics, latency,
+# torque, velocity enforcement, or collisions.  On a real Franka the gripper is
+# a separate action server: the real path must split the 8th value off instead
+# of sending it to a JointTrajectoryController.  That split is documented, not
+# implemented here.
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - panda_joint1
+      - panda_joint2
+      - panda_joint3
+      - panda_joint4
+      - panda_joint5
+      - panda_joint6
+      - panda_joint7
+      - panda_finger_joint1
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_partial_joints_goal: false
+    interpolate_from_desired_state: false
+    set_last_command_interface_value_as_state_on_activation: true
+    interpolation_method: splines
+    # The safety node sends positions-only points.  The last point's derived
+    # velocity is generally nonzero, so allow it; the safety layer already
+    # checked velocity/acceleration/jerk on the command.
+    allow_nonzero_velocity_at_trajectory_end: true
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 0.5
+      panda_joint1:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint2:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint3:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint4:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint5:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint6:
+        trajectory: 0.10
+        goal: 0.05
+      panda_joint7:
+        trajectory: 0.10
+        goal: 0.05
+      panda_finger_joint1:
+        trajectory: 0.10
+        goal: 0.05

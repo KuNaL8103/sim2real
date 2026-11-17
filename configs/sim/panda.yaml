@@ -39,6 +39,14 @@ joint_limits:
 velocity_limits: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
 acceleration_limits: [15.0, 7.5, 10.0, 12.5, 15.0, 20.0, 20.0]
 
+# Official Franka Emika Robot (FER) limits, fetched 2026-11-17 from
+# https://frankarobotics.github.io/docs/robot_specifications.html
+# (section "Limits for Franka Emika Robot (FER)"). These apply to the FER/Panda
+# model in this file, not to FR3. Units: rad/s^3, Nm, Nm/s.
+jerk_limits: [7500.0, 3750.0, 5000.0, 6250.0, 7500.0, 10000.0, 10000.0]
+effort_limits: [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]
+torque_rate_limits: [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0]
+
 # Tool centre point in the hand body frame (metres).
 tcp_offset: [0.0, 0.0, 0.1]
 
