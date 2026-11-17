@@ -43,6 +43,7 @@ FILTER_METRICS_TOPIC: Final = "/sim2real/filter_metrics"
 WORKSPACE_POINTCLOUD_TOPIC: Final = "/workspace/pointcloud"
 WORKSPACE_TSDF_MESH_TOPIC: Final = "/workspace/tsdf_mesh"
 VLA_RAW_ACTION_TOPIC: Final = "/vla/raw_action"
+VLA_STATUS_TOPIC: Final = "/vla/status"
 CONTROLLER_TRAJECTORY_TOPIC: Final = "/joint_trajectory_controller/joint_trajectory"
 SAFETY_STATUS_TOPIC: Final = "/safety/status"
 EVAL_SUMMARY_TOPIC: Final = "/sim2real/eval_summary"
@@ -64,6 +65,7 @@ TOPICS: Final[dict[str, str]] = {
     WORKSPACE_POINTCLOUD_TOPIC: POINT_CLOUD2_TYPE,
     WORKSPACE_TSDF_MESH_TOPIC: MARKER_TYPE,
     VLA_RAW_ACTION_TOPIC: JOINT_TRAJECTORY_TYPE,
+    VLA_STATUS_TOPIC: STRING_TYPE,
     CONTROLLER_TRAJECTORY_TOPIC: JOINT_TRAJECTORY_TYPE,
     SAFETY_STATUS_TOPIC: SAFETY_STATUS_TYPE,
     EVAL_SUMMARY_TOPIC: STRING_TYPE,

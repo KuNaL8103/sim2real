@@ -556,6 +556,13 @@ inference asynchronously, buffer action chunks with observation timestamps,
 reject stale or late chunks, keep the control loop non-blocking, define a
 safe fallback when no fresh action is available, and monitor end-to-end latency.
 
+Task 10 implemented that asynchronous path (latest-observation-wins mailbox,
+observation stamps, stale-chunk counting, `/vla/status`); see
+`docs/VLA_INFERENCE.md`. The pre-registered overfit rule is still unmet: Task 10
+proceeded under the documented exception recorded in `docs/TRAINING.md` section
+17 and `docs/VLA_INFERENCE.md`. A real-checkpoint run of the node is expected to
+fail the task, and no policy-quality claim follows from it.
+
 ### Decision table (recorded, not acted on)
 
 | observation | row that applies | action |

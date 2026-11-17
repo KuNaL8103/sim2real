@@ -780,6 +780,14 @@ instruction handling; absolute-vs-delta action parameterization.
 The existing 9d run (250 steps, loss 0.49675, 0/6 closed loop) did not meet this
 rule; it is not evidence of a pipeline bug by itself.
 
+**Task 10 documented exception (2026-11-17).** The rule above and the bars in
+`configs/evaluation/overfit_rule.yaml` are **unchanged and still unmet** (arm
+0.0333 rad vs 0.010, gripper 0.00688 m vs 0.005, closed loop 0/6 on training
+seeds). Task 10 proceeded anyway because the inference node is policy-agnostic:
+it talks to the verified policy-server protocol, is tested with fake models, and
+makes no policy-quality claim. See `docs/VLA_INFERENCE.md` for the full
+exception text. Retraining remains an open item.
+
 ## 18. Action parameterization statistics (hypothesis only; nothing changed)
 
 Computed from the full `train_v1` parquet (40 episodes, 1,849 frames) with

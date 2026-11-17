@@ -11,9 +11,13 @@ from sim2real.sim.qos import (
     FILTER_QOS,
     JOINT_STATES_QOS,
     MAP_QOS,
+    TASK_INSTRUCTION_QOS,
     TF_QOS,
     TF_STATIC_QOS,
+    VLA_RAW_ACTION_QOS,
+    VLA_STATUS_QOS,
 )
+from tests.test_contracts import parse_contract_table
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURE = ROOT / "docs" / "ARCHITECTURE.md"
@@ -76,6 +80,35 @@ def test_mapping_qos_matches_docs():
         assert "reliable" in cell and "keep-last 1" in cell
     assert MAP_QOS.reliability == "reliable"
     assert MAP_QOS.depth == 1
+
+
+def test_vla_qos_matches_docs():
+    raw_cell = _qos_cell(contracts.VLA_RAW_ACTION_TOPIC)
+    assert "reliable" in raw_cell and "keep-last 10" in raw_cell
+    text = ARCHITECTURE.read_text(encoding="utf-8")
+    raw_row = next(
+        line for line in text.splitlines() if f"`{contracts.VLA_RAW_ACTION_TOPIC}`" in line
+    )
+    assert "RAW and UNSAFE" in raw_row
+    assert "k*dt" in raw_row
+    assert VLA_RAW_ACTION_QOS.reliability == "reliable"
+    assert VLA_RAW_ACTION_QOS.depth == 10
+
+    status_cell = _qos_cell(contracts.VLA_STATUS_TOPIC)
+    assert "reliable" in status_cell and "keep-last 10" in status_cell
+    assert VLA_STATUS_QOS.reliability == "reliable"
+    assert VLA_STATUS_QOS.depth == 10
+
+    instruction_cell = _qos_cell(contracts.TASK_INSTRUCTION_TOPIC)
+    assert "reliable" in instruction_cell and "keep-last 1" in instruction_cell
+    assert TASK_INSTRUCTION_QOS.reliability == "reliable"
+    assert TASK_INSTRUCTION_QOS.depth == 1
+
+
+def test_vla_topics_are_in_the_contract_table():
+    documented = parse_contract_table(ARCHITECTURE.read_text(encoding="utf-8"))
+    assert documented[contracts.VLA_RAW_ACTION_TOPIC] == contracts.JOINT_TRAJECTORY_TYPE
+    assert documented[contracts.VLA_STATUS_TOPIC] == contracts.STRING_TYPE
 
 
 def test_reset_map_service_is_documented():

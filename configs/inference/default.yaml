@@ -1,0 +1,63 @@
+# VLA inference node (Task 10).
+#
+# This file is shipped by the sim2real_vla package (setup.py reads the canonical
+# path), so the installed launch file and the repository tests use one source.
+#
+# Units: seconds (s), hertz (Hz), metres (m), radians (rad). The 8-D action and
+# state vector is seven arm joints (rad) plus panda_finger_joint1 (m, [0, 0.04]).
+schema_version: 1
+
+inference:
+  # `fake` is the default so nothing heavy starts unless asked. `server` talks to
+  # scripts/policy_server.py over the verified stdin/stdout protocol.
+  policy_backend: fake
+
+  # Required for policy_backend=server. Ignored by the fake backend.
+  checkpoint_path: ""
+
+  # Empty means: use $SIM2REAL_POLICY_PYTHON, else <repo>/.venv-ml/bin/python.
+  # The node resolves and checks the interpreter; it never assumes it exists.
+  server_python: ""
+  # Empty means <repo>/scripts/policy_server.py.
+  server_script: ""
+
+  # Cold start (torch import + base model load). The measured remote load was
+  # 34.71 s (user-reported T4 provenance); this is a timeout, not a promise.
+  startup_timeout_s: 120.0
+  # Per-act timeout. The measured local throttled call was ~1.33-1.39 s.
+  call_timeout_s: 30.0
+
+  # Dataset/policy period is 10 Hz. The default horizon is 10 steps (1.0 s),
+  # NOT the training chunk length 50 (5.0 s).
+  policy_period_s: 0.1
+  n_action_steps: 10
+
+  # Input freshness. Ages use local receipt time, so a simulator clock that
+  # starts at zero is fine; camera skew uses the two header stamps.
+  max_state_age_s: 0.5
+  max_camera_skew_s: 0.05
+  max_observation_age_s: 1.0
+
+  # At most one request per 0.1 s. Images arrive at ~2.7 Hz under llvmpipe.
+  max_inference_rate_hz: 10.0
+
+  # -1 means unseeded (logged). A non-negative value resets the server's
+  # sampling seed deterministically. This is an inference seed, not a new
+  # rollout seed; Task 10 draws no rollout seeds.
+  sample_seed: -1
+
+  # true: drop chunk points whose target time has already passed (stale chunk
+  # counted and not published). false: publish the full raw chunk so Task 11 can
+  # retime it. The header stamp always stays the observation stamp.
+  latency_compensation: true
+
+  # Bounded restart policy for start failures, crashes, EOF, and timeouts.
+  max_restarts: 3
+  restart_backoff_s: 0.5
+
+  # Input and chunk bounds.
+  max_instruction_chars: 512
+  max_chunk_length: 100
+
+  # /vla/status publication rate.
+  status_rate_hz: 1.0

@@ -31,3 +31,14 @@ MAP_STATIC_TF_QOS = QosSpec(reliability="reliable", durability="transient_local"
 # Evaluation summaries are published on request; keep the last few so a late
 # subscriber can still see the most recent run.
 EVAL_SUMMARY_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+# Task instructions are commands: the latest replaces the previous one. Volatile
+# durability keeps compatibility with the usual operator publisher (a
+# transient-local subscriber would refuse a volatile publisher).
+TASK_INSTRUCTION_QOS = QosSpec(reliability="reliable", durability="volatile", depth=1)
+# Raw VLA chunks are consumed by the Task 11 safety node. Keep a short history
+# so a brief scheduling stall does not lose every chunk; the safety node still
+# owns staleness checks.
+VLA_RAW_ACTION_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)
+# Status is diagnostic: latest history is enough, and a late subscriber may
+# still see the last few seconds of state transitions.
+VLA_STATUS_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)

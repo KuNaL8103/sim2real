@@ -245,7 +245,7 @@ ROS adapter rules:
 | `sim2real_msgs` | `ament_cmake` | Messages/services for episodes, metrics, safety, reset, rollout generation | interfaces defined; builds if ROS deps present |
 | `sim2real_sim` | `ament_python` | Simulator backend adapter, `/joint_states` owner, reset service | **implemented** (fake, MuJoCo, guarded Isaac) |
 | `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | **implemented** (workspace mapper) |
-| `sim2real_vla` | `ament_python` | Task instruction intake, policy inference, action chunk publication | skeleton only |
+| `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node; skeleton otherwise) |
 | `sim2real_control` | `ament_python` | Safety watchdog, trajectory dispatch, e-stop handling | skeleton only |
 
 ## Data flow (planned)
@@ -260,8 +260,11 @@ export (Task 7)
     -> curated_v1 + LeRobot v3 / Open X fixtures under data/  (ignored by git)
 training (Task 8)
     -> LoRA adapter + checkpoint metadata on disk   (ignored by git)
-inference (Tasks 9-10)
-    -> /vla/raw_action                 (JointTrajectory)
+inference (Task 10)
+    cameras + /joint_states + /task_instruction
+    -> vla_inference_node
+    -> /vla/raw_action                 (JointTrajectory, raw and UNSAFE)
+    -> /vla/status                     (String, JSON diagnostics)
 safety/control (Task 11)
     -> /joint_trajectory_controller/joint_trajectory
     -> /safety/status
@@ -293,13 +296,14 @@ left as `TBD` where no decision has been made.
 | `/camera/wrist/color/image_raw` | `sensor_msgs/msg/Image` | sim node | recorder, perception | 10 Hz | reliable, keep-last 5 | Encoding `rgb8`. |
 | `/camera/wrist/depth/image_raw` | `sensor_msgs/msg/Image` | sim node | recorder, perception | 10 Hz | reliable, keep-last 5 | Encoding `32FC1` in metres. |
 | `/camera/wrist/camera_info` | `sensor_msgs/msg/CameraInfo` | sim node | perception | 10 Hz, identical stamp to images | reliable, keep-last 5 | Must match the wrist depth image. |
-| `/task_instruction` | `std_msgs/msg/String` | operator/UI, evaluation harness | VLA adapter | TBD (task 8) | TBD (task 8) | Instruction changes must not race an in-flight action chunk. |
+| `/task_instruction` | `std_msgs/msg/String` | operator/UI, evaluation harness | VLA adapter | on change (latest wins) | reliable, keep-last 1 | Instruction changes apply to the next observation; an in-flight chunk is not retimed. Volatile durability keeps compatibility with ordinary operator publishers. |
 | `/sim2real/staging_episode` | `sim2real_msgs/msg/RolloutEpisode` | expert collector / sim adapter | filter, recorder | per completed episode | reliable, transient-local, depth 10 | Unfiltered episodes are not training data. No images are embedded; late joiners receive recent completed episodes. |
 | `/sim2real/filtered_episode` | `sim2real_msgs/msg/RolloutEpisode` | filter | dataset exporter, recorder | per accepted episode | reliable, keep-last 50 | Only accepted episodes may be exported. |
 | `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | per episode (accepted, rejected, or invalid) | reliable, keep-last 50 | Metrics explain a decision; they do not override safety stops. |
 | `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | Frame is `world`; no implicit frame. Consumers rebuild an `ObstacleQuery` from this cloud. |
 | `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | `TRIANGLE_LIST` marker; not a collision mesh. |
-| `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter | TBD (task 8) | TBD (task 8) | `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `(k+1)*dt`; `header.stamp` = newest observation stamp. |
+| `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter (Task 11 only) | on completed inference, at most `max_inference_rate_hz` (10 Hz default) | reliable, keep-last 10 | **RAW and UNSAFE.** `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `k*dt` relative to `header.stamp`; `header.stamp` = the observation stamp, never the publish time. `frame_id` is empty (joint trajectories are frame-agnostic). Nothing except Task 11's safety node may forward this topic to a controller. |
+| `/vla/status` | `std_msgs/msg/String` | VLA adapter | operator/UI, recorder | 1 Hz | reliable, keep-last 10 | JSON state machine, counters, last latency, and last error. Diagnostic only; never a safety signal. |
 | `/joint_trajectory_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` | safety/control adapter | ros2_control trajectory controller | TBD (task 11) | TBD (task 11) | Only the safety adapter may publish here; raw VLA output must never reach the controller. |
 | `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | TBD (task 11) | TBD (task 11) | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. |
 | `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | TBD (task 11) | latched, depth TBD (task 11) | Latched stop. Recovery requires `/estop_reset` (Task 11); no automatic clearing. |
@@ -323,7 +327,11 @@ and Camera displays are already configured Best Effort; that alone was not
 sufficient. The mapper's publishers use reliable keep-last depth 1 (`MAP_QOS`),
 because each publication replaces the complete map rather than queueing a
 stream; its camera subscribers use reliable keep-last 5, and its `/tf_static`
-subscription uses reliable transient-local depth 1 (`MAP_STATIC_TF_QOS`).
+subscription uses reliable transient-local depth 1 (`MAP_STATIC_TF_QOS`). The
+VLA inference node publishes `/vla/raw_action` reliable keep-last 10
+(`VLA_RAW_ACTION_QOS`) and `/vla/status` reliable keep-last 10
+(`VLA_STATUS_QOS`); it subscribes to `/task_instruction` reliable keep-last 1
+(`TASK_INSTRUCTION_QOS`).
 
 ## Frames and conventions
 
@@ -1692,6 +1700,10 @@ Apache-2.0 LICENSE before copying.
 | 63 | 2026-11-07 | Decision C: the real path uses LeRobot's processors and dataset stats; `training/normalization.py` is fake/test-only | One normalization path per tensor. The parity test measured a maximum difference of 8.0e-08 versus `NormalizerProcessorStep`; applying both would normalize twice |
 | 64 | 2026-11-07 | LoRA targets are resolved against the loaded model and passed to PEFT as exact module names | PEFT 0.21.2 turns a list into a set and loses regex matching; the verified 37-module scope is 1,485,312 trainable parameters (0.329%) |
 | 65 | 2026-11-07 | torch 2.11.0+cu126 is the verified GPU wheel for driver 551.76 | A scratch-venv 2048x2048 CUDA matmul passed (sum 141957.375); cu124 has no CPython 3.12 torch satisfying `>=2.7,<2.12`; cu128 was not tested |
+| 66 | 2026-11-17 | `/vla/raw_action` uses `time_from_start = k*dt` (k=0 is the first action) and `header.stamp` = observation stamp | Matches the evaluation runner's default linear execution: action k is applied at observation time + k*dt, with linear interpolation between consecutive actions. A JointTrajectory controller conventionally uses `(k+1)*dt`; Task 11 owns the retiming decision, and the raw chunk keeps the stamp plus per-point offsets so it can be retimed without information loss |
+| 67 | 2026-11-17 | Inference uses a single-slot, latest-observation-wins mailbox and one worker thread | The measured throttled call is ~1.33-1.39 s versus a 0.1 s policy period; an unbounded queue would publish obsolete actions. Callbacks only copy data, so the executor is never blocked |
+| 68 | 2026-11-17 | No torch in the ROS process; the model lives behind the verified policy-server protocol | Keeps ROS and ML ABI/install constraints separate and makes the node testable with fake servers. The node asserts `torch` is absent from `sys.modules` |
+| 69 | 2026-11-17 | The launch file defaults to `policy_backend:=fake` | Nothing heavy starts by default; selecting a checkpoint is explicit. The fake backend holds the current state and makes no policy-quality claim |
 
 ## Interface changelog
 

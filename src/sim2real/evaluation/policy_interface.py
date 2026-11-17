@@ -18,6 +18,7 @@ the batch.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -45,6 +46,7 @@ from sim2real.expert import (
     parse_instruction,
     run_episode,
 )
+from sim2real.joint_state import state_from_parts
 from sim2real.sim import create_backend
 from sim2real.training.checkpoint import METADATA_NAME, file_sha256
 
@@ -106,9 +108,7 @@ class Policy(Protocol):
 
 def _state_from_observation(observation: Any) -> np.ndarray:
     robot = observation.robot_state
-    return np.concatenate(
-        [np.asarray(robot.joint_positions, dtype=np.float64), [float(robot.gripper_position)]]
-    )
+    return state_from_parts(robot.joint_positions, robot.gripper_position)
 
 
 class ZeroPolicy:
@@ -478,17 +478,20 @@ class CheckpointPolicy:
             raise PolicyError(f"policy server pipe closed: {exc}") from exc
 
     def _recv(self, timeout_s: float | None = None) -> tuple[dict[str, Any], list[bytes]]:
-        if not self._alive() or self._process is None or self._process.stdout is None:
+        # Capture the process once: ``abort()`` may run on another thread during
+        # shutdown and set ``_process`` to None between checks.
+        process = self._process
+        if process is None or process.poll() is not None or process.stdout is None:
             raise PolicyError("policy server died")
         timeout = self._timeout_s if timeout_s is None else timeout_s
         try:
-            ready, _, _ = select.select([self._process.stdout], [], [], timeout)
+            ready, _, _ = select.select([process.stdout], [], [], timeout)
         except (OSError, ValueError) as exc:
             raise PolicyError(f"policy server select failed: {exc}") from exc
         if not ready:
             raise PolicyError(f"policy server timed out after {timeout:.1f} s")
         try:
-            return read_packet(self._process.stdout)
+            return read_packet(process.stdout)
         except ProtocolError as exc:
             raise PolicyError(f"malformed policy-server frame: {exc}") from exc
 
@@ -533,32 +536,33 @@ class CheckpointPolicy:
         if ready.get("type") != "ready":
             raise PolicyError(f"expected ready, got {ready.get('type')!r}")
 
-    def reset(self, task_instruction: str, seed: int) -> None:
+    def start(self) -> None:
+        """Start the server and complete the handshake, without resetting it.
+
+        ``ready`` is only accepted after the server sends its ``ready`` packet;
+        callers may use this to separate cold start from the first action.
+        """
         if self._process is not None and self._process.poll() is None and self._ready:
-            reset: dict[str, Any] = {"type": "reset"}
-            if self._deterministic_sampling:
-                reset["sample_seed"] = int(seed)
-            self._send(reset)
-            reply, _ = self._recv()
-            if reply.get("type") == "error":
-                raise PolicyError(f"policy server reset failed: {reply.get('message')}")
-            if not reply.get("ok"):
-                raise PolicyError("policy server refused the reset")
-            self.info["sample_seed"] = reply.get("sample_seed")
-        else:
-            if self._process is not None:
-                self.close()
-            self._start()
-            self._handshake()
-            self._ready = True
-            if self._deterministic_sampling:
-                self._send({"type": "reset", "sample_seed": int(seed)})
-                reply, _ = self._recv()
-                if reply.get("type") == "error":
-                    raise PolicyError(f"policy server reset failed: {reply.get('message')}")
-                if not reply.get("ok"):
-                    raise PolicyError("policy server refused the reset")
-                self.info["sample_seed"] = reply.get("sample_seed")
+            return
+        if self._process is not None:
+            self.close()
+        self._start()
+        self._handshake()
+        self._ready = True
+
+    def reset(self, task_instruction: str, seed: int) -> None:
+        if not (self._process is not None and self._process.poll() is None and self._ready):
+            self.start()
+        reset: dict[str, Any] = {"type": "reset"}
+        if self._deterministic_sampling:
+            reset["sample_seed"] = int(seed)
+        self._send(reset)
+        reply, _ = self._recv()
+        if reply.get("type") == "error":
+            raise PolicyError(f"policy server reset failed: {reply.get('message')}")
+        if not reply.get("ok"):
+            raise PolicyError("policy server refused the reset")
+        self.info["sample_seed"] = reply.get("sample_seed")
         self._task_instruction = task_instruction
 
     def act(self, observation: PolicyObservation) -> ActionChunk:
@@ -618,6 +622,28 @@ class CheckpointPolicy:
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
+
+    def abort(self) -> None:
+        """Kill the server immediately (used to unblock a hung ``act`` call).
+
+        Unlike :meth:`close`, this does not wait for a graceful protocol close.
+        It is safe to call from a different thread than ``act``; the blocked
+        read then sees end-of-stream and raises ``PolicyError``.
+        """
+        process = self._process
+        self._process = None
+        self._ready = False
+        if process is None:
+            return
+        if process.poll() is None:
+            with contextlib.suppress(OSError):
+                process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=2.0)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                with contextlib.suppress(OSError):
+                    stream.close()
 
 
 __all__ = [

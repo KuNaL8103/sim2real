@@ -4,6 +4,13 @@ from glob import glob
 from setuptools import find_packages, setup
 
 package_name = "sim2real_vla"
+here = os.path.abspath(os.path.dirname(__file__))
+repo_inference_configs = os.path.join(here, "..", "..", "..", "configs", "inference")
+# colcon requires relative data_files sources; resolve the canonical repo configs.
+inference_configs = [
+    os.path.relpath(path, here)
+    for path in sorted(glob(os.path.join(repo_inference_configs, "*.yaml")))
+]
 
 setup(
     name=package_name,
@@ -13,7 +20,8 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
-        (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
+        # Ship the canonical config so `ros2 launch` works from the install tree.
+        (os.path.join("share", package_name, "config"), inference_configs),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,5 +31,9 @@ setup(
         "ROS 2 node adapters for VLA inference, task instructions, and action chunk publication."
     ),
     license="Apache-2.0",
-    entry_points={"console_scripts": []},
+    entry_points={
+        "console_scripts": [
+            "vla_inference_node = sim2real_vla.vla_inference_node:main",
+        ]
+    },
 )

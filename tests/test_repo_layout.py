@@ -23,6 +23,7 @@ REQUIRED_DIRS = [
     "ros2_ws/src/sim2real_control",
     "scripts",
     "src/sim2real",
+    "src/sim2real/inference",
     "tests",
 ]
 
@@ -66,6 +67,7 @@ CONFIG_NAMES = [
     "training",
     "evaluation",
     "safety",
+    "inference",
 ]
 
 
