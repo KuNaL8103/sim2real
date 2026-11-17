@@ -449,3 +449,66 @@ added to Git and `.gitignore` was not changed.
   launcher's `--venv DIR` selects the environment directory and `--python PATH`
   selects the interpreter used to create it.
 
+### Prepared follow-up run (not run, not uploaded)
+
+Archive: `outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz`
+(95,934,401 bytes, sha256
+`3103d5a631efc0ef07164b9725baa7315510e52eceebb50f1217413311dcaa44`; MANIFEST
+commit `3ddf1123234a98e7a882092e143d6fc1c4121de9`; sidecar
+`...tar.gz.bundle_info.json`). It changes only `training.max_steps`
+(1,000 -> 2,000) via
+`outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote_2000.yaml`.
+
+Laptop (WSL, repository root):
+
+```bash
+sha256sum outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz
+scp outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz \
+    outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz.bundle_info.json \
+    <USER@REMOTE>:~/
+ssh <USER@REMOTE> 'mkdir -p ~/sim2real_remote'
+```
+
+Remote machine:
+
+```bash
+nvidia-smi --query-gpu=name,memory.total,driver_version,clocks.sm,clocks.max.sm --format=csv
+python3 --version
+sha256sum ~/sim2real_remote_3ddf112_20261117T084815Z.tar.gz
+cd ~/sim2real_remote
+tar -xzf ~/sim2real_remote_3ddf112_20261117T084815Z.tar.gz
+# preflight only (does not check VRAM/clock; it exits before those guards)
+outputs/remote_bundle_payload/remote_train.sh --check-only \
+  --bundle-dir outputs/remote_bundle_payload \
+  --config outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote_2000.yaml \
+  --output-dir outputs/remote/overfit_remote_2000
+# full run in tmux; the default clock gate is a hard stop
+tmux new -s sim2real
+outputs/remote_bundle_payload/remote_train.sh \
+  --bundle-dir outputs/remote_bundle_payload \
+  --config outputs/remote_bundle_payload/configs/training/smolvla_lora_overfit_remote_2000.yaml \
+  --output-dir outputs/remote/overfit_remote_2000
+# clock monitor in a second pane
+nvidia-smi --query-gpu=timestamp,clocks.sm,power.draw,temperature.gpu,utilization.gpu \
+  --format=csv,noheader,nounits -l 2
+```
+
+If a low clock is genuinely acceptable for a diagnostic only, add
+`--allow-low-clock`; the run then prints a warning and records
+`overrides: ["low_clock"]`, and the verifier rejects it unless
+`--accept-overrides` is passed. Do **not** use that flag for evidence.
+
+Laptop, after the run:
+
+```bash
+mkdir -p outputs/remote/overfit_remote_2000
+rsync -av <USER@REMOTE>:~/sim2real_remote/outputs/remote/overfit_remote_2000/ \
+    outputs/remote/overfit_remote_2000/
+PYTHONPATH=src .venv-ml/bin/python scripts/verify_remote_checkpoint.py \
+  --checkpoint outputs/remote/overfit_remote_2000/checkpoint-00002000 \
+  --config configs/training/smolvla_lora_overfit_remote_2000.yaml \
+  --run-report outputs/remote/overfit_remote_2000/RUN_REPORT.json \
+  --bundle-info outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz.bundle_info.json
+```
+
+
