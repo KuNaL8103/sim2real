@@ -3,8 +3,8 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=608 failed=0 skipped=20 errors=0 | date=2026-11-17 | base_commit=1d8d882
-- Last verified ROS test run: passed=627 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=1d8d882
+- Last verified test run: passed=649 failed=0 skipped=28 errors=0 | date=2026-11-17 | base_commit=6fbdc9d
+- Last verified ROS test run: passed=676 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=6fbdc9d
 - Task 1 status: complete
 
 The Task 10b checks used the code commit `1d8d882` (scheduler, status
@@ -22,6 +22,116 @@ side:
 skipped** (6 `sim2real_msgs` + 1 CTest + 6 pytest). `.venv-ros` was **627/6**
 and `run_ml_tests.sh` **4 passed / 1 deselected**. `.venv-ml` was not rebuilt;
 see the deviations below.
+
+## Task 11 status: safety watchdog and mock control (2026-11-17)
+
+Implemented the ROS-free safety core (`src/sim2real/safety/`), the
+`sim2real_control` `safety_watchdog_node`, the latched `/estop` and
+`/estop_reset` services, `/safety/status` and additive `/safety/diagnostics`,
+strict `configs/safety/default.yaml`, the verified FER jerk/effort/torque-rate
+limits in `configs/sim/panda.yaml`, and a **mock-hardware** ros2_control stack
+(plain mock URDF, `joint_state_broadcaster`, `joint_trajectory_controller`,
+`mock_components/GenericSystem`). `sim2real_control` is no longer a skeleton.
+
+The safety node is the only publisher of
+`/joint_trajectory_controller/joint_trajectory`. It validates joint
+names/order, finite values, point count, increasing times, future stamp, finger
+clipping, stale policy, EMA, continuity, TCP workspace, obstacle distance, and
+position/velocity/acceleration/jerk on the **final** smoothed/retimed
+trajectory. It publishes one hold from the measured state on `UNSAFE`/`ESTOP`
+and never zeros or the last chunk. A rejected chunk does not latch; `ESTOP`
+does. A software e-stop is **not** safety-rated, and mock hardware is **not**
+physical safety.
+
+**Verified counts in this session (sklearn absent in the core `.venv`):**
+
+| suite | result |
+| --- | --- |
+| core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` | **649 passed / 0 failed / 28 skipped / 0 errors** |
+| `.venv-ros` pytest (built ROS + sourced) | **676 passed / 0 failed / 6 skipped / 0 errors** |
+| `colcon build` / `colcon test` / `colcon test-result --verbose` | **5 packages built; 22 tests / 0 errors / 0 failures / 0 skipped** |
+| `scripts/run_ml_tests.sh` | **4 passed / 1 deselected** |
+| `scripts/ci_parity.sh` | **647 passed / 30 skipped**, ROS half `22 tests / 0 failures / 8 skipped` (scipy/open3d shadowed) |
+| `scripts/ci_parity.sh --clean-clone` at `6fbdc9d` | **646 passed / 31 skipped** |
+
+**Carry-over A1.** The two timing-sensitive tests were made deterministic. The
+0.4 s hello/call-timeout test now waits for the explicit READY state before
+submitting and uses a client timeout with margin; it passed **10/10** alone. The
+sim-node rate test now uses a 5 s window and a 40% floor (8 Hz), which still
+catches the documented 1.87-3.28 Hz and 4.98-6.5 Hz starvation regressions; it
+passed **10/10** alone. Both are test-only changes.
+
+**Carry-over A2.** `startup_timeout_s` default raised from 120 s to **180 s** in
+both `configs/inference/default.yaml` and `InferenceConfig`, with a test that
+they agree and that the validator still bounds the value. Task 10b measured
+time-to-ready **107.38 s**; this is the only default change.
+
+**Carry-over A3 (live two-camera mapping, 2026-11-17).** With MuJoCo headless
+plus `workspace_mapper_node`: `/workspace/pointcloud` measured **2.001 Hz**
+(window min 0.488 s, max 0.504 s), `frame_id=world`, **666 points**,
+`point_step=16`. The mapper's own new per-camera counters at n=160 were
+`{'overhead': 80, 'wrist': 79}`: **both cameras are integrated**. Before Task
+10b the wrist was starved (overhead-only), so earlier Task 6 mapping claims
+that implied two-camera operation were overhead-only evidence; the corrected
+wording is in `docs/ARCHITECTURE.md`. RViz visual confirmation remains
+**PENDING** for the user.
+
+**Time convention and stale decision.** The safety command uses
+`header.stamp=0` and point `j` at `(j+1)*0.1 s` from now. The Jazzy controller
+docs (fetched 2026-11-17) say zero means start now. The raw
+`/vla/raw_action` convention is unchanged. Default `stale_chunk_policy=reject`:
+all-past or age over `max_chunk_age_s=0.5 s` rejects; surviving points keep
+their original offsets. `retime_if_continuous` is opt-in. With the Task 10b
+user-reported 1.88 s median / 5.90 s max calls, the default rejects essentially
+every real chunk here; the live chain will not move with the real checkpoint.
+A 50-point chunk spans 4.9 s (arithmetic estimate, not measured).
+
+**Expert false-positive check (H21, CPU only).** Seeds **20900-20909** (range
+20900-20919 reserved in the seed ledger): 10 clean FakeBackend expert episodes,
+**40 chunks** through the validator with a synthetic table + cube map:
+**10 rejected**, all **`OBSTACLE_TOO_CLOSE`**, exactly one per episode at the
+grasp/place approach. Limits were not loosened. This is the measured cost of a
+TCP-only 1 cm obstacle gate near the manipulated object; options are documented
+in `docs/SAFETY.md`.
+
+**Mock HIL evidence (NOT physical safety).** The mock stack + safety node +
+fake map/chunk publisher was run live: a valid chunk was forwarded (3 points,
+zero header stamp), the mock joint followed the final target within 0.01 rad,
+`/estop` latched and stopped further forwarding, immediate reset was refused,
+reset after the 2 s hold succeeded, and a 0.6 s-old chunk was rejected. The
+same path is a guarded automated test in `sim2real_control`; it skips with an
+explicit reason if `controller_manager` is unavailable.
+
+**Live headless graph check (fake inference backend, no GPU, no `sim_node`).**
+The mock stack, `vla_inference_node policy_backend:=fake`, and
+`scripts/publish_fake_safety_inputs.py --cameras` were run together on
+`ROS_DOMAIN_ID=81`. `ros2 node list` showed `controller_manager`,
+`joint_state_broadcaster`, `joint_trajectory_controller`,
+`safety_watchdog_node`, `vla_inference_node`, `robot_state_publisher`, and the
+mock hardware node. `ros2 topic info
+/joint_trajectory_controller/joint_trajectory -v` reported **Publisher count
+1, node `safety_watchdog_node`**. One instruction produced a real
+`/vla/raw_action` chunk; the safety node forwarded a command with
+`header.stamp=0`; `/safety/status` then reported `is_safe=true`, `state=0`,
+finite `min_obstacle_distance_m=0.1`, position ratio `0.3388`, and zero
+velocity/acceleration/jerk ratios for the hold chunk. A direct client call to
+`/estop` latched, an immediate `/estop_reset` was refused ("inputs have not
+been fresh for 2.0 s"), and a reset after the hold succeeded. The CLI
+`ros2 service call` can spend longer than 2 s on service discovery, so the
+manual checkpoint should use an already-discovered client when testing the
+refusal boundary.
+
+**Single-owner rule.** `sim.launch.py` refuses `start_ros2_control:=true` and
+`control_mock.launch.py` refuses `start_sim:=true`; the pure guard is tested.
+`/joint_states` still has exactly one owner. Manual process starts remain a
+configuration error.
+
+**Open/pending for Task 11:** manual checkpoint (PENDING user confirmation; no
+pass claimed), CI confirmation by the user in the Actions tab, RViz visual
+mapping confirmation, remote provenance (user-reported, no audited `as_used/`),
+latency runs 3/4 NOT RUN, `.venv-ml` rebuild (needs approval), MoveIt, Isaac
+Sim, and any physical bring-up (Task 12, explicit confirmation required).
+No policy-quality claim and no physical-safety claim is made.
 
 ## Task 10 status: ROS 2 VLA inference node (2026-11-17)
 
@@ -324,11 +434,20 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   measure one valid real-checkpoint run (run 2) and record runs 3/4 as NOT RUN
   under the approved 16-minute hard stop.
 - [x] Make colcon count the `sim2real_vla` tests (13 tests / 0 failures).
-- [ ] **Manual checkpoint (PENDING user confirmation):** inspect both cameras,
-  `/vla/status`, `/vla/raw_action`, and server-kill recovery with the commands
-  in `docs/VLA_INFERENCE.md`. Do not mark this passed without the user.
+- [ ] **Task 10 manual checkpoint (PENDING user confirmation):** inspect both
+  cameras, `/vla/status`, `/vla/raw_action`, and server-kill recovery with the
+  commands in `docs/VLA_INFERENCE.md`. Do not mark this passed without the user.
+- [ ] **Task 11 manual checkpoint (PENDING user confirmation):** run the mock
+  stack and fake chunk publisher, observe `/safety/status`, trigger `/estop`,
+  try `/estop_reset` immediately (expect refusal) and after the hold (expect
+  success), stop the map publisher and observe UNSAFE, and (if RViz is
+  available) the mock model following commands. Commands are in
+  `docs/SAFETY.md` and `docs/STATUS.md`; do not mark this passed without the
+  user.
 - [ ] Confirm this push's GitHub Actions tab (supporting evidence only; the user
-  confirms the Actions tab).
+  confirms the Actions tab). Task 11 CI is not yet confirmed.
+- [ ] RViz visual confirmation of `/workspace/pointcloud` with both cameras
+  (PENDING; the headless 2.001 Hz / 666-point / both-camera check passed).
 - [ ] Run the prepared 2,000-step follow-up
   (`configs/training/smolvla_lora_overfit_remote_2000.yaml`) on a GPU that
   passes the clock/memory gate; not run and not uploaded in Task 9i.
