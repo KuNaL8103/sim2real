@@ -319,3 +319,133 @@ The exact protocol (episodes, batch/steps arithmetic, convergence rule,
 checkpoints, local closed-loop evaluation and interpretation table) is in
 `docs/TRAINING.md` section 15. Do not redefine convergence after seeing the
 loss curve.
+
+## Task 9i: first remote overfit result and provenance audit (2026-11-17)
+
+The first real remote overfit run returned. This section records what was
+checked locally, every deviation from the bundle protocol, and what remains
+unverified. The pre-registered rule in `docs/TRAINING.md` section 17 and
+`configs/evaluation/overfit_rule.yaml` was **not** edited.
+
+### What is verified locally (file hashes)
+
+Returned tree: `outputs/remote/overfit_remote/` (10 checkpoints at steps
+100-1,000, `RUN_REPORT.json`, `losses.jsonl` with 1,000 rows, `train.log`,
+`gpu_monitor.csv` with 1,289 samples, `preflight.json`, `network.json`,
+`matmul.json`, `eval_teacher_forced.json`, and two closed-loop run directories).
+There is **no** `as_used/` directory: the requirements.txt and MANIFEST.json
+that the remote actually used were **not saved**, so their "as used" hashes are
+**UNVERIFIED**.
+
+Checked in this session:
+
+- All 10 `checkpoint_metadata.json` hashes and all 10 adapter-directory hashes
+  equal the values in `RUN_REPORT.json` (`ALL_MATCH True`).
+- `stats_file_hash` `a25f62ab...21dd5` equals the local `train_v1/meta/stats.json`
+  and the d7a0c90 bundle's recorded stats hash.
+- `config_hash` `4bf236f2...84a4a` equals the d7a0c90 bundle's
+  `expected_checkpoint_metadata.config_hash` for the overfit config.
+- `scripts/verify_remote_checkpoint.py --handshake cpu` printed
+  `checkpoint verified` for `checkpoint-00001000` (43 s CPU load).
+- Bundle copies (the baseline, not what the remote used): archive sha256
+  `658df551...0afe4e`, `requirements.txt` sha256 `9084c93b...bb632e00`
+  (contains `torch==2.11.0+cu126`, `torchvision==0.26.0+cu126`,
+  `torchcodec==0.11.1+cpu`), `MANIFEST.json` sha256 `b5cbcc3d...8c5cf97c`.
+
+`RUN_REPORT.json` records `git_commit d7a0c90c4077a8f9bf4ffbbe79aa841c1b0f51a5`,
+`git_dirty false` (per checkpoint), T4 / driver 580.82.07 / CUDA 13.0,
+`median_sm_clock_mhz` **705** in preflight and **915** during training,
+`peak_vram_mib 1725.03`, `final_loss 0.14529`, `last20_mean_loss 0.24210`,
+`wall_time_s 1305`, `step_time_s.median 1.21300`.
+
+**The `git_dirty=false` field does not prove the training code matched
+d7a0c90.** It was produced after `git update-index --skip-worktree` hid local
+edits to `requirements.txt` and `MANIFEST.json`; `git status --porcelain` is
+therefore blind to those files, and the trainer reads only the flag. The
+config hash and dataset stats hash are independently consistent with the bundle,
+but the **code identity is unverified**.
+
+### Deviations from the bundle protocol
+
+| # | Deviation (what) | Why (as reported) | Expected effect on results | Evidence |
+| --- | --- | --- | --- | --- |
+| 1 | Launcher's low-clock exit patched to pass | T4 measured 705 MHz median in preflight, below the 1,000 MHz floor | **No numerical effect** (clock speed changes wall time, not arithmetic); makes the run **not healthy-GPU** by the gate | `preflight.json`/`matmul.json`: median 705, min 645, max 765 MHz; `RUN_REPORT.gpu.median_sm_clock_mhz` 915 |
+| 2 | `requirements.txt` edited (`torchcodec 0.11.1+cpu` did not resolve) | Local-version pin is not published for that platform; see the exporter fix below | No expected numerical effect: torchcodec is a video decoder and this dataset is read from parquet images; **environment is not the pinned one** | Bundle ships `torchcodec==0.11.1+cpu`; as-used file not saved (`as_used/` absent) |
+| 3 | `MANIFEST.json` hash edited to match the edited requirements | Hash guard would otherwise fail | Makes the manifest guard pass while the payload differs; **as-used manifest hash is therefore UNVERIFIED** | Same: as-used files were not saved; bundle MANIFEST sha256 `b5cbcc3d...` |
+| 4 | A different Python 3.12 environment created with `uv` | Interpreter route differed from `pip`/`--venv` | Package set may differ from the pins. Metadata records python 3.12.3, torch 2.11.0+cu126, lerobot 0.6.1, peft 0.21.2 | `checkpoint_metadata.json.library_versions` |
+| 5 | `git update-index --skip-worktree` used to hide the dirty tree | Let the clean-tree guard pass | **Invalidates `git_dirty=false`** as evidence; see above | Reported by the user; not independently reproducible in this clone |
+| 6 | Closed loop run on evaluation seeds 20000/20004, not training seeds 10000/10004 | Not stated | Those 6 episodes are **generalisation to new poses**, not the pre-registered secondary check. All 6 were `POLICY_ERROR` with 0 control steps | `eval_closed_loop_seed20000/`, `..._seed20004/`: 3 + 3 records, all `PolicyError: policy server timed out after 30.0 s` |
+| 7 | `.venv-ml` locally gained `scipy 1.18.1` and `mujoco 4.0.1` (+ `mujoco-core`, `mujoco-studio`, `mujoco-studio-wasm`) | Needed to run the local evaluation scripts | Local evaluation only; the design says `.venv-ml` must not contain them. Results produced in this venv could hide an import dependency | `uv pip list --python .venv-ml/bin/python`; guarded test in `tests/test_ml_env_independence.py` |
+
+Deviation 7 is a **local** environment deviation, not a remote one. The two
+scripts that must run there (`scripts/eval_teacher_forced.py`,
+`scripts/verify_remote_checkpoint.py`) were executed in this session with
+`scipy`, `mujoco` and `open3d` blocked via `sys.modules` stubs under
+`PYTHONPATH=src`, and their `--help` paths returned 0. That proves **import
+independence for the exercised paths**, not that every runtime branch avoids
+those modules. A clean rebuild from `scripts/setup_envs.sh --with-ml` is
+required before the final validation (Task 12); that rebuild is a download and
+needs separate approval. `scripts/setup_envs.sh` was **not** modified.
+
+### The 1,000 MHz clock floor
+
+The 1,000 MHz median floor was a **threshold chosen by the planner**, not a
+measured hardware specification and not derived from provider documentation. It
+is a conservative discriminator chosen to reject the known-degraded 210 MHz
+local GPU. It is retained as a **hard-stop default**; the explicit
+`--allow-low-clock` escape hatch records `overrides: ["low_clock"]` so a
+low-clock result can never be mistaken for a healthy one.
+
+Clock speed changes **wall time, not numerical results**: the same kernels and
+reductions run in the same order, with the same fp32 rounding; only throughput
+differs. This is **reasoning about the arithmetic, not a measurement** made in
+this session, and it does not make a throttled run suitable evidence of
+performance.
+
+### What remains USER-REPORTED / UNVERIFIED
+
+- The remote machine identity (Tesla T4 15360 MiB, driver 580.82.07, CUDA 13.0)
+  comes from the returned JSON; no remote access was used.
+- The as-used `requirements.txt` and `MANIFEST.json` bytes, and therefore the
+  true remote package set.
+- That the trained code was exactly `d7a0c90` (see `git_dirty` above).
+- The 20000/20004 closed-loop runs' seeds, expert 3/3 per eval seed, and the
+  reported "0/6" — verified from the returned records, which all show
+  `POLICY_ERROR` with zero steps.
+- The local teacher-forced result (`first-step arm L1 0.0333`, gripper
+  `0.00688 m`) is reproduced from the returned `eval_teacher_forced.json`
+  (locally recomputed, not re-run on the remote).
+
+### Gate 0 note: untracked config copy
+
+At Gate 0 of this session an untracked file `./smolvla_lora_overfit_remote.yaml`
+was found at the repository root. It was **byte-identical** to
+`configs/training/smolvla_lora_overfit_remote.yaml` (both sha256
+`ab7a7730...f2d27ba`, verified with `sha256sum` and `cmp`), it was **not**
+git-ignored, and no other untracked or modified file existed. It was moved (not
+deleted) to `/tmp/smolvla_lora_overfit_remote.yaml.stray`, and the tree was then
+clean with no skip-worktree/assume-unchanged flags. A likely cause is a stray
+copy from a file transfer; that is a guess, not a finding. The file was not
+added to Git and `.gitignore` was not changed.
+
+### Tooling changes in this task
+
+- `--allow-low-clock` replaces the code-patchable clock exit. Default is still
+  a hard stop. With the flag, a loud `WARNING: LOW CLOCK OVERRIDE` is printed,
+  `overrides: ["low_clock"]` is written to `RUN_REPORT.json`, and the matmul
+  report carries the same list. The **memory floor is never overridable**.
+- `preflight.json` now records `bundle.manifest.sha256` and
+  `bundle.requirements.sha256` **as used**, so a later comparison is possible.
+- The exporter writes `<archive>.bundle_info.json` with the archive, manifest
+  and requirements hashes, and strips PEP 440 local labels (`+cu126`, `+cpu`)
+  from the requirement pins, keeping the torch wheel index on its own
+  documented line.
+- The verifier prints the `overrides` list, exits non-zero on any override
+  unless `--accept-overrides` is passed, and with `--bundle-info` compares the
+  as-used hashes to the sidecar; without it, it prints
+  `UNVERIFIED: bundle provenance not checked`.
+- A `uv`-managed Python 3.12 is a supported route for the remote interpreter
+  (`uv python install 3.12`), but it is a **download** and needs approval. The
+  launcher's `--venv DIR` selects the environment directory and `--python PATH`
+  selects the interpreter used to create it.
+

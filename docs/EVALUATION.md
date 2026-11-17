@@ -1092,3 +1092,109 @@ The authoritative bundle `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`
 temp clone at `d7a0c90`: 13 manifest hashes, clean commit, Python 3.12,
 `lerobot Requires-Python >=3.12`, GPU/driver printed, no install/download/
 training. Task 10 remains blocked pending a healthy-GPU overfit result.
+
+## Task 9i: interpretation of the first remote overfit result (2026-11-17)
+
+The returned d7a0c90 remote run produced a checkpoint that verifies locally
+(all metadata/adapter hashes match `RUN_REPORT.json`; stats and config hashes
+match the bundle), but the run had recorded protocol overrides; see
+`docs/REMOTE_TRAINING.md` "Task 9i". The pre-registered rule was applied
+unchanged.
+
+### The six `POLICY_ERROR` episodes were a harness timeout, not a policy fault
+
+All six closed-loop records (evaluation seeds 20000 and 20004, 3 repeats each)
+have `termination_reason = POLICY_ERROR`, `steps = []` and the identical
+`failure.reason`:
+
+```
+PolicyError: policy server timed out after 30.0 s
+```
+
+Cause, established in this session:
+
+1. `CheckpointPolicy._handshake` waits `timeout_s` (default **30.0 s**) for the
+   server's `ready` packet (`policy_interface.py:523`). The server sends `hello`
+   immediately, then imports torch and loads the base model, then sends
+   `ready` (`policy_server.py:258-285`).
+2. Re-running the same checkpoint and code on the local GPU measured
+   **hello at 0.33 s, ready at 34.71 s** (model load 34.38 s), so the 30 s wait
+   expires. The first real `act` then returned a finite `[50, 8]` chunk in
+   **13.02 s**.
+3. Because a failed handshake leaves the client not-ready, the next episode
+   restarts the server and repeats the load, which is why all three repeats per
+   seed fail identically with zero steps.
+
+This is **environment/harness**, not policy output: no NaN/inf, no shape error,
+no joint-limit rejection. It is aggravated by the throttled local GPU, and the
+repo already documented a 39.8 s first load in `docs/EVALUATION.md` (9c), i.e.
+the 30 s default was already shorter than a documented cold start.
+
+Fix (evaluation-side, no contract change): `CheckpointPolicy` now takes a
+separate `startup_timeout_s` used only for the ready wait; `run_eval.py` exposes
+`--policy-startup-timeout` (default 180 s) and `--policy-timeout` (default 30 s
+per call). Regression test:
+`tests/test_evaluation_policy_server.py::test_cold_start_timeout_is_separate_from_call_timeout`.
+
+### Pre-registered closed loop on the TRAINING seeds
+
+Checkpoint `checkpoint-00001000`, linear execution, `n_action_steps=10`,
+recorded profile, seeds 10000 and 10004, 3 repeats each. Repeats use different,
+recorded policy sample seeds (r0 = episode seed; r1 = 9001xx; r2 = 9002xx).
+Timings are **throttled, not a performance figure**.
+
+| seed | repeat | sample seed | success | termination | completion | joint max | joint mean | first 0.1 rad exit | fraction > 0.1 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10000 | 0 | 10000 | False | TIMEOUT | 0.0000 | 0.3354 | 0.0504 | step 2 | 0.617 |
+| 10000 | 1 | 900100 | False | TIMEOUT | 0.0000 | 0.2771 | 0.0540 | step 2 | - |
+| 10000 | 2 | 900200 | False | TIMEOUT | 0.0000 | 0.4630 | 0.0748 | step 2 | - |
+| 10004 | 0 | 10004 | False | TIMEOUT | 0.0000 | 0.5419 | 0.1097 | step 1 | - |
+| 10004 | 1 | 900101 | False | TIMEOUT | 0.0000 | 0.5387 | 0.0964 | step 5 | - |
+| 10004 | 2 | 900201 | False | TIMEOUT | 0.0000 | 0.4974 | 0.0932 | step 4 | - |
+
+**0/6 success; 6/6 TIMEOUT; 0/6 POLICY_ERROR.** No repeat came within the 0.1 rad
+tube: every episode left it by policy step 1-5, i.e. in the first chunk or the
+one after it. Elapsed 65-165 s per episode.
+
+The earlier 20000/20004 runs are **not** the pre-registered secondary check:
+those seeds are evaluation seeds, so a result there would measure generalisation
+to new poses. They also produced no usable measurement (0 control steps).
+
+### Bias versus sampling spread (first-step arm L1)
+
+Same frames (0, 1, 2, 10, 20, 30, 40 on dataset episodes 0 and 1) and the same
+five sample seeds (101-105) for every checkpoint. `bias` is the absolute error
+of the 5-seed mean prediction; `spread` is the mean per-dimension standard
+deviation across seeds; `single L1` is the pre-registered mean single-sample
+number; `mean5 L1` is the error of the 5-seed mean.
+
+| checkpoint | frames | bias | spread | single L1 | mean5 L1 | spread / single L1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| remote 200 | 14 | 0.0634 | 0.0493 | 0.0748 | 0.0634 | 0.659 |
+| remote 500 | 14 | 0.0348 | 0.0369 | 0.0472 | 0.0348 | 0.781 |
+| remote 1,000 | 14 | 0.0223 | 0.0280 | 0.0329 | 0.0223 | 0.850 |
+| 9d 250 (pre-adapter_hash) | 14 | 0.0550 | 0.0507 | 0.0684 | 0.0550 | 0.741 |
+| train_v1 1,000 (pre-adapter_hash) | 14 | 0.0186 | 0.0324 | 0.0318 | 0.0186 | 1.019 |
+
+(Bias per arm dimension for remote 1,000: 0.0079, 0.0445, 0.0057, 0.0252,
+0.0060, 0.0273, 0.0398 rad. The largest systematic errors are joints 1, 6 and 4.)
+
+Reading:
+
+- The pre-registered **0.0333** (locally recomputed 0.0329 on the reduced frame
+  set) is **not dominated by sampling spread**. Spread is comparable to the
+  error (0.0280 vs 0.0329), but averaging five samples only removes the
+  0.0105 difference: the **bias alone is 0.0223 rad**, still **2.2x** the
+  0.010 bar. A perfectly denoised sampler could not pass criterion 1 with this
+  checkpoint.
+- Error is **still falling** between 200, 500 and 1,000: 0.0748 -> 0.0472 ->
+  0.0329 (a factor ~0.70 per doubling of steps). The bias falls faster
+  (0.0634 -> 0.0348 -> 0.0223) than the spread (0.0493 -> 0.0369 -> 0.0280).
+- The pre-registered **bars are unchanged**. Sampling-side ideas (averaging K
+  chunks, more denoising steps) are **hypotheses only**, to be tested later;
+  they cost latency roughly linearly and cannot by themselves clear a
+  0.0223 rad bias.
+- `train_v1` 1,000 (32 episodes) has a slightly *lower* bias (0.0186) than the
+  two-episode overfit checkpoint (0.0223), so "more data" and "more steps" are
+  not clearly separated at this budget.
+

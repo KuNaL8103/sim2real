@@ -849,3 +849,83 @@ sequence remains the one in `docs/REMOTE_TRAINING.md`; the remote checks out the
 MANIFEST commit (`d7a0c90` for this archive), not later docs-only HEAD commits.
 Task 10 cannot start until a healthy GPU produces and locally verifies the
 pre-registered result.
+
+## 20. Task 9i result: first remote overfit, interpreted (2026-11-17)
+
+The returned d7a0c90 run is verified locally at the file level (all 10
+checkpoint metadata and adapter hashes match `RUN_REPORT.json`; config and
+stats hashes match the bundle). It is **not** a clean-protocol run: the clock
+gate was patched, requirements and the manifest hash were edited, and
+`skip-worktree` hid the dirty tree. See `docs/REMOTE_TRAINING.md` "Task 9i".
+Section 17's rule and bars were applied **unchanged**.
+
+### Criteria 1-3 (pre-registered, same frames and seeds)
+
+| criterion | value | bar | result |
+| --- | --- | --- | --- |
+| first-step arm L1 | **0.0333 rad** | <= 0.010 | **FAIL** (3.3x) |
+| first-10 beats hold-last | **1.00** | >= 0.90 | PASS |
+| gripper first-step L1 | **0.00688 m** | <= 0.005 | **FAIL** |
+| gripper clip delta | 0.00170 m | < 0.002 | PASS |
+
+Overall: **FAIL** (locally recomputed 0.0329 on the reduced 7-frame set; the
+difference is the frame subset, not a discrepancy).
+
+### Secondary closed-loop check (training seeds)
+
+2 seeds x 3 repeats, linear, `n_action_steps=10`: **0/6 success, 6/6 TIMEOUT,
+0/6 POLICY_ERROR**. Every episode left the 0.1 rad tube at policy step 1-5. The
+earlier 20000/20004 runs are **not** this check: they are evaluation seeds
+(generalisation to new poses), and they produced 0 control steps because of a
+30 s cold-start timeout, not a policy fault.
+
+### Applying the interpretation table
+
+The row is **"fail with loss plateaued"**: the 100-step block mean loss was
+0.232 (801-900) and 0.234 (901-1000), i.e. flat over the last 200 steps. The
+pre-registered next action for that row is the **capacity/pipeline hunt**.
+
+Two new factors change how the row should be read:
+
+- **Harness versus policy for `POLICY_ERROR`:** the six 20000/20004 failures
+  were a 30 s client timeout during a 34.7 s model load, not NaN/shape/joint
+  output. They carry no information about policy quality and were not counted
+  as closed-loop evidence.
+- **Spread versus bias:** the first-step error is **not** spread-dominated.
+  Bias is 0.0223 rad and spread 0.0280 rad at step 1,000; a perfect 5-sample
+  average would still leave 0.0223 rad, 2.2x the 0.010 bar. Sampling-side
+  changes cannot pass criterion 1 alone.
+
+Also, the decision metric is still falling where the loss is flat: teacher-forced
+single-sample L1 0.0748 (200) -> 0.0472 (500) -> 0.0329 (1,000), about 0.70x per
+doubling. The signed bias changes sign across frames (std across frames is as
+large as the mean), so there is **no constant-offset signature** for the
+alignment/units/gripper/camera hypotheses we can test cheaply.
+
+### One follow-up change (F), with its estimate
+
+Judgement call, stated plainly: a strict reading of the plateaued row sends the
+next action to the capacity/pipeline hunt. The measured error curve contradicts
+a full plateau, and no pipeline hypothesis is supported by a constant offset, so
+the single smallest change that targets the still-falling decision metric is
+**more steps at the same lr**: `training.max_steps 1000 -> 2000`, everything else
+identical (`configs/training/smolvla_lora_overfit_remote_2000.yaml`).
+
+Estimate: per-doubling gap factor ~0.70 gives ~**0.023 rad** single-sample L1 at
+2,000 steps, i.e. **probably still above the 0.010 bar**. This run tests whether
+optimization budget is the limiter before any rank or LR change. If it plateaus
+again, the pre-registered next step is the capacity/pipeline order in section 17
+(state/action alignment, normalization vs units, gripper dimension, camera
+mapping, frozen encoder/expert-only flags, LoRA coverage, instruction handling,
+absolute-vs-delta actions).
+
+Wall time is an **estimate** from the measured 1.21 s/step on the T4:
+2,000 x 1.21 s = 2,420 s = **40.3 min** of compute, plus model load and
+checkpoint writes. T4 clocks vary; this is not a guarantee.
+
+### Task 10
+
+**Task 10 cannot start.** Criteria 1-3 fail, the closed loop is 0/6 on the
+training seeds, and the run carried protocol overrides. No Task 10 work was
+done and the pre-registered rule was not edited.
+
