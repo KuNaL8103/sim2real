@@ -1,0 +1,78 @@
+# Pipeline orchestrator: full local -> external-training flow.
+#
+# The default CLI mode is a DRY RUN.  An actual cycle needs --execute and every
+# gate below needs its flag:
+#   * TRAIN executor=external: --supply-checkpoint <verified checkpoint>
+#   * estimated GPU time > gpu_time_limit_s: --allow-gpu
+#   * estimated download > max_write_bytes: --allow-download
+#   * estimated BUILD write > max_write_bytes: --allow-large-write
+#
+# Stages after the first cycle need a NEW verified checkpoint and
+# --approve-cycle.  There is no unbounded loop.
+schema_version: 1
+
+pipeline:
+  # Data and artifacts are git-ignored.  Relative paths resolve from the repo.
+  run_root: data/pipeline
+  max_cycles: 3
+  max_episodes_per_cycle: 40
+  max_wall_time_s: 7200.0
+  max_write_bytes: 2000000000
+  gpu_time_limit_s: 600.0
+
+  generation:
+    backend: mujoco
+    num_episodes: 40
+    # 21000-21099 is documented in docs/EVALUATION.md as pipeline generation
+    # (reserved; not yet run).  It is outside every used seed range.
+    seed: 21000
+    profile: default
+    perturbed_fraction: 0.2
+    instruction: "pick up the red cube and place it in the left zone"
+
+  filtering:
+    config: configs/filtering/mujoco.yaml
+    dataset_name: pipeline_v1
+
+  build:
+    mode: lerobot
+    config: configs/dataset/default.yaml
+    embodiments: configs/dataset/embodiments.yaml
+    decimation: 2
+    val_fraction: 0.2
+    output: data/lerobot
+    estimated_write_bytes: 1000000000
+
+  training:
+    config: configs/training/smolvla_lora.yaml
+    # Empty means "not supplied yet"; the external executor stops and prints
+    # the exact remote command and the --supply-checkpoint instructions.
+    checkpoint: ""
+    gpu_estimated_s: 3600.0
+    estimated_download_bytes: 6000000000
+
+  evaluation:
+    config: configs/evaluation/default.yaml
+    policy: checkpoint
+    paired_expert: true
+    num_episodes: 30
+    seed: 20000
+    # Empty uses configs/evaluation/default.yaml's shared, append-only ledger.
+    ledger_path: ""
+    stop_file: ""
+
+  failure_analysis:
+    config: configs/evaluation/default.yaml
+
+  targeted_generate:
+    num_rollouts: 10
+    seed: 30000
+
+  stages:
+    GENERATE: local
+    FILTER: local
+    BUILD: local
+    TRAIN: external
+    EVALUATE: local
+    ANALYZE_FAILURES: local
+    TARGETED_GENERATE: local

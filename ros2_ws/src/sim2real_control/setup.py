@@ -35,6 +35,7 @@ setup(
     entry_points={
         "console_scripts": [
             "safety_watchdog_node = sim2real_control.safety_watchdog_node:main",
+            ("fake_observation_publisher = sim2real_control.fake_observation_publisher:main"),
         ]
     },
 )

@@ -1,0 +1,106 @@
+# Safety watchdog configuration: simulation / mock-hardware profile.
+#
+# This file is configs/safety/default.yaml with ONE change:
+#   obstacle_mode: strict -> masked
+# Nothing else is relaxed.  It is used only by the simulation/mock launch
+# files and the CPU end-to-end tests.  It is validated only on the kinematic
+# FakeBackend with a synthetic map; real hardware must use the strict
+# default unless the operator changes it explicitly.
+#
+# Units are explicit in every key: m = metres, rad = radians, s = seconds,
+# Hz = hertz. Hardware joint limits are NOT duplicated here; they come from
+# configs/sim/panda.yaml (official Franka FER values, fetched 2026-11-17).
+#
+# `safety_margin_fraction: 0.8` shrinks the hardware limits, leaving a 20%
+# reserve for controller tracking error, model mismatch, and unmodeled
+# dynamics. It is a conservative engineering margin, NOT a functional-safety
+# certification or a claim that 20% is sufficient on a physical robot.
+schema_version: 1
+
+safety:
+  safety_margin_fraction: 0.8
+
+  # End-effector (TCP) bounds in the safety frame. Derived from
+  # configs/sim/scene.yaml: workspace min/max [0.25, -0.30, 0.42] ..
+  # [0.65, 0.30, 0.75]. The table top is z = 0.40 + 0.04/2 = 0.42 m, and the
+  # table spans x [0.10, 0.80], y [-0.35, 0.35], so the scene workspace is the
+  # table/zone region of interest.
+  workspace_bounds_m:
+    min: [0.25, -0.30, 0.42]
+    max: [0.65, 0.30, 0.75]
+  safety_frame: world
+
+  # End-effector-point clearance only. The table surface and the manipulated
+  # object are in the map; 0.01 m is chosen so a legitimate 2 cm tabletop
+  # approach is not rejected. The measured effect on expert grasps is reported
+  # in docs/SAFETY.md; this is not a whole-arm or self-collision check.
+  min_obstacle_distance_m: 0.01
+  obstacle_safety_radius_m: 0.0
+
+  # `strict` keeps the Task 11 grid-EDT gate. `masked` is an opt-in accuracy
+  # mode: it uses the exact surface-point distance (the 2 cm EDT cell can report
+  # 0.0 for a TCP 2 cm from a surface), ignores table-plane points inside the
+  # band, and can ignore the commanded target object inside its approach volume.
+  # The target allowance is only used when a target object is known from
+  # /task_instruction; without one, masked still does exact-distance + table mask.
+  obstacle_mode: masked
+  # Table top = 0.40 + 0.04/2 = 0.42 m from configs/sim/scene.yaml.
+  table_surface_z_m: 0.42
+  table_mask_band_m: 0.01
+  # Target-object allowance: exclude points within (half extent + margin) of the
+  # commanded target object's centre while the TCP is within this radius.
+  target_allowance_margin_m: 0.01
+  target_allowance_radius_m: 0.05
+
+  # An unavailable/stale/low-coverage map is unsafe. The mapper publishes at
+  # 2 Hz; 2 s allows for a brief scheduling gap but fails a dead publisher.
+  map_required: true
+  max_map_age_s: 2.0
+  # Observed-cell fraction on the safety query grid, not the mapper's xy
+  # coverage proxy. It only catches a nearly empty map.
+  min_map_coverage_ratio: 0.01
+  map_query_resolution_m: 0.02
+  map_max_query_distance_m: 0.50
+
+  # /joint_states is 20 Hz. Five missed periods (0.25 s) make the state stale.
+  max_joint_state_age_s: 0.25
+  # Raw chunks are observation-stamped. Task 10b measured 1.88 s median and
+  # 5.90 s max calls on the throttled local GPU, so the default `reject`
+  # policy deliberately refuses essentially every real chunk here. That is the
+  # safe choice; the live chain will not move with the real checkpoint.
+  max_chunk_age_s: 0.5
+  stale_chunk_policy: reject
+
+  # Continuity gate: distance from the measured arm state to the first command
+  # point. The final smoothed/retimed trajectory is what is checked.
+  max_first_point_distance_rad: 0.5
+
+  # EMA on every commanded joint, initialised from the measured state.
+  ema_alpha: 0.5
+
+  # Watchdog / e-stop timing.
+  watchdog_timeout_s: 0.5
+  estop_reset_hold_s: 2.0
+
+  # The dataset/controller finger convention is absolute metres in [0, 0.04].
+  finger_min_m: 0.0
+  finger_max_m: 0.04
+
+  # Bound validation work: 50 points is the training chunk length.
+  max_chunk_points: 50
+  # Controller command times are (j + 1) * 0.1 s from "now" with a zero header
+  # stamp (the controller's documented "start now" convention).
+  command_period_s: 0.1
+  command_time_convention: zero_stamp_now_plus_dt
+  future_stamp_tolerance_s: 0.1
+  hold_duration_s: 0.2
+
+  # Publication rates.
+  status_rate_hz: 10.0
+  diagnostics_rate_hz: 1.0
+
+  # Bounded PointCloud2 ingestion. The mapper's 2 Hz cloud is a few thousand
+  # points; these caps reject a malformed or hostile message instead of
+  # allocating without bound.
+  pointcloud_max_points: 500000
+  pointcloud_max_bytes: 16000000

@@ -222,6 +222,23 @@ single-owner-safe check.
 The map is a surface TSDF; it does not carve free space, and a moved object
 leaves a ghost until reset.
 
+**Recorded decision (2026-11-18, user).** `configs/safety/default.yaml` keeps
+`obstacle_mode: strict` as the shipped default. A separate
+`configs/safety/sim_mock.yaml` sets `obstacle_mode: masked` and changes
+**nothing else**; it is used only by `pipeline_sim.launch.py`,
+`pipeline_mock_hw.launch.py`, and the CPU end-to-end tests. Its masked-mode
+evidence is the **kinematic FakeBackend with a synthetic map above**, not the
+real mapper and not hardware. Real-hardware use requires the strict default
+unless the operator changes it explicitly.
+
+**Target-position consequence (documented, not changed).**
+`/task_instruction` is parsed against `configs/sim/scene.yaml`, so the allowance
+is anchored to the **nominal configured** cube position and half extent, not to
+a measured pose. With a randomized cube offset, a perception error, or a
+distractor inside that configured volume/radius, the obstacle gate ignores
+those points by design. Everything outside the allowance keeps the 1 cm
+threshold.
+
 **Rate-test note.** Task 11 A1 lowered the sim-node rate-test floor from
 **16 Hz** (0.8 x 20) to **8 Hz** (0.4 x 20) for load robustness after the test
 measured **20.00 Hz in 10/10 isolated runs**. The 8 Hz floor still catches the

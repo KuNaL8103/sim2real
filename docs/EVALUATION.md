@@ -286,11 +286,18 @@ recorded.
 | 10000-10199 | training/evaluation diagnosis | used |
 | 20000-20999 | closed-loop evaluation | used |
 | **20900-20919** | **Task 11 expert false-positive check** | **20900-20909 used; 20910-20919 reserved** |
+| **20950-20969** | **Task 12 fake-backend end-to-end tests** | **reserved for the fake backend only; a MuJoCo run must not use it** |
+| **21000-21099** | **pipeline generation default (`configs/pipeline/default.yaml`)** | **reserved; not yet run** |
 | 30000-30999 | targeted generation | used |
 
 The Task 11 range is carved out of the evaluation range for this one diagnostic
 only. It is not an evaluation seed set and must not be reused for a new choice
 without updating this ledger.
+
+The 20950-20969 range is the orchestrator's CPU end-to-end carve-out. The
+orchestrator refuses those seeds unless `generation.backend: fake`; it also
+refuses any drawn seed inside a used range. `21000-21099` is reserved for the
+shipped default pipeline profile but has **not** been run.
 
 ## Renderer
 

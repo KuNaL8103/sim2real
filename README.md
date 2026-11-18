@@ -1,163 +1,167 @@
 # sim2real
 
-End-to-end sim2real robotics data pipeline and VLA fine-tuning framework for a
-Franka Panda, built around ROS 2 Jazzy, MuJoCo (Isaac Sim optional), LeRobot,
-and SmolVLA + LoRA.
+A robotics data pipeline that turns a simulated Franka Panda pick-and-place task
+into a versioned training dataset, fine-tunes a vision-language-action (VLA)
+policy offline, evaluates it in closed loop, and feeds failures back into data
+generation. A ROS 2 safety watchdog sits between raw policy output and any
+controller.
 
-**Task 8 status: offline SmolVLA + PEFT LoRA fine-tuning.** The workspace
-mapper, contact classifier, runner physics guard, re-derived filter thresholds,
-replay-rendering path, verified Franka limits, official LeRobot writer,
-normalization statistics, episode split, deterministic mixture sampler,
-fixture-first Bridge RLDS adapter, and the offline VLA training/validation
-pipeline are implemented. A 1,000-step SmolVLA LoRA run on `train_v1` produced a
-clean-provenance checkpoint for Task 9. Closed-loop inference, real Bridge data,
-video encoding, and safety are not implemented.
+**In plain English:** the pipeline works end to end on a CPU and in headless
+simulation, and the trained policy is **not** good at the task yet. The
+deliverable is the pipeline, its tests, and its honest validation — not a
+working robot policy.
 
-## What exists today
+## What works
 
-- **Pure-Python core** (`src/sim2real`, no `rclpy`): contract constants, bounded
-  metadata validation, status parsing, `SimBackend` + `FakeBackend` + MuJoCo
-  backend + guarded Isaac stub, seeded domain randomization, the scripted
-  pick-and-place expert (FK/IK/planner/state machine/perturbations/staging),
-  trajectory filtering with `curated_v1` writing, RGB-D mapping
-  (`TSDFMap`, robot self-filter, transform providers, vectorized obstacle
-  query), the two-layer LeRobot/Open X dataset builder, and offline VLA
-  training/validation (validated configs, LoRA targets, action chunks,
-  provenance checkpoints, offline L1).
-- **ROS 2 Jazzy adapters**: `sim_node`, `expert_collector_node`,
-  `trajectory_filter_node`, and `workspace_mapper_node`.
-- `sim2real_msgs` interfaces, including the Task 5 measured `TrajectoryStep`
-  fields.
-- Documentation, versioned YAML configs, scripts, CI, and hardware-free tests.
-- Verified on 2026-11-07: core **442 passed / 10 skipped**, ROS `.venv-ros`
-  **454 passed / 3 skipped**, `colcon test-result` **7 tests / 0 failures**;
-  ML suite **4 passed / 1 deselected**. Details and provenance are in
-  `CLAUDE.md`, `docs/ARCHITECTURE.md`, and `docs/TRAINING.md`.
+- Deterministic fake backend and a headless MuJoCo Franka tabletop with two
+  cameras (256x256 RGB-D), seeded domain randomization, and a scripted expert.
+- Atomic rollout staging, trajectory filtering with measured quality metrics, a
+  versioned `curated_v1` writer, and a two-layer LeRobot / Open X dataset builder
+  with statistics, split, and mixing.
+- Offline SmolVLA + PEFT LoRA fine-tuning with provenance checkpoints and
+  offline L1 validation (CPU fake path and a measured GPU smoke run).
+- Closed-loop evaluation with paired expert comparison, failure analysis
+  (GMM/KDE/neighbour), failure-targeted rollout generation, and a guarded,
+  append-only flywheel ledger.
+- A ROS 2 VLA inference bridge and a safety watchdog: raw `/vla/raw_action` is
+  validated, smoothed, retimed, and only then published to the controller;
+  latched `/estop`, `/estop_reset`, `/safety/status`, `/safety/diagnostics`.
+- An explicit pipeline orchestrator (`GENERATE -> FILTER -> BUILD -> TRAIN ->
+  EVALUATE -> ANALYZE_FAILURES -> TARGETED_GENERATE`) with deterministic stage
+  ids, resume, quarantine, hard cycle/time/write/GPU bounds, approval gates, and
+  full lineage manifests.
+- A mock-hardware ros2_control path and an integrated launch for
+  cameras → inference → safety → controller.
 
-## Quick start
+## What does not work
 
-Core / CI (the ROS-free run is the official baseline):
+- **The trained policy does not complete the task.** The pre-registered overfit
+  rule is unmet (first-step arm L1 0.0333 rad vs a 0.010 bar; gripper
+  0.00688 m vs 0.005; closed loop 0/6 on training seeds). The local GPU is
+  throttled at 210 MHz. This is reported as a failure, not hidden.
+- **No live closed loop through MuJoCo.** `sim_node` has no command
+  subscription; closed-loop evaluation uses the in-process runner. The mock
+  hardware stack has no cameras. See `docs/ARCHITECTURE.md`.
+- **No physical robot, no physical safety, no functional-safety certification.**
+  Mock hardware models no dynamics, latency, torque, velocity enforcement, or
+  collisions. A software e-stop is not a safety-rated emergency stop.
+- **Isaac Sim is unavailable on this machine** (6 GB VRAM vs a 16 GB minimum;
+  requirements-based, not tested).
+- MoveIt 2 is not installed; its adapter is a refusing stub. OctoMap is
+  deferred. Real Bridge data and video encoding were never exercised.
+- Latency runs 3 and 4 are NOT RUN. Remote-run provenance is user-reported.
+
+## Quick start (no GPU, no robot)
 
 ```bash
+# Core environment, lint, and the ROS-free test suite
 uv sync --group sim
 env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run ruff check .
 env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run ruff format --check .
 env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra
 ```
 
+Plan the whole pipeline without writing anything (the default mode):
+
+```bash
+uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/default.yaml
+```
+
+Run one fake-backend cycle on the CPU (real scripts, fake TRAIN only; seeds
+20950-20959):
+
+```bash
+uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/fake_e2e.yaml \
+    --root /tmp/opencode/pipeline_e2e --execute --cycles 1
+```
+
+Lineage for a checkpoint:
+
+```bash
+uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/default.yaml \
+    --lineage <checkpoint-dir-or-metadata-hash>
+```
+
+Headless MuJoCo smoke (physics only):
+
+```bash
+uv run python scripts/collect_rollouts.py --backend mujoco --num 1 --seed 21000 \
+    --out /tmp/opencode/mujoco_smoke
+```
+
 ROS 2 (only if Jazzy is installed):
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cd ros2_ws
-colcon build --symlink-install --parallel-workers 2
-colcon test --packages-select sim2real_perception sim2real_sim sim2real_msgs
-colcon test-result --verbose
-source install/setup.bash
-cd ..
+colcon build --symlink-install --parallel-workers 2 --base-paths ros2_ws/src
+source ros2_ws/install/setup.bash
+colcon test && colcon test-result --verbose
 .venv-ros/bin/python -m pytest -ra
 ```
 
-## Task 6b follow-up fixes
-
-- **Contact classifier** (`configs/sim/collision.yaml`,
-  `sim2real.sim.collision`): the unintended-collision flag counts only
-  penetrating contacts and applies explicit allowed rules (finger-target,
-  cube-table, cube-zone); cube-cube, hand-cube, finger-table, and
-  finger-non-target are unintended; robot self-contacts are reported, not
-  counted.
-- **Runner guards**: a pre-release settle + wait-until-open release guard, and a
-  `PHYSICS_INSTABILITY` abort for non-finite/huge state or an object outside the
-  workspace margin.
-- **Filter re-derivation**: MuJoCo thresholds re-derived from seeds 1000-1099
-  (clean-success n=47) and validated on the fresh 6000-6059 hold-out.
-- **Replay rendering**: `scripts/render_replay.py` writes PNG frames with
-  manifest references, never overwrites, and refuses >1 GiB/10 min without
-  approval. Design and measured costs are in `docs/IMAGE_REPLAY.md`.
-- **Franka limits**: position, velocity, and acceleration match the official
-  FER table; jerk/effort are still absent from `configs/sim/panda.yaml`.
-
-## Workspace mapping (Task 6)
+Integrated launches:
 
 ```bash
-# Fake backend: fastest, no simulator rendering
-ros2 launch sim2real_perception mapper.launch.py backend:=fake use_rviz:=true
+# Simulation graph (no controller): sim + mapper + fake inference + safety
+ros2 launch sim2real_control pipeline_sim.launch.py backend:=fake
 
-# MuJoCo: slower under llvmpipe, but the full scene
-ros2 launch sim2real_perception mapper.launch.py backend:=mujoco use_rviz:=true
+# Mock-hardware graph: ros2_control + safety + fake inference + fake observations
+ros2 launch sim2real_control pipeline_mock_hw.launch.py
 ```
 
-The mapper:
-
-- fuses overhead and wrist RGB-D frames through tf2 poses into one
-  workspace-bounded Open3D TSDF;
-- discards depth outside `[depth_min_m, depth_trunc_m]` and points outside
-  `configs/mapping/default.yaml` workspace bounds **before** integration;
-- publishes `/workspace/pointcloud` (xyz+rgb, frame `world`) and
-  `/workspace/tsdf_mesh` (`TRIANGLE_LIST` Marker, frame `world`);
-- serves `/workspace/reset_map` (`std_srvs/Trigger`);
-- resets automatically when a jittered camera changes `/tf_static` beyond the
-  documented epsilon; a reset without camera jitter needs an explicit
-  `/workspace/reset_map`;
-- provides `sim2real.mapping.ObstacleQuery`, a vectorized 3-D Euclidean
-  distance transform over the surface points for the Task 11 safety layer.
-
-### Open3D and NumPy
-
-`open3d-cpu==0.20.0` is pinned in the core dev group and installed into
-`.venv-ros` with `--no-deps`, so system NumPy 1.26.4 stays visible; `.venv` uses
-NumPy 2.5.4. The CPU wheel is 105 MB (the CUDA wheel is 400.8 MB) and imports
-headlessly with no display.
-
-Open3D 0.20.0's legacy `ScalableTSDFVolume` produces empty geometry from metric
-float32 depth (upstream issue
-[#7592](https://github.com/isl-org/Open3D/issues/7592), open PR #7594): its
-activation step re-scales an already-metric depth image by 1000. The mapper
-therefore uses a workspace-bounded `UniformTSDFVolume`, whose metric-depth path
-is correct. This is a documented deviation, not a claim that the scalable
-volume works. Open3D 0.19.0 is unaffected but needs a large ML dependency set
-for its eager `open3d.ml` import.
-
-### Mapping limitations
-
-- The map is a **surface** map. There is no free-space carving, so an empty
-  region is not proof of clearance; a moved object leaves a ghost until reset.
-- Unknown space is expressed only by `MapStatus` (`NO_DATA`, `STALE`,
-  `LOW_COVERAGE`, `TF_FAILURES`). An invalid status is **unsafe** for Task 11.
-- The robot self-filter is a coarse sphere per link; a grasped object near the
-  hand can be removed with the hand.
-- On WSLg, MuJoCo + RViz needs the lean
-  `sim2real_perception/rviz/mapper.rviz` (no Camera/Image displays) and an 8 s
-  RViz delay; the mapper launch provides both. The full `sim2real.rviz` camera
-  panels can crash WSLg under MuJoCo.
-- OctoMap is deferred.
-
-## Safety
-
-This project has no physical robot and no implemented safety system. Simulator
-success is not a safety case. The Task 6 map is a surface TSDF, not an
-occupancy or collision map; see `docs/SAFETY.md`.
-
-## Layout
+## Repository layout
 
 ```
-src/sim2real/        pure-Python core (no rclpy)
-ros2_ws/src/         ROS 2 interface + adapter packages
-configs/             per-subsystem YAML (schema_version: 1)
-docs/                architecture, datasets, safety, deployment, master spec
-scripts/             environment setup, test entry points, diagnostics
+src/sim2real/        pure-Python core (no rclpy): sim, randomization, expert,
+                     filtering, data, mapping, dataset_builder, training,
+                     evaluation, inference, safety, orchestrator
+ros2_ws/src/         thin ROS 2 adapters: sim2real_msgs, sim2real_sim,
+                     sim2real_perception, sim2real_vla, sim2real_control
+configs/             versioned YAML per subsystem (schema_version: 1)
+scripts/             entry points: collection, filtering, datasets, training,
+                     evaluation, policy server, orchestrator, verification
 tests/               hardware-free tests and analytic fixtures
-data/                ignored; holds datasets/rollouts locally
+docs/                architecture, validation, deployment, recovery, safety, ...
+data/                ignored; staging, curated datasets, evaluations, flywheel
+outputs/             ignored; checkpoints and training artifacts
 ```
+
+## Three environments and why
+
+| Environment | Purpose | ROS? |
+| --- | --- | --- |
+| `.venv` | core library, lint, CPU tests, CI | no |
+| `.venv-ros` | ROS adapter tests and integration (`--system-site-packages`) | yes |
+| `.venv-ml` | offline VLA fine-tuning (torch, LeRobot, PEFT); opt-in, never CI | no |
+
+ROS Jazzy binds to the system Python and system NumPy. `.venv-ros` must see the
+system `rclpy` and must not install its own NumPy. `.venv-ml` holds the ML stack
+and must not contain ROS or simulator packages. Never mix them.
+
+## Validation
+
+`docs/VALIDATION.md` is the matrix: each level says what it proves, what it does
+**not** prove, its status, and the command/date/commit evidence. A skipped test
+is not a pass. Integration levels that were not run are marked NOT RUN.
+
+## Safety disclaimer
+
+This project has no physical robot and no safety-rated system. Simulator
+success, mock-hardware success, and unit tests are not evidence that a real
+Franka will move or stop safely. A software e-stop is not a substitute for a
+hardware e-stop in the safety-rated circuit. See `docs/SAFETY.md` and
+`docs/DEPLOYMENT.md`.
 
 ## Documentation
 
-- `CLAUDE.md` — verified environment, canonical commands, current status,
-  known limitations, decision log summary.
-- `docs/ARCHITECTURE.md` — design, contract table, QoS, mapping pipeline,
-  extrinsic convention, Open3D decision, limitations.
-- `docs/SAFETY.md` — what the map can and cannot guarantee.
-- `docs/FILTER_METRICS.md` — filtering metrics and threshold provenance.
+- `docs/ARCHITECTURE.md` — packages, data flow, contracts/QoS, decision log.
+- `docs/VALIDATION.md` — validation matrix and open items.
+- `docs/DEPLOYMENT.md` — mock bring-up and documented-only physical bring-up.
+- `docs/RECOVERY.md` — failure-recovery procedures.
+- `docs/SAFETY.md` — safety design, limits, measured false positives.
+- `docs/EVALUATION.md`, `docs/TRAINING.md`, `docs/DATASETS.md`,
+  `docs/FILTER_METRICS.md`, `docs/VLA_INFERENCE.md`, `docs/REMOTE_TRAINING.md`.
+- `docs/MANUAL_CHECKS.md` — pending manual checkpoints for the operator.
 
 ## License
 

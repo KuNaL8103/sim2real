@@ -1,0 +1,70 @@
+# Pipeline orchestrator: CPU-only fake-backend rehearsal/end-to-end profile.
+#
+# Everything runs through the real scripts except TRAIN, which uses the labelled
+# `fake` executor and writes a checkpoint that is explicitly marked as a test
+# double.  Seeds 20950-20969 are the documented fake-backend end-to-end carve-out
+# (recorded in docs/EVALUATION.md); they must not be used with MuJoCo.
+#
+# The ledger lives inside the run directory so a rehearsal never appends to the
+# shared data/flywheel/ledger.jsonl.
+schema_version: 1
+
+pipeline:
+  run_root: data/pipeline/fake_e2e
+  max_cycles: 2
+  max_episodes_per_cycle: 12
+  max_wall_time_s: 900.0
+  max_write_bytes: 200000000
+  gpu_time_limit_s: 0.0
+
+  generation:
+    backend: fake
+    num_episodes: 10
+    seed: 20950
+    profile: default
+    perturbed_fraction: 0.0
+    instruction: "pick up the red cube and place it in the left zone"
+
+  filtering:
+    config: configs/filtering/default.yaml
+    dataset_name: pipeline_fake_e2e
+
+  build:
+    mode: core_validation
+    config: configs/dataset/default.yaml
+    embodiments: configs/dataset/embodiments.yaml
+    decimation: 2
+    val_fraction: 0.2
+    output: data/pipeline/lerobot
+    estimated_write_bytes: 50000000
+
+  training:
+    config: configs/training/smolvla_lora.yaml
+    checkpoint: ""
+    gpu_estimated_s: 0.0
+    estimated_download_bytes: 0
+
+  evaluation:
+    config: configs/evaluation/default.yaml
+    policy: zero
+    paired_expert: true
+    num_episodes: 10
+    seed: 20950
+    ledger_path: "flywheel/ledger.jsonl"
+    stop_file: "flywheel/STOP"
+
+  failure_analysis:
+    config: configs/evaluation/default.yaml
+
+  targeted_generate:
+    num_rollouts: 3
+    seed: 30000
+
+  stages:
+    GENERATE: local
+    FILTER: local
+    BUILD: local
+    TRAIN: fake
+    EVALUATE: local
+    ANALYZE_FAILURES: local
+    TARGETED_GENERATE: local

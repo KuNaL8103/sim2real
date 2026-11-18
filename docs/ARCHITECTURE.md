@@ -1,14 +1,17 @@
 # Architecture
 
-Status: **Task 11.** Simulator backends, `sim_node`, seeded domain
+Status: **Task 12.** Simulator backends, `sim_node`, seeded domain
 randomization, a scripted pick-and-place expert, an atomic staging buffer,
 trajectory filtering, a versioned `curated_v1` dataset writer, RGB-D workspace
 mapping, the two-layer LeRobot/Open X dataset builder, an offline SmolVLA +
-PEFT LoRA fine-tuning pipeline, closed-loop evaluation, and the Task 10 ROS 2
-VLA inference bridge are implemented. Task 11 adds the safety watchdog, the
-latched e-stop services, and a **mock-hardware** ros2_control stack. A physical
-robot, physical safety, and the Task 12 orchestrator remain unimplemented;
-mock-hardware tests do not establish physical safety.
+PEFT LoRA fine-tuning pipeline, closed-loop evaluation, failure-driven
+generation, the ROS 2 VLA inference bridge, and the safety watchdog with a
+**mock-hardware** ros2_control stack are implemented. Task 12 adds the explicit
+pipeline orchestrator, integrated simulation/mock-hardware launches, the
+validation matrix, recovery procedures, and a documented-only physical
+bring-up. A physical robot and physical safety remain unimplemented;
+mock-hardware tests do not establish physical safety. The trained policy does
+not complete the task (the pre-registered overfit rule is unmet).
 Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
 adds validated randomization profiles and reset-service integration; Task 4 adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
@@ -248,6 +251,74 @@ ROS adapter rules:
 | `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node) |
 | `sim2real_control` | `ament_python` | Safety watchdog, final trajectory dispatch, e-stop services, mock-hardware launch | **implemented** (Task 11; mock hardware only, no physical safety claim) |
 
+The pure-Python `src/sim2real/orchestrator/` package owns the Task 12 stage state
+machine, seed-ledger checks, manifests, resume/quarantine, and approval gates.
+It is not a ROS package and imports no `rclpy`.
+
+## Pipeline orchestrator (Task 12)
+
+### Stages and executors
+
+| Stage | Inputs | Outputs | Default executor (shipped configs) |
+| --- | --- | --- | --- |
+| `GENERATE` | `pipeline.generation`, randomization/expert/sim configs | staging (`episode_*.npz`, sidecar, `manifest.jsonl`) | `local` |
+| `FILTER` | staging, `configs/filtering/*` | `curated_v1` version dir, rejection log | `local` |
+| `BUILD` | curated version, `configs/dataset/*` | validation summary, LeRobot dataset (lerobot mode) | `local` |
+| `TRAIN` | dataset hash, `configs/training/*` | verified checkpoint + metadata | `external` (default) / `fake` (fake_e2e) |
+| `EVALUATE` | checkpoint, `configs/evaluation/*` | `records.jsonl`, `manifest.json`, `pairs.json` | `local` |
+| `ANALYZE_FAILURES` | eval records + pairs | hashed failure-distribution artifact | `local` |
+| `TARGETED_GENERATE` | distribution artifact | targeted staging (seeds 30000-30999) | `local` |
+
+Executors: `local` runs the existing code/script in-process or via a bounded
+subprocess; `external` is TRAIN-only and writes the exact remote bundle/command,
+then waits for a supplied checkpoint and verifies it; `fake` is a labelled
+deterministic test double; `skip` records an explicit skip.
+
+### Deterministic ids, resume, quarantine
+
+Each stage id is `sha256(stage, stage-config hash, inputs, schema)[:32]`. The
+stage config hash covers only that stage's config slice and executor, so an
+unrelated executor change does not invalidate a completed stage. A completed
+stage is reused only when its id matches **and** every recorded artifact still
+matches its SHA-256. A mismatch moves the artifact and the status file into
+`quarantine/<STAGE>-<timestamp>/` and fails the stage loudly. Partial outputs
+from a failed attempt are quarantined before a re-run; curated writes use the
+writer's atomic `.partial-*` rename.
+
+Each cycle writes one atomic manifest with the config hash, git commit/dirty
+flag, drawn seeds, source episode ids, dataset hash, checkpoint path/metadata
+hash/verification, evaluation run id, failure-distribution id, flywheel
+decision, per-stage statuses, and wall time. `--lineage` searches those
+manifests by checkpoint path or metadata hash.
+
+### Bounds and approval gates
+
+`max_cycles`, `max_episodes_per_cycle`, `max_wall_time_s`, `max_write_bytes`, and
+`gpu_time_limit_s` are validated at load and enforced at run time. After the
+first cycle, another cycle needs both `--approve-cycle` and a **new** checkpoint
+hash. TRAIN external without a checkpoint stops with the exact remote command
+and the `--supply-checkpoint` instructions; a checkpoint that fails
+`scripts/verify_remote_checkpoint.py` is refused. GPU time above the limit,
+large writes, and large downloads require their explicit flags. The CLI default
+is `--dry-run`, which writes nothing unless `--plan-file` is given.
+
+### Flywheel reuse
+
+The orchestrator calls the existing `FlywheelController` and appends to its
+append-only ledger; it does not implement a second ledger. A resumed cycle with
+the same evaluation id reuses the existing ledger record instead of appending a
+duplicate STOP. `REQUEST_RETRAIN` remains reserved; the orchestrator never
+retrains on its own.
+
+### Safety profile for simulation/mock
+
+`configs/safety/default.yaml` keeps `obstacle_mode: strict`.
+`configs/safety/sim_mock.yaml` changes **only** that key to `masked` and is used
+only by `pipeline_sim.launch.py`, `pipeline_mock_hw.launch.py`, and the end-to-end
+tests. It is validated only on the kinematic fake backend with a synthetic map;
+real hardware must use the strict default unless the operator changes it.
+
+
 ## Data flow
 
 ```
@@ -278,6 +349,72 @@ perception (Task 6)
 `/joint_states` has exactly one owner: `sim_node` **or** the ros2_control
 `joint_state_broadcaster`, never both. The Task 11 launch files refuse the
 combination.
+
+### End-to-end data flow (Task 12)
+
+```mermaid
+flowchart LR
+    subgraph Gen["Data generation"]
+        R[randomization<br/>seeded sample] --> E[scripted expert<br/>Fake/MuJoCo]
+        E --> S[staging<br/>NPZ + sidecar + manifest]
+    end
+    subgraph Cur["Curation"]
+        S --> F[trajectory filter<br/>metrics + decision]
+        F -->|accepted| C[curated_v1<br/>versioned]
+        F -->|rejected| RJ[rejection log]
+    end
+    subgraph Data["Dataset"]
+        C --> B[LeRobot build<br/>stats + split]
+        B --> M[mixing sampler<br/>explicit manifests]
+    end
+    subgraph Train["Training (external/gated)"]
+        M --> T[SmolVLA + LoRA<br/>checkpoint metadata]
+    end
+    subgraph Eval["Evaluation"]
+        T --> V[closed-loop eval<br/>paired expert]
+        V --> A[failure analysis<br/>GMM/KDE/neighbour]
+        A --> G[failure-targeted<br/>generation 30000-30999]
+        G --> S
+        V --> FW[flywheel<br/>append-only ledger]
+    end
+    subgraph Live["Live / inference / safety"]
+        CAM[cameras + /joint_states] --> I[vla_inference_node]
+        I -->|/vla/raw_action RAW| SF[safety watchdog]
+        SF -->|validated| CT[/joint_trajectory_controller]
+    end
+    C -.-> Live
+    T -.-> I
+```
+
+The orchestrator (`src/sim2real/orchestrator/`) drives the solid path as an
+explicit seven-stage state machine: `GENERATE -> FILTER -> BUILD -> TRAIN ->
+EVALUATE -> ANALYZE_FAILURES -> TARGETED_GENERATE`.
+
+### Live ROS runtime (Task 12 launches)
+
+```mermaid
+flowchart TB
+    subgraph Sim["pipeline_sim.launch.py (no controller)"]
+        SN[sim_node<br/>/joint_states owner] -->|cameras + TF + joints| MAP[workspace_mapper_node]
+        SN -->|cameras + joints| VLA1[vla_inference_node<br/>policy_backend fake]
+        VLA1 -->|/vla/raw_action| SAF1[safety_watchdog_node<br/>sim_mock profile]
+        MAP -->|/workspace/pointcloud| SAF1
+        SAF1 -->|validated| TOPIC1[/joint_trajectory_controller/joint_trajectory<br/>no subscriber]
+    end
+    subgraph Mock["pipeline_mock_hw.launch.py"]
+        FO[fake_observation_publisher<br/>cameras + map + instruction] --> VLA2[vla_inference_node fake]
+        CM[controller_manager<br/>mock_components] -->|/joint_states| VLA2
+        VLA2 -->|/vla/raw_action| SAF2[safety_watchdog_node<br/>sim_mock profile]
+        FO -->|/workspace/pointcloud| SAF2
+        SAF2 -->|validated| JTC[joint_trajectory_controller]
+        JTC --> CM
+    end
+```
+
+**Documented gap:** `sim_node` has no command subscription, so the live chain
+cannot close a loop through MuJoCo; closed-loop evaluation uses the in-process
+runner. The mock stack has no cameras. `docs/DEPLOYMENT.md` records the smallest
+bridge design as an open decision, not implemented code.
 
 Task 5 writes three separate areas:
 
@@ -1826,6 +1963,10 @@ Apache-2.0 LICENSE before copying.
 | 77 | 2026-11-17 | Map query grid is expanded by one cell; point cloud is frame `world` and rejected otherwise | Float32 table-top points sit a few microns below `z=0.42`; expanding the query grid keeps them indexed. The mapper already publishes `world`, so rejecting a different frame is smaller and clearer than adding an unexercised tf2 path |
 | 78 | 2026-11-18 | The default obstacle gate stays `strict`; `masked` is opt-in | Strict still rejects the 10/40 Task 11 chunks. Masked removes all 40/40 false positives on both the original and held-out seed sets with the same 1 cm threshold. The user must approve any default change after seeing the measured table |
 | 79 | 2026-11-18 | Masked mode uses exact surface distance + table band + target-object allowance, not a smaller threshold | The Task 11 rejections were the target cube, and the 2 cm EDT reported 0.0 for a TCP 1.86-1.97 cm from the surface. The measured minimum clearance is 4.51 mm; a 4 mm threshold would pass but would also allow an unexpected object at 4.4 mm. Exact distance plus a task-conditioned target exception keeps the 1 cm threshold for everything else |
+| 80 | 2026-11-18 | The orchestrator is an explicit seven-stage state machine in `src/sim2real/orchestrator/`, not an implicit script chain | Every stage has declared inputs/outputs, an environment, an executor, and a deterministic id; a cycle writes one lineage manifest. This makes resume, quarantine, bounds, and approval gates testable on the CPU |
+| 81 | 2026-11-18 | Executors are `local`, `external` (TRAIN only), `fake`, and `skip`; fake outputs are labelled | Training needs a GPU host while everything else is CPU. The fake executor keeps the whole pipeline testable without pretending a fake checkpoint is a trained model (`verification: fake_executor`) |
+| 82 | 2026-11-18 | Approval gates are explicit flags and fail closed; the default CLI mode is a dry run | Training, GPU time, large writes/downloads, and extra cycles must never start by accident. A stage that needs approval prints the exact command/flag and stops |
+| 83 | 2026-11-18 | `configs/safety/sim_mock.yaml` changes only `obstacle_mode: strict -> masked` and is limited to simulation/mock launches and end-to-end tests | The masked mode's measured 40/0 vs strict's 30/10 is fake-backend/synthetic-map evidence. Keeping the strict default for hardware preserves the conservative gate while allowing the measured simulation false positives to be removed |
 
 ## Interface changelog
 

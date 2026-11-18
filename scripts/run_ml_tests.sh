@@ -10,13 +10,15 @@
 #   scripts/run_ml_tests.sh --gpu        # markers: ml and gpu (after approval)
 #   scripts/run_ml_tests.sh --all        # every marker in the ML files
 #   scripts/run_ml_tests.sh -k test_name # extra pytest arguments are forwarded
+#   ML_PYTHON=/path/to/venv/bin/python scripts/run_ml_tests.sh
+#                                        # test a different ML environment
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="${ROOT}/.venv-ml/bin/python"
+PY="${ML_PYTHON:-${ROOT}/.venv-ml/bin/python}"
 
 if [[ ! -x "${PY}" ]]; then
-  echo "error: ${ROOT}/.venv-ml is missing." >&2
+  echo "error: ${PY} is missing." >&2
   echo "Create it with: ./scripts/setup_envs.sh --with-ml" >&2
   exit 2
 fi
