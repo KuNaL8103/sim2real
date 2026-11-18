@@ -3,8 +3,8 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=649 failed=0 skipped=28 errors=0 | date=2026-11-17 | base_commit=6fbdc9d
-- Last verified ROS test run: passed=676 failed=0 skipped=6 errors=0 | date=2026-11-17 | base_commit=6fbdc9d
+- Last verified test run: passed=656 failed=0 skipped=28 errors=0 | date=2026-11-18 | base_commit=3779336
+- Last verified ROS test run: passed=683 failed=0 skipped=6 errors=0 | date=2026-11-18 | base_commit=3779336
 - Task 1 status: complete
 
 The Task 10b checks used the code commit `1d8d882` (scheduler, status
@@ -22,6 +22,75 @@ side:
 skipped** (6 `sim2real_msgs` + 1 CTest + 6 pytest). `.venv-ros` was **627/6**
 and `run_ml_tests.sh` **4 passed / 1 deselected**. `.venv-ml` was not rebuilt;
 see the deviations below.
+
+## Task 11b status: measured obstacle-mode fix (2026-11-18)
+
+**Why the 10 Task 11 chunks were rejected.** The Task 11 H21 check used a
+**synthetic** map (600 table points + 450 cube-surface points) and the
+kinematic `FakeBackend` expert. All 10 rejections were chunk window 1 (start
+step 20) at the same TCP: the **target red cube**, not the table. The 2 cm grid
+EDT reported **0.0 m** at command point 0 because the TCP at the cube centre
+shared an occupied cell. Exact distances: **0.01861 m** to the cube at point 0,
+and **0.00451 m** at command point 6 during lift (finger target **0.00063 m**).
+Nearest non-table **0.01861 m**; nearest excluding the target cube **0.03525 m**.
+The strict grid was a quantisation artifact, not a table-plane rejection.
+
+**Real mapper cloud (MuJoCo headless + mapper, 60 s).** 667 points, frame
+`world`; z min/median/max **0.41994 / 0.419996 / 0.74742 m**; **81.7%** within
+5 mm and **84.9%** within 20 mm of the table plane z=0.42; x **0.265-0.645 m**,
+y **-0.265-0.275 m**. Cube points: red **33 within 3 cm** (min 0.02069 m), blue
+**10** (min 0.02149 m), green **0 within 3 cm** (min 0.03242 m). Mapper
+per-camera counters at n=280: **overhead 140 / wrist 139**. The self-filter
+leaves some robot points (z up to 0.747), so the cloud is not only table/cubes.
+For the expert grasp TCP, exact nearest **0.01974 m** (red cube), table-masked
+**0.01974 m**, target-cube-excluded **0.02248 m**, both **0.02248 m**. Grid:
+2 cm **0.0**, 1 cm **0.010**, 5 mm **0.01581 m**.
+
+**Options evaluated.** (a) table mask alone: still 10/40 with the grid and
+10/40 with exact distance (target cube is nearest); not sufficient. (b)
+task-conditioned target allowance: 0/40; the suggested finger-open gate would
+not fix the lift point (finger 0.00063), so the implemented allowance uses the
+target object's identity/proximity. (c) a 4 mm global threshold would pass the
+measured 4.51 mm minimum but is a blind relaxation; not chosen. (d) **chosen:
+`obstacle_mode: masked`** = exact surface-point distance + table band
+(`0.42 ± 0.01 m`; table top = 0.40 + 0.04/2) + target-object allowance inside
+`target_allowance_radius_m=0.05`. The threshold stays **1 cm**. `strict` is
+still the default; **your decision is needed** before making masked the default.
+
+**Measured false-positive rates (fake backend, synthetic map):**
+
+| seed set | strict | masked |
+| --- | --- | --- |
+| 20900-20909 | **30 accepted / 10 rejected** (all `OBSTACLE_TOO_CLOSE`) | **40 / 0** |
+| 20910-20919 (held-out) | **30 accepted / 10 rejected** (all `OBSTACLE_TOO_CLOSE`) | **40 / 0** |
+
+**Injection test.** A 2 cm surface block at 2, 5, and 9 mm from the TCP is
+rejected in **both** modes. At 12 mm it is outside the 1 cm threshold and
+passes, as specified. An unexpected object at the target object's configured
+volume would be allowed by design; elsewhere near the TCP it is not.
+
+**Live re-check (no GPU).** Mock control stack + safety node +
+`vla_inference_node policy_backend:=fake` + the saved real cloud as a
+**test-only fake map** (`sim_node` did **not** run with the broadcaster).
+Strict: **108** forwarded commands before the injected block, **0** after,
+last reason `OBSTACLE_TOO_CLOSE`, min distance **0.0**. Masked: **112** before,
+**0** after, min distance **0.0040 m**. Both modes forwarded real commands and
+stopped after the block. The saved cloud is not a substitute for live mapping.
+
+**Counts (2026-11-18, sklearn absent):** core **656 passed / 0 failed / 28
+skipped / 0 errors**; `.venv-ros` **683 / 0 / 6 / 0**; colcon **22 tests / 0
+errors / 0 failures / 0 skipped**; `run_ml_tests.sh` **4 passed / 1
+deselected**; `ci_parity` **654 passed / 30 skipped** (ROS half **22 / 0 / 0 /
+8 skipped**); clean clone at `3779336` **653 passed / 31 skipped**.
+
+**Rate-test note:** the sim-node rate floor was lowered from **16 Hz** to
+**8 Hz** in Task 11 A1 for load robustness after **20.00 Hz in 10/10 isolated
+runs**. It still catches the documented 1.87-3.28 Hz and 4.98-6.5 Hz
+starvation regressions.
+
+Both CI jobs for the pre-11b push at `3aad245` are **user-confirmed green**
+(2026-11-18, Actions tab; supporting evidence only). The Task 11b push still
+needs the user's Actions-tab confirmation.
 
 ## Task 11 status: safety watchdog and mock control (2026-11-17)
 
@@ -448,8 +517,13 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   available) the mock model following commands. Commands are in
   `docs/SAFETY.md` and `docs/STATUS.md`; do not mark this passed without the
   user.
+- [ ] **Decision needed:** keep `obstacle_mode: strict` as the default (shipped
+  now) or make `masked` the default. Strict rejects 10/40 Task 11 chunks;
+  masked rejects 0/40 on both seed sets, but it deliberately ignores the
+  commanded target object inside its approach radius. Do not change the default
+  without the user's explicit yes.
 - [ ] Confirm this push's GitHub Actions tab (supporting evidence only; the user
-  confirms the Actions tab). Task 11 CI is not yet confirmed.
+  confirms the Actions tab). Task 11b CI is not yet confirmed.
 - [ ] RViz visual confirmation of `/workspace/pointcloud` with both cameras
   (PENDING; the headless 2.001 Hz / 666-point / both-camera check passed).
 - [ ] Run the prepared 2,000-step follow-up
