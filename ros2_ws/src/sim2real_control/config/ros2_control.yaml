@@ -1,4 +1,4 @@
-# Mock-hardware ros2_control configuration (Task 11).
+# Mock-hardware ros2_control configuration.
 #
 # This stack is for plumbing tests only.  mock_components/GenericSystem mirrors
 # position commands to position states; it does not model dynamics, latency,

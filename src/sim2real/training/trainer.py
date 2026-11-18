@@ -5,7 +5,7 @@ accumulation, finite-loss checks, checkpoint cadence, resume, and graceful
 interruption.  Dataset loading, preprocessing, and the real model live in the
 adapter and the CLI.
 
-The Task 7 episode-level split is enforced here: a validation episode id in the
+The episode-level split is enforced here: a validation episode id in the
 training set or in any batch is a hard error, not a warning.
 """
 
@@ -32,7 +32,7 @@ TRAINER_STATE_NAME = "trainer_state.json"
 
 
 def load_split_manifest(path: str | Path) -> tuple[list[str], list[str]]:
-    """Read the Task 7 ``meta/sim2real_split.json`` episode ids."""
+    """Read the dataset-export stage ``meta/sim2real_split.json`` episode ids."""
     manifest_path = Path(path)
     if not manifest_path.is_file():
         raise TrainerError(f"{manifest_path}: split manifest not found")

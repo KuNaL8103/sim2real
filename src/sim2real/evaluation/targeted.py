@@ -5,7 +5,7 @@ mixture sampler, maps each vector back to a full valid randomization sample with
 :func:`sim2real.randomization.features.from_feature_vector`, and runs the
 scripted expert with that sample applied directly.
 
-The Task 4 expert still fails roughly 40% of clean episodes, so targeted rollouts
+The scripted expert still fails roughly 40% of clean episodes, so targeted rollouts
 are not automatically useful training data: roughly 60% are expected to be
 successful and fewer pass the trajectory filter.  The caller must report the
 measured yield, not promise it.

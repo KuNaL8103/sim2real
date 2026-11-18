@@ -1,34 +1,32 @@
 # Architecture
 
-Status: **Task 12.** Simulator backends, `sim_node`, seeded domain
+Status: **Implemented through release validation.** Simulator backends, `sim_node`, seeded domain
 randomization, a scripted pick-and-place expert, an atomic staging buffer,
 trajectory filtering, a versioned `curated_v1` dataset writer, RGB-D workspace
 mapping, the two-layer LeRobot/Open X dataset builder, an offline SmolVLA +
 PEFT LoRA fine-tuning pipeline, closed-loop evaluation, failure-driven
 generation, the ROS 2 VLA inference bridge, and the safety watchdog with a
-**mock-hardware** ros2_control stack are implemented. Task 12 adds the explicit
+**mock-hardware** ros2_control stack are implemented. The pipeline orchestrator adds the explicit
 pipeline orchestrator, integrated simulation/mock-hardware launches, the
 validation matrix, recovery procedures, and a documented-only physical
 bring-up. A physical robot and physical safety remain unimplemented;
 mock-hardware tests do not establish physical safety. The trained policy does
 not complete the task (the pre-registered overfit rule is unmet).
-Task 2b decouples `/joint_states`/TF publication from camera rendering; Task 3
-adds validated randomization profiles and reset-service integration; Task 4 adds
+The publishing/rendering split decouples `/joint_states`/TF publication from camera rendering; the randomization stage
+adds validated randomization profiles and reset-service integration; the scripted expert adds
 the pure-Panda FK single source, bounded IK/planner abstractions, an explicit
 state machine, intentional perturbations, and `expert_collector_node` (`UNIFORM`
-only). Task 5 adds strict validation, dimensionless squared jerk, SPARC, path
+only). The filtering stage adds strict validation, dimensionless squared jerk, SPARC, path
 length, limit margins, collision runs, a deterministic acceptance engine, and
-`trajectory_filter_node` with `curated_v1` output. Task 6 adds a workspace-bounded
+`trajectory_filter_node` with `curated_v1` output. The mapping stage adds a workspace-bounded
 Open3D TSDF map, a coarse robot self-filter, `/workspace/pointcloud`, a
 `TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`, and a vectorized
-obstacle-distance query. Task 7 adds the LeRobot v3 writer and Open X/Bridge
-fixture adapter; real Bridge data, physical deployment, and the Task 12
-orchestrator remain unimplemented. Training (Task 8), inference (Task 10), and
-the safety watchdog (Task 11) are implemented. Isaac Sim is **UNAVAILABLE on this machine**
+obstacle-distance query. The dataset-export stage adds the LeRobot v3 writer and Open X/Bridge
+fixture adapter; real Bridge data, physical deployment, and the pipeline orchestrator remain unimplemented. Training, inference, and the safety watchdog are implemented. Isaac Sim is **UNAVAILABLE on this machine**
 (requirements-based, not tested); MoveIt 2 is **not installed** and its planner
 adapter is an unexercised guard.
 
-## Scope of Task 9
+## Scope of the evaluation stage
 
 - `src/sim2real/evaluation/`: policy interface and reference/test policies,
   closed-loop episode runner, JSON records and manifests, failure analysis,
@@ -43,7 +41,7 @@ adapter is an unexercised guard.
   `scripts/flywheel_status.py`, `scripts/policy_server.py`.
 - `docs/EVALUATION.md`: timing contract, failure definitions, guards, ledger.
 
-## Scope of Task 8
+## Scope of the training pipeline
 
 - `src/sim2real/training/`: validated config, LoRA target resolver, action-chunk
   encode/decode with masks, LeRobot-consistent normalization for the fake path,
@@ -61,7 +59,7 @@ adapter is an unexercised guard.
 - `docs/TRAINING.md` (primary sources, decisions, measurements) and
   `docs/REMOTE_TRAINING.md` (documentation only).
 
-## Scope of Task 6b
+## Scope of the contact-classification work
 
 - `configs/sim/collision.yaml` and `src/sim2real/sim/collision.py`: pure
   `classify_contacts` over `(geom1, geom2, dist)` with explicit allowed rules
@@ -77,7 +75,7 @@ adapter is an unexercised guard.
   system-Python colcon run with scipy/open3d shadowed.
 
 
-## Scope of Task 6
+## Scope of the mapping stage
 
 - `src/sim2real/mapping/`: validated config, TSDF fusion, robot self-filter,
   transform providers, mapper orchestration, and the obstacle query.
@@ -94,7 +92,7 @@ adapter is an unexercised guard.
   plus plotly/dash for Open3D's eager visualization import).
 
 
-## Scope of Task 5
+## Scope of the filtering stage
 
 - `src/sim2real/filtering/`: strict validation, metrics, deterministic decision
   engine, conversion, and a session pipeline.
@@ -108,7 +106,7 @@ adapter is an unexercised guard.
 - scipy/pyarrow added to the core dev group and installed into `.venv-ros` with
   `--no-deps` after an import test under system NumPy 1.26.4.
 
-## Scope of Task 4
+## Scope of the scripted expert
 
 - `src/sim2real/expert/`: instruction parser, IK, planner, state machine,
   perturbations, rollout runner, staging, and pure message conversion.
@@ -123,7 +121,7 @@ adapter is an unexercised guard.
   randomization group now saves/restores `qpos`/`qvel` so it cannot silently
   home the arm and discard sampled object poses.
 
-## Scope of Task 3
+## Scope of the randomization stage
 
 - `src/sim2real/randomization/`: validated YAML config, deterministic sampler,
   backend-aware applier, approximate colour-temperature helper.
@@ -136,7 +134,7 @@ adapter is an unexercised guard.
   snapshots.
 - Hardware-free tests plus one ros-marked service round-trip test.
 
-## Scope of Task 2b
+## Scope of the publishing/rendering split
 
 - Publish state/TF at the control rate independently of rendering.
 - Render from a private snapshot; one render in flight; skip and count busy ticks.
@@ -146,7 +144,7 @@ adapter is an unexercised guard.
 - Verification/hardening of `setup_envs.sh`, CI asset options, QoS, asset fetch,
   and the local tool configuration.
 
-## Scope of Task 2
+## Scope of the simulator backend work
 
 - `SimBackend` contract plus deterministic `FakeBackend` (default CI backend).
 - Headless MuJoCo 3.17.0 Franka Panda tabletop with two 256x256 RGB-D cameras.
@@ -155,10 +153,10 @@ adapter is an unexercised guard.
   `/sim2real/reset_env`.
 - Hardware-free tests; MuJoCo physics tests run with the `sim` group, rendering
   tests are marked `render` and skip in CI.
-- Joint-command subscription is **deferred to Task 11**. The node holds the
+- Joint-command subscription is **deferred to the safety watchdog**. The node holds the
   current target and steps the backend; it does not accept external commands.
 
-## Scope of Task 1
+## Scope of the initial scaffold
 
 - Pure-Python core library (`src/sim2real`) with contract constants, metadata
   validation, and status parsing.
@@ -192,8 +190,8 @@ Official Isaac Sim 6.2.0 requirements:
 | Driver | Linux 595.58.03 | 551.76 | below tested version |
 
 WSL limits `memory=10GB`, `swap=4GB`, `processors=8` are **active as of
-2026-10-31 Task 2b**: `free -h` reports 9.7 GiB RAM / 4.0 GiB swap and `nproc`
-reports 8. Task 2b used **2 colcon workers**; Task 2 measurements were taken with
+2026-10-31**: `free -h` reports 9.7 GiB RAM / 4.0 GiB swap and `nproc`
+reports 8. The publishing/rendering split used **2 colcon workers**; the simulator measurements were taken with
 the older 5.8 GiB / 2 vCPU limits.
 
 Graphics:
@@ -218,7 +216,7 @@ Consequences:
   RTX 4050; losses were finite. This proves the pipeline fits, not that a long
   run or a larger batch fits. Cloud/remote GPUs remain an option for longer
   runs; see `docs/REMOTE_TRAINING.md`.
-- **MuJoCo rendering plus ROS is still constrained by software GL.** Task 2b
+- **MuJoCo rendering plus ROS is still constrained by software GL.** The publishing/rendering split
   uses 256x256 cameras, two colcon workers with the active 9.7 GiB / 8 vCPU
   limits, and measured peak RSS; state/TF reach 20 Hz, images 2.67 Hz. See below.
 
@@ -243,19 +241,19 @@ ROS adapter rules:
 
 ## Package responsibilities
 
-| Package | Build type | Responsibility | Task 1 state |
+| Package | Build type | Responsibility | Initial state |
 | --- | --- | --- | --- |
 | `sim2real_msgs` | `ament_cmake` | Messages/services for episodes, metrics, safety, reset, rollout generation | interfaces defined; builds if ROS deps present |
 | `sim2real_sim` | `ament_python` | Simulator backend adapter, `/joint_states` owner, reset service | **implemented** (fake, MuJoCo, guarded Isaac) |
 | `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | **implemented** (workspace mapper) |
-| `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node) |
-| `sim2real_control` | `ament_python` | Safety watchdog, final trajectory dispatch, e-stop services, mock-hardware launch | **implemented** (Task 11; mock hardware only, no physical safety claim) |
+| `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (inference node) |
+| `sim2real_control` | `ament_python` | Safety watchdog, final trajectory dispatch, e-stop services, mock-hardware launch | **implemented** (mock hardware only, no physical safety claim) |
 
-The pure-Python `src/sim2real/orchestrator/` package owns the Task 12 stage state
+The pure-Python `src/sim2real/orchestrator/` package owns the orchestrator's stage state
 machine, seed-ledger checks, manifests, resume/quarantine, and approval gates.
 It is not a ROS package and imports no `rclpy`.
 
-## Pipeline orchestrator (Task 12)
+## Pipeline orchestrator
 
 ### Stages and executors
 
@@ -322,35 +320,35 @@ real hardware must use the strict default unless the operator changes it.
 ## Data flow
 
 ```
-scripted expert (Task 4)
+scripted expert
     -> /sim2real/staging_episode  (RolloutEpisode)
-filter (Task 5)
+filter
     -> /sim2real/filtered_episode (RolloutEpisode)
     -> /sim2real/filter_metrics   (FilterMetrics)
-export (Task 7)
+export
     -> curated_v1 + LeRobot v3 / Open X fixtures under data/  (ignored by git)
-training (Task 8)
+training
     -> LoRA adapter + checkpoint metadata on disk   (ignored by git)
-inference (Task 10)
+inference
     cameras + /joint_states + /task_instruction
     -> vla_inference_node
     -> /vla/raw_action                 (JointTrajectory, raw and UNSAFE)
     -> /vla/status                     (String, JSON diagnostics)
-safety/control (Task 11)
+safety/control
     -> validate -> EMA -> retime -> final validation
     -> /joint_trajectory_controller/joint_trajectory   (safety node is the only publisher)
     -> /safety/status, /safety/diagnostics
     -> /estop, /estop_reset
     -> ros2_control (mock_components/GenericSystem in this repository)
-perception (Task 6)
+perception
     -> /workspace/pointcloud, /workspace/tsdf_mesh
 ```
 
 `/joint_states` has exactly one owner: `sim_node` **or** the ros2_control
-`joint_state_broadcaster`, never both. The Task 11 launch files refuse the
+`joint_state_broadcaster`, never both. The safety launch files refuse the
 combination.
 
-### End-to-end data flow (Task 12)
+### End-to-end data flow
 
 ```mermaid
 flowchart LR
@@ -390,7 +388,7 @@ The orchestrator (`src/sim2real/orchestrator/`) drives the solid path as an
 explicit seven-stage state machine: `GENERATE -> FILTER -> BUILD -> TRAIN ->
 EVALUATE -> ANALYZE_FAILURES -> TARGETED_GENERATE`.
 
-### Live ROS runtime (Task 12 launches)
+### Live ROS runtime (pipeline launches)
 
 ```mermaid
 flowchart TB
@@ -416,7 +414,7 @@ cannot close a loop through MuJoCo; closed-loop evaluation uses the in-process
 runner. The mock stack has no cameras. `docs/DEPLOYMENT.md` records the smallest
 bridge design as an open decision, not implemented code.
 
-Task 5 writes three separate areas:
+The filtering stage writes three separate areas:
 
 - `data/staging/<run_id>/` — raw expert rollouts (arrays + sidecar + manifest);
 - `data/curated/<dataset>/v<M.m.p>/` — accepted episodes in `curated_v1`;
@@ -446,14 +444,14 @@ left as `TBD` where no decision has been made.
 | `/sim2real/filter_metrics` | `sim2real_msgs/msg/FilterMetrics` | filter | recorder, evaluation | per episode (accepted, rejected, or invalid) | reliable, keep-last 50 | Metrics explain a decision; they do not override safety stops. |
 | `/workspace/pointcloud` | `sensor_msgs/msg/PointCloud2` | perception | VLA adapter, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | Frame is `world`; no implicit frame. Consumers rebuild an `ObstacleQuery` from this cloud. |
 | `/workspace/tsdf_mesh` | `visualization_msgs/msg/Marker` | perception | RViz, safety watchdog | `publish_rate_hz` (2 Hz default) | reliable, keep-last 1 | `TRIANGLE_LIST` marker; not a collision mesh. |
-| `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter (Task 11 only) | on completed inference, at most `max_inference_rate_hz` (10 Hz default) | reliable, keep-last 10 | **RAW and UNSAFE.** `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `k*dt` relative to `header.stamp`; `header.stamp` = the observation stamp, never the publish time. `frame_id` is empty (joint trajectories are frame-agnostic). Nothing except Task 11's safety node may forward this topic to a controller. |
+| `/vla/raw_action` | `trajectory_msgs/msg/JointTrajectory` | VLA adapter | safety/control adapter (the safety watchdog only) | on completed inference, at most `max_inference_rate_hz` (10 Hz default) | reliable, keep-last 10 | **RAW and UNSAFE.** `joint_names` = `panda_joint1..7` + `panda_finger_joint1`; `points[k].positions` = absolute targets for chunk step `k`; `time_from_start` = `k*dt` relative to `header.stamp`; `header.stamp` = the observation stamp, never the publish time. `frame_id` is empty (joint trajectories are frame-agnostic). Nothing except the safety node may forward this topic to a controller. |
 | `/vla/status` | `std_msgs/msg/String` | VLA adapter | operator/UI, recorder | 1 Hz | reliable, keep-last 10 | JSON state machine, counters, last latency, and last error. Diagnostic only; never a safety signal. |
 | `/joint_trajectory_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` | safety watchdog (only) | ros2_control trajectory controller | on accepted chunk / hold | reliable, keep-last 10 | Only the safety watchdog may publish here; raw VLA output must never reach the controller. Header stamp is zero and point `j` is `(j+1)*command_period_s` from now. |
 | `/safety/status` | `sim2real_msgs/msg/SafetyStatus` | safety watchdog | operator/UI, recorder, supervisor | 10 Hz | reliable, keep-last 10 | `NaN` means unknown, never safe. `is_safe=false` must stop dispatch. `state` maps STARTING->DEGRADED, OK->NOMINAL, UNSAFE->SAFE_STOP, ESTOP->ESTOP. |
 | `/safety/diagnostics` | `std_msgs/msg/String` | safety watchdog | operator/UI, recorder | 1 Hz | reliable, keep-last 10 | Additive JSON: last decision/reason, per-reason counters, map age/coverage, EMA/retime settings. Diagnostic only; never a safety signal. |
 | `/estop` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | on request | reliable service; latched **state** | Latched stop. Idempotent. Recovery requires `/estop_reset`; no automatic clearing. A software e-stop is not a safety-rated emergency stop. |
 | `/estop_reset` | `std_srvs/srv/Trigger` | operator/UI | safety watchdog | on request | reliable service | Clears the latch only after joint/map inputs have been fresh and valid for `estop_reset_hold_s` and no other unsafe condition holds. No motion is commanded by the reset. |
-| `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. Task 3 applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
+| `/sim2real/reset_env` | `sim2real_msgs/srv/ResetEnv` | evaluation harness / operator | sim node | on request | reliable | Reset returns the applied seed; a failed reset is not treated as success. The randomization stage applies a validated profile inside the render quiesce and returns the sample plus an applied/skipped report. Unknown profiles or invalid overrides fail without mutating the scene. |
 | `/sim2real/finalize_dataset` | `std_srvs/srv/Trigger` | operator/UI | filter | on request | reliable | Writes the buffered accepted episodes as a new `curated_v1` minor version. Returns `success=false` when nothing is buffered or the write fails; an existing version is never overwritten. |
 | `/sim2real/generate_rollouts` | `sim2real_msgs/srv/GenerateRollouts` | dataset tooling / operator | expert collector | on request | reliable | `num_rollouts` must be `1..max_rollouts_per_call`; `SAMPLING_UNIFORM` and `SAMPLING_FAILURE_TARGETED` are supported. A targeted call needs a hash-valid `failure_distribution_ref` and a seed in 30000-30999. A batch runs on one worker thread and a concurrent call is rejected. |
 | `/sim2real/run_eval` | `std_srvs/srv/Trigger` | operator/UI | closed-loop evaluator | on request | reliable | Runs the evaluation on a worker thread; a concurrent request is rejected. The node runs the backend in-process and does **not** publish `/joint_states`; a failed evaluation returns `success=false`. |
@@ -467,7 +465,7 @@ reliable, transient-local, depth 10. `/tf` uses depth 10 (tf2_ros defaults to 10
 topics remain **reliable keep-last 5**: `ros2 topic echo
 --qos-reliability best_effort --once` receives them because a reliable publisher
 serves best-effort subscribers, but reverting to best-effort would reintroduce
-the RViz Camera-display reliability mismatch observed in Task 2. The RViz Image
+the RViz Camera-display reliability mismatch observed in the simulator backend work. The RViz Image
 and Camera displays are already configured Best Effort; that alone was not
 sufficient. The mapper's publishers use reliable keep-last depth 1 (`MAP_QOS`),
 because each publication replaces the complete map rather than queueing a
@@ -483,7 +481,7 @@ VLA inference node publishes `/vla/raw_action` reliable keep-last 10
 | frame | parent | convention | notes |
 | --- | --- | --- | --- |
 | `world` | none (root) | z up | Single simulation world frame. |
-| `panda_link0` | `world` | robot base | Identity mount in Task 2; static transform. |
+| `panda_link0` | `world` | robot base | Identity mount in simulation; static transform. |
 | `panda_link1`..`panda_link7` | previous link | robot body frames | Dynamic TF from backend forward kinematics (not in the core contract tuple). |
 | `panda_hand` | `panda_link7` | EE frame | Used by `TrajectoryStep.ee_frame_id`. |
 | `camera_overhead_optical_frame` | `world` | optical: x right, y down, z forward | Static overhead extrinsic. |
@@ -498,7 +496,7 @@ Additional rules:
   This differs from the ROS body convention (x forward, y left, z up).
 - `/vla/raw_action` joint order is fixed by `contracts.CONTROLLED_JOINT_NAMES`.
 
-## Simulator backend interface (Task 2)
+## Simulator backend interface
 
 `src/sim2real/sim/backend.py` is the single contract:
 
@@ -544,7 +542,7 @@ the model's `joint1..joint7` / `link0..hand` names are not renamed.
 | physics mass | no | yes | **unverified** |
 | physics friction | no | yes | **unverified** |
 | joint damping | no (instant targets) | yes | **unverified** |
-| distractors | no (Task 3: SKIPPED) | no (Task 3: SKIPPED) | **unverified** |
+| distractors | no (randomization: SKIPPED) | no (randomization: SKIPPED) | **unverified** |
 | object pose | yes (stored observation) | yes (free-joint qpos) | **unverified** |
 | texture / colour | yes (flat RGBA) | yes (`geom_rgba`; `material_pool` PARTIAL) | **unverified** |
 
@@ -565,9 +563,9 @@ Every flag carries an explicit reason string in `BackendCapabilities.reasons`.
   exact synchronizer also works; the slop only matters for recorded/replayed
   data.
 
-## Publishing/rendering decoupling (Task 2b)
+## Publishing/rendering decoupling
 
-Problem measured in Task 2: with `publish_images:=true`, MuJoCo's render callback
+Problem measured in the simulator backend work: with `publish_images:=true`, MuJoCo's render callback
 ran on the same single-threaded executor and starved the control timer
 (`/joint_states` 1.87–3.28 Hz). With images off, it already reached 20 Hz.
 
@@ -600,7 +598,7 @@ Design (smallest change that meets the requirements):
    samples and would fail on extrapolation into the future.
 5. **Reset quiesce.** The reset service calls `begin_reset()`, which blocks new
    renders, invalidates older snapshot generations, and waits for the in-flight
-   render. Task 3 applies model parameters and object poses inside this same
+   render. The randomization stage applies model parameters and object poses inside this same
    window, then republishes static camera TF before `end_reset()`.
 6. **Optional `render_only_when_subscribed`** (default `false`) skips a camera
    whose three publishers have no subscribers and counts the skip.
@@ -622,7 +620,7 @@ Design (smallest change that meets the requirements):
 `publish_images:=false` does not create the camera timer. The control path still
 captures a snapshot (cheap) so the node's structure stays identical.
 
-## Domain randomization (Task 3)
+## Domain randomization
 
 ### Module layout
 
@@ -723,7 +721,7 @@ clear refusal rather than pretending.
 `material_pool` is intentionally **PARTIAL**: MuJoCo can change a geom's RGBA
 at runtime but cannot swap texture images, so the applier applies a flat colour
 from the fixed palette and says so. Distractors are **SKIPPED** because the
-scene has no pooled parked bodies and Task 3 does not create bodies at runtime.
+scene has no pooled parked bodies and the randomization stage does not create bodies at runtime.
 
 ### Reset integration and quiesce
 
@@ -797,7 +795,7 @@ no scene mutation.
   display is the exception: it needs a URDF, which this launch file does not
   provide. The TF, Image, and Camera displays work without one.
 
-## Scripted expert and rollout generation (Task 4)
+## Scripted expert and rollout generation
 
 ### Module layout
 
@@ -821,7 +819,7 @@ Nothing in this package imports `rclpy`, MuJoCo, or a renderer.
 
 The sim node publishes dynamic TF from `SimBackend.link_poses()` with
 `tf_source=backend_fk`. Critically, `FakeBackend`'s previous FK was an explicitly
-placeholder sine/cosine approximation. Task 4 replaces it with
+placeholder sine/cosine approximation. The scripted expert replaces it with
 `sim2real.sim.kinematics.forward_kinematics`, a pure-NumPy replication of the
 pinned Menagerie MJCF body tree (`link1..link7`, `hand`). The same function
 object supplies:
@@ -939,7 +937,7 @@ CPU-testable, and it must not be read as contact dynamics.
    `SeedSequence([seed, episode_index, 0x52414E44])` (it does **not** rely on the
    reset service's `episode_index=0`);
 2. resets through `sim2real.sim.reset_handler.reset_environment` with the chosen
-   profile, so Task 3's capability gating still governs;
+   profile, so the randomization stage's capability gating still governs;
 3. records the post-reset observation, plans and executes each phase, and
    records every control step;
 4. catches backend/runner exceptions and records `ABORTED`; planner/IK failure
@@ -957,7 +955,7 @@ positions/velocities, EE pose, action (7 joint targets + gripper), per-step
 state-transition log, perturbation name, outcome, failure reason, and the full
 randomization report. MuJoCo contact details involving the target cube and a
 finger are treated as the intended grasp; any other reported contact is
-`unintended_collision=true`. Task 5 will refine contact metrics.
+`unintended_collision=true`. The filtering stage will refine contact metrics.
 
 ### Atomic staging and conversion
 
@@ -996,7 +994,7 @@ maps each to a full valid `RandomizationSample`, and runs the expert with that
 sample applied directly; staged episode metadata carries the distribution id and
 every seed is inside 30000-30999.
 
-## Safety watchdog and mock control (Task 11)
+## Safety watchdog and mock control
 
 ### Module layout
 
@@ -1061,8 +1059,7 @@ checked: no whole-arm, swept-volume, or self-collision check. The table and
 manipulated object are in the map; the measured expert false-positive result is
 in `docs/SAFETY.md`.
 
-`obstacle_mode` is `strict` (default) or `masked`. Strict keeps the Task 11
-2 cm grid-EDT distance. Masked is an opt-in accuracy mode: it computes the
+`obstacle_mode` is `strict` (default) or `masked`. Strict keeps the 2 cm grid-EDT distance. Masked is an opt-in accuracy mode: it computes the
 exact distance to the surface points, ignores points within
 `table_mask_band_m` of `table_surface_z_m`, and ignores points of the
 commanded target object inside `target_allowance_radius_m` of its centre. The
@@ -1091,7 +1088,7 @@ refuses `start_sim:=true`. The pure `check_single_owner` helper is tested. This
 is a launch-time guard, not a runtime arbitration mechanism: an operator can
 still start two processes manually, which remains a configuration error.
 
-## Closed-loop evaluation (Task 9)
+## Closed-loop evaluation
 
 ### Module layout
 
@@ -1133,7 +1130,7 @@ a run count, not a safety signal.
 `EvalEpisodeRecord` (`schema_version: 1`) stores the seed, profile, full
 flattened randomization sample, initial object pose, friction/mass/lighting/
 camera values, task instruction, success, `task_completion` in [0,1], collision
-count, termination reason, Task 5 trajectory metrics (DEGENERATE handled), the
+count, termination reason, the filtering trajectory metrics (DEGENERATE handled), the
 terminal state and last policy info, policy/checkpoint/config/git provenance,
 `n_action_steps`, the renderer, and every control step. `EvalRun` stores the
 seed list derived with `SeedSequence`, the policy info, and aggregates with a
@@ -1182,7 +1179,7 @@ requested/generated, decision, reason, and the measured success rates. Guards:
 `min_failures_to_trigger`, `min_success_improvement`,
 `max_consecutive_no_improvement`, `cooldown_s`, a `STOP` file kill switch, and
 refusing the same `eval_run_id` twice. Decisions are
-`REQUEST_TARGETED_GENERATION`, `REQUEST_RETRAIN` (reserved; Task 9 never trains),
+`REQUEST_TARGETED_GENERATION`, `REQUEST_RETRAIN` (reserved; the evaluation stage never trains),
 or `STOP`. Corrupt/partial lines are reported and skipped.
 
 ### Policy server (T4)
@@ -1205,7 +1202,7 @@ Evaluation records the renderer string (`fake-analytic` for the fake backend;
 the policy needs them, with the same cameras and 256x256 settings as the
 training dataset.
 
-## Trajectory filtering and curated datasets (Task 5)
+## Trajectory filtering and curated datasets
 
 ### Module layout
 
@@ -1245,7 +1242,7 @@ seeds, quantile tables, and hold-out acceptance are in `docs/FILTER_METRICS.md`.
 ### Curated output and rejection log
 
 `curated_v1` is LeRobot-*style* (columns, episode/task metadata) but is **not
-validated against the LeRobot loader** until Task 7. The writer is atomic:
+validated against the LeRobot loader** until the dataset-export stage. The writer is atomic:
 `curated/<name>/.partial-*` is renamed only after every file is written; an
 existing version is never overwritten; each write creates a new minor version
 containing the prior accepted episodes plus the new ones. Episode indices are
@@ -1269,7 +1266,7 @@ episodes, and buffers accepted records until `/sim2real/finalize_dataset`
 produces an `INVALID` metrics message; it never crashes the node. Filter topics
 use reliable keep-last depth 50 so a burst is not dropped.
 
-`TrajectoryStep` gained two measured-state fields in Task 5:
+`TrajectoryStep` gained two measured-state fields in the filtering stage:
 `float64 gripper_position` and `bool unintended_collision`, both required by the
 filter. The collector populates them; this is an interface change (see the
 changelog).
@@ -1288,7 +1285,7 @@ system-site-packages venv under the sourced ROS environment:
   `.venv-ros` with `--no-deps`. `scripts/setup_envs.sh` reproduces it and a text
   test asserts the lines.
 
-### Task 5 runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
+### Filtering stage runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
 
 | measurement | result |
 | --- | --- |
@@ -1301,9 +1298,9 @@ system-site-packages venv under the sourced ROS environment:
 | MuJoCo clean census, seeds 3000-3039 | **22 success / 18 failure** |
 | Keyframe replay | **24 PNGs**, max joint replay error **0.0 rad** |
 
-### Known limitations (Task 5)
+### Known limitations (filtering)
 
-- **`unintended_collision` over-reports intended grasps (pre-existing Task 4
+- **`unintended_collision` over-reports intended grasps (pre-existing expert
   bug).** The helper skips intended finger↔cube contacts inside the loop but
   returns `count > 0` afterwards, so any contact sets the flag. Clean successful
   MuJoCo episodes show 1-3 collision runs. Expert code was not changed; the
@@ -1316,12 +1313,12 @@ system-site-packages venv under the sourced ROS environment:
 - **Fake velocities are zero**, so fake velocity margins are always 1.0.
 - **Accepted MuJoCo data skews toward easy object poses**: the expert succeeds
   22/40 on clean seeds, so filtering cannot recover the failures.
-- **LeRobot-style, unvalidated loader** and **no images**; both are Task 7
+- **LeRobot-style, unvalidated loader** and **no images**; both are dataset-export
   prerequisites before VLA training.
 - **Small threshold samples** (40-67 clean tuning episodes per backend); counts
   are reported with percentages.
 
-## RGB-D workspace mapping (Task 6)
+## RGB-D workspace mapping
 
 ### Module layout
 
@@ -1392,7 +1389,7 @@ forgotten, and a translated-camera test pins the convention.
   large ML dependency set under Python 3.12.
 - **Workaround:** use `UniformTSDFVolume` over the bounded workspace. Its
   metric-depth path is correct, and the workspace is small (a 0.6 m cube at
-  1 cm is 216k voxels). This is a documented deviation from the Task 6 request
+  1 cm is 216k voxels). This is a documented deviation from the mapping stage request
   to use `ScalableTSDFVolume`; it is not a claim that the scalable volume works.
 - `tsdf_fusion.py` contains no double-scaling and no per-point Python loop.
   `cv_bridge` and `sensor_msgs_py.point_cloud2` are not used; PointCloud2 is
@@ -1407,8 +1404,8 @@ a surface map, **not** an occupancy/free-space map. Consequences:
   empty.
 - A moved object leaves a ghost until the map is reset.
 - Unknown space is represented only through `MapStatus`. `valid=False` must be
-  treated as **unsafe** by Task 11; "no obstacle found" is never a safe result.
-- OctoMap is **not** part of Task 6 and remains deferred.
+  treated as **unsafe** by the safety watchdog; "no obstacle found" is never a safe result.
+- OctoMap is **not** part of the mapping stage and remains deferred.
 
 ### Scene-change reset policy
 
@@ -1420,8 +1417,7 @@ transforms with the previous observation. A change beyond
 (0.01 rad) resets the volume, increments `resets_static_tf`, and logs. The first
 observation never resets. A change at or below the epsilon is ignored.
 
-A reset **without** camera jitter does not change `/tf_static`, so the Task 12
-orchestrator must call `/workspace/reset_map` after `/sim2real/reset_env` as
+A reset **without** camera jitter does not change `/tf_static`, so the pipeline orchestrator must call `/workspace/reset_map` after `/sim2real/reset_env` as
 well. At `max_integrations_before_reset` the volume is also retired to bound
 map age; the next frames refill it.
 
@@ -1448,7 +1444,7 @@ query. This is a coarse approximation: a grasped object near the hand is removed
 with the hand, geometry between link frames is not covered, and a large radius
 erases nearby scene points. It is not a collision model.
 
-### Known limitations (Task 6)
+### Known limitations (mapping)
 
 - The map is a surface map; there is no free-space carving, no raycasting, and
   no OctoMap.
@@ -1471,7 +1467,7 @@ erases nearby scene points. It is not a collision model.
 
 
 
-## Contact classification, expert guard, and replay (Task 6b)
+## Contact classification, expert guard, and replay
 
 ### Contact classification
 
@@ -1537,7 +1533,7 @@ the recorded actions, and writes PNGs at a chosen decimation under
 (now `sim2real.expert.images.write_png`), never overwrites, and records
 `path`+`sha256` in the sidecar and manifest. The script refuses an estimate above
 1 GiB or 10 minutes without `--i-approved`. Measured costs and the determinism
-contract are in `docs/IMAGE_REPLAY.md`; curated-dataset integration is Task 7.
+contract are in `docs/IMAGE_REPLAY.md`; curated-dataset integration belongs to dataset export.
 
 ### Limits verification
 
@@ -1547,7 +1543,7 @@ The official Franka FER table
 Jerk and effort limits are absent from the YAML; the table and recommendation
 are in `docs/SAFETY.md`. No YAML or limit code was changed.
 
-## Dataset builder and LeRobot export (Task 7)
+## Dataset builder and LeRobot export
 
 ### Two layers
 
@@ -1585,9 +1581,9 @@ The derived `ee_delta` is 7: world-axis translation delta, rotation vector of
 
 Default **decimation is 2**: state, action, and images are selected at the same
 20 Hz source steps and stored at 10 Hz. fps is always derived, never hardcoded.
-The consequence for Task 8 was recorded in the decision log: a 50-step chunk at
+The consequence for the training pipeline was recorded in the decision log: a 50-step chunk at
 10 Hz spans 5 s, longer than a typical episode, so padding/masking is required.
-Task 8 kept chunk 50 and masks the tail (Decision B).
+The training pipeline kept chunk 50 and masks the tail (Decision B).
 
 ### Images and replay
 
@@ -1619,14 +1615,14 @@ position, counts, and seen set.
 
 ### Runtime evidence
 
-Task 7 generated 200 MuJoCo episodes (seeds 10000-10199), accepted 123 (114 of
+The dataset-export stage generated 200 MuJoCo episodes (seeds 10000-10199), accepted 123 (114 of
 117 clean successes), replayed the first two accepted episodes at decimation 2
 (184 PNGs, 0.034 GiB, 0.0 replay error), and built
 `data/lerobot/train_v1_imagedemo`: 2 episodes, 92 frames, 10 fps, 4.7 MiB. The
 Bridge fixture produced 3 episodes/12 frames at 5 fps. Details and primary
 source URLs are in `docs/DATASETS.md`.
 
-## Offline VLA fine-tuning (Task 8)
+## Offline VLA fine-tuning
 
 ### Module layout and boundary
 
@@ -1657,7 +1653,7 @@ suite and CI therefore keep running without the ML environment; a dedicated
 
 - **A:** use LeRobot's library objects (`make_policy`, `wrap_with_peft`,
   `make_pre_post_processors`, `LeRobotDataset`) inside a small loop. The CLI is
-  a draccus entrypoint with a different split and no Task 8 provenance.
+  a draccus entrypoint with a different split and no training provenance.
 - **B:** `chunk_size=50`, `n_action_steps=50`, horizon **5.0 s** at 10 Hz.
   `chunk_size` is weight-compatible (no learned per-chunk positional
   embedding); `n_action_steps` is the inference replanning horizon. Short
@@ -1680,7 +1676,7 @@ exact names before wrapping.
 
 The trainer owns a seeded NumPy RNG for epoch order, gradient accumulation,
 finite-loss checks, checkpoint cadence, exact resume (adapter weights +
-step/epoch/offset/order/RNG), and graceful stop. It receives the Task 7
+step/epoch/offset/order/RNG), and graceful stop. It receives the dataset
 episode-level split and raises if any validation episode id appears in the
 training set or a batch. `exclude_perturbed` is opt-in and false by default
 because the accepted set intentionally includes perturbed episodes that passed
@@ -1713,7 +1709,7 @@ an empty validation set returns explicit zero counts. Tracking defaults to
 | Step time | 5.06 s first (warm-up), 0.66 s second; steady-state 0.43-0.66 s across runs |
 | Peak VRAM / host RSS | **1,117 MiB / ~3.7 GiB** |
 | Trainable / total | 1,485,312 / 451,531,488 |
-| Checkpoint | `outputs/task8/smolvla_smoke/checkpoint-00000002` |
+| Checkpoint | the two-step smoke checkpoint under `outputs/` |
 
 Two seeded runs produced identical losses and peak VRAM. The 40-episode
 `train_v1` has 1,849 frames at 10 Hz (32 train / 8 val) and 3,698 llvmpipe PNGs.
@@ -1721,7 +1717,7 @@ Offline L1 on 8 held-out episodes (366 windows, 8,561 valid steps) was
 0.063-0.203 per dimension, comparable to the trivial baselines after two steps.
 **No policy-quality or generalisation claim is made.**
 
-### Known limitations (Task 8)
+### Known limitations (training)
 
 - Only 40 episodes; accepted data skews toward easy cube poses.
 - Nine accepted episodes are perturbed (detour/overspeed/jitter); they are
@@ -1736,11 +1732,10 @@ Offline L1 on 8 held-out episodes (366 windows, 8,561 valid steps) was
 
 ## Deferred: joint-command subscription
 
-No joint-command topic is subscribed in Task 2. The node holds its current
-target and steps the backend. Command intake, safety filtering, and e-stop are
-Task 11; publishing raw VLA output directly to a controller remains forbidden.
+No joint-command topic is subscribed yet. The node holds its current
+target and steps the backend. Command intake, safety filtering, and e-stop are the safety stage's responsibility; publishing raw VLA output directly to a controller remains forbidden.
 
-## Measured runtime (2026-10-31 Task 2b/3, 8 vCPU / 9.7 GiB WSL2)
+## Measured runtime (2026-10-31, 8 vCPU / 9.7 GiB WSL2)
 
 MuJoCo **3.17.0**, NumPy 2.5.4 in `.venv` and system NumPy 1.26.4 in
 `.venv-ros`.
@@ -1749,17 +1744,17 @@ MuJoCo **3.17.0**, NumPy 2.5.4 in `.venv` and system NumPy 1.26.4 in
 
 | Backend / images | `/joint_states` before | `/joint_states` after | `/tf` after | overhead image after | peak RSS after |
 | --- | --- | --- | --- | --- | --- |
-| fake / on | 20.1 Hz (Task 2) | 20.00 Hz | 19.99 Hz | 10.0 Hz | 113,100 KiB |
+| fake / on | 20.1 Hz (earlier measurement) | 20.00 Hz | 19.99 Hz | 10.0 Hz | 113,100 KiB |
 | mujoco / off | 20.0 Hz (this session) | 19.99 Hz | 20.00 Hz | n/a | 340,604 KiB |
-| mujoco / on | **3.28 Hz** (this session; 1.87 Hz in Task 2) | **20.00 Hz** | **20.01 Hz** | **3.86 Hz** | **646,152 KiB** |
+| mujoco / on | **3.28 Hz** (this session; 1.87 Hz in the earlier measurement) | **20.00 Hz** | **20.01 Hz** | **3.86 Hz** | **646,152 KiB** |
 
 Before-fix `/tf` for mujoco/on was 1.89 Hz in this session. The pre-fix image rate
-was 1.66 Hz in Task 2; the exact pre-fix image average was not captured after
+was 1.66 Hz in the earlier measurement; the exact pre-fix image average was not captured after
 the WSL limits changed, so it is not restated as 3.86's baseline. The important
 result is that control/TF now run at the requested 20 Hz while rendering stays
 slower under llvmpipe.
 
-### Task 3 runtime (2026-10-31)
+### Randomization stage runtime (2026-10-31)
 
 | Backend | seed 7 twice | seed 8 | unknown profile | report | `/joint_states` across reset |
 | --- | --- | --- | --- | --- | --- |
@@ -1792,7 +1787,7 @@ These are **OPT-IN** settings only: no default changed, CI never uses them, and
 software rendering remains the documented baseline.
 
 
-### Task 4 runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
+### Scripted expert runtime (2026-11-01, 8 vCPU / 9.7 GiB WSL2)
 
 | measurement | result |
 | --- | --- |
@@ -1815,7 +1810,7 @@ failure mode is an off-centre grasp under randomized cube pose: the cube lands
 wedged cube. Yaw-aligning the gripper was tried and made the batch worse, so it
 was reverted. No test asserts a success rate.
 
-### Known limitations (Task 4)
+### Known limitations (scripted expert)
 
 - **MoveIt 2 is not installed and was not exercised.** `MoveItPlanner` raises
   `PlannerUnavailable`; no MoveIt behaviour is claimed.
@@ -1825,16 +1820,16 @@ was reverted. No test asserts a success rate.
 - **`FakeBackend`'s grasp is a kinematic test double, not physics.** It attaches
   a cube within 5 cm of the TCP and ignores contact forces.
 - **Perturbations are open-loop.** They vary commands; they are not a learned
-  failure distribution (`FAILURE_TARGETED` is Task 9).
+  failure distribution (`FAILURE_TARGETED` belongs to the evaluation stage).
 - **Images are not captured by the runner.** The staging API estimates disk and
   render time, but per-episode image capture is not wired in.
 - **`unintended_collision` is coarse.** It maps the backend's contact report;
-  MuJoCo cube↔finger contacts are treated as intended. Task 5 will add real
+  MuJoCo cube↔finger contacts are treated as intended. The filtering stage will add real
   collision metrics.
 - **The collector runs one batch at a time** and rejects a concurrent call.
 - **The collector is not a `/joint_states` publisher** and must not be confused
   with `sim_node`. Only one node may own `/joint_states`.
-- **Task 3 regression fixed:** `mj_setConst` resets `MjData` to `qpos0`; the
+- **Randomization regression fixed:** `mj_setConst` resets `MjData` to `qpos0`; the
   physics group now restores `qpos`/`qvel`. Before the fix, applying the `default`
   profile silently homed the arm and discarded sampled object poses in MuJoCo.
 
@@ -1876,7 +1871,7 @@ Options if the Panda meshes are absent:
    the mesh directory.
 3. **Prebuilt cache:** cache the mesh directory between runs. Not implemented.
 
-No additional asset-fetch step was added in Task 2b. The existing Task 2 step was
+No additional asset-fetch step was added in the publishing/rendering split. The existing simulator-backend step was
 kept; `scripts/fetch_assets.sh` now verifies the checked-out SHA and the
 Apache-2.0 LICENSE before copying.
 
@@ -1889,7 +1884,7 @@ Apache-2.0 LICENSE before copying.
 | 3 | 2026-10-30 | `/vla/raw_action` is a `JointTrajectory` with absolute joint targets, `time_from_start=(k+1)*dt`, `header.stamp` = newest observation | One representation for chunked policies and controllers |
 | 4 | 2026-10-30 | `/workspace/tsdf_mesh` uses `visualization_msgs/msg/Marker` with `TRIANGLE_LIST` | RViz-friendly, no custom mesh message |
 | 5 | 2026-10-30 | Services are namespaced `/sim2real/*`; `/estop` stays global and latched | Clear ownership; e-stop must not be namespaced away |
-| 6 | 2026-10-30 | `curated_v1` dataset format is planned for Task 5, not defined now | Avoid inventing a schema before filtering exists |
+| 6 | 2026-10-30 | `curated_v1` dataset format is planned for the filtering stage, not defined now | Avoid inventing a schema before filtering exists |
 | 7 | 2026-10-30 | Images stay on disk; `RolloutEpisode` carries metadata/paths only | Message size and replay performance |
 | 8 | 2026-10-30 | Separate `.venv` and `.venv-ros`; never mix | ROS ABI and NumPy version constraints |
 | 9 | 2026-10-30 | `metadata_json` is bounded (64 KiB) and rejects NaN/Infinity | Portable, safe transport |
@@ -1897,18 +1892,18 @@ Apache-2.0 LICENSE before copying.
 | 11 | 2026-10-30 | Repository root is discovered dynamically (`git rev-parse --show-toplevel`); no fixed path is assumed | Docs and scripts must work from any checkout location; the verified checkout is `/home/kunal/Python/sim2real` |
 | 12 | 2026-10-30 | Core and ROS test baselines use separate status lines | The core suite can skip ROS tests; mixing counts hid the core result (the old line recorded 113, a ROS count) |
 | 13 | 2026-10-30 | Isaac Sim 6.2.0 tier marked UNAVAILABLE on this machine | Published minimums (16 GB VRAM, 32 GB RAM, 4 cores, RTX 4080) exceed measured hardware; not tested |
-| 14 | 2026-10-30 | SmolVLA fine-tuning feasibility deferred to Task 8 | 6 GB VRAM may be insufficient; must be measured, with cloud GPU as a fallback |
+| 14 | 2026-10-30 | SmolVLA fine-tuning feasibility deferred to the training pipeline | 6 GB VRAM may be insufficient; must be measured, with cloud GPU as a fallback |
 | 15 | 2026-10-30 | Remove `<buildtool_depend>ament_python</buildtool_depend>`; rely on `<export><build_type>ament_python</build_type>` | The official Jazzy template does not declare that buildtool dependency, and rosdep has no rule for it |
 | 16 | 2026-10-31 | `FakeBackend` is the default CI backend; MuJoCo is optional via the `sim` group | CI must stay CPU-only and deterministic; physics tests run with `uv sync --group sim` |
-| 17 | 2026-10-31 | Cameras are 256x256 at 10 Hz; control is 20 Hz with 2 ms physics | Software OpenGL and bounded WSL resources; Task 2b measured state 20 Hz, images 2.67 Hz |
+| 17 | 2026-10-31 | Cameras are 256x256 at 10 Hz; control is 20 Hz with 2 ms physics | Software OpenGL and bounded WSL resources; the rendering-decoupling measurement reached 20 Hz, images 2.67 Hz |
 | 18 | 2026-10-31 | Sim clock starts at zero and `/clock` is not published; camera triplets share one stamp | Deterministic recording; downstream uses ApproximateTimeSynchronizer (queue 10, slop 0.05 s) |
 | 19 | 2026-10-31 | Menagerie meshes are git-ignored and restored by `scripts/fetch_assets.sh` | The pinned folder is 36.6 MB; only small XML, license, and attribution are committed |
-| 20 | 2026-10-31 | Joint-command subscription deferred to Task 11 | Safety filtering and e-stop must exist before external commands reach the backend |
+| 20 | 2026-10-31 | Joint-command subscription deferred to the safety watchdog | Safety filtering and e-stop must exist before external commands reach the backend |
 | 21 | 2026-10-31 | Camera topics use reliable keep-last 5, not best-effort sensor-data QoS | RViz Camera displays request reliable; a reliable publisher still serves best-effort consumers |
 | 22 | 2026-10-31 | State/TF publication is decoupled from rendering with snapshots and a render worker | MuJoCo rendering on the control executor starved `/joint_states` to 1.87–3.28 Hz |
 | 23 | 2026-10-31 | All MuJoCo rendering runs on one dedicated thread | EGL contexts are thread-bound; crossing executor threads caused `EGL_BAD_ACCESS` |
 | 24 | 2026-10-31 | At most one render in flight; busy ticks are skipped and counted | No unbounded queue, bounded latency, observable counters at shutdown |
-| 25 | 2026-10-31 | Reset quiesces rendering before mutating the scene | Task 3 will change model parameters; overlap with rendering is unsafe |
+| 25 | 2026-10-31 | Reset quiesces rendering before mutating the scene | The randomization stage will change model parameters; overlap with rendering is unsafe |
 | 26 | 2026-10-31 | D3D12 renderer paths are opt-in benchmark settings only | They name hardware adapters but are not the default and are never used in CI |
 | 27 | 2026-10-31 | Camera callbacks submit renders asynchronously; the worker publishes | CI showed a blocking camera callback could still starve control on a smaller runner |
 | 28 | 2026-10-31 | Randomization samples use `SeedSequence([seed, episode_index])` with one child stream per group | Pure, order-independent, and disabling one group cannot perturb another |
@@ -1922,35 +1917,35 @@ Apache-2.0 LICENSE before copying.
 | 36 | 2026-11-01 | Default expert planner is Cartesian waypoint IK plus bounded joint quintics; MoveIt is a guarded, unexercised adapter | MoveIt 2 is not installed; a runnable, testable planner is required now, and no MoveIt claim may be made |
 | 37 | 2026-11-01 | The expert state machine uses an explicit transition table with guards and per-state timeouts | Illegal transitions raise; guard failures become `FAILED` with a reason; timeouts become `TIMEOUT` |
 | 38 | 2026-11-01 | Perturbation choice is a pure function of `(seed, episode_index, fraction)`; `expected_quality` is diagnostic only | Reproducible demonstrations; the measured outcome is recorded, not the label |
-| 39 | 2026-11-01 | Staging writes atomic NPZ + JSON sidecar + sha256 manifest; images are off by default | Crash-safe iteration and verification; image capture needs size/time approval and becomes video in Task 7 |
+| 39 | 2026-11-01 | Staging writes atomic NPZ + JSON sidecar + sha256 manifest; images are off by default | Crash-safe iteration and verification; image capture needs size/time approval and becomes video in the dataset-export stage |
 | 40 | 2026-11-01 | The collector runs the backend in-process, does not publish `/joint_states`, and uses a worker thread per batch | Deterministic control-rate execution without ROS latency; `sim_node` stays the only `/joint_states` owner; the executor keeps spinning |
 | 41 | 2026-11-01 | `/sim2real/staging_episode` is reliable, transient-local, depth 10 | A filter/recorder starting just after a batch still receives recent completed episodes; no images are embedded |
 | 42 | 2026-11-01 | MuJoCo physics randomization saves/restores `qpos`/`qvel` around `mj_setConst` | `mj_setConst` resets `MjData` to `qpos0`; without the fix the physics group homed the arm and discarded sampled object poses |
 | 43 | 2026-11-01 | Pin `open3d-cpu==0.20.0` and use a workspace-bounded `UniformTSDFVolume` | 0.20.0 imports headlessly under system NumPy 1.26.4, but its legacy `ScalableTSDFVolume` produces empty geometry from metric float32 depth (upstream #7592). The workspace is bounded and the default memory estimate is a few MB, far below the 256 MB budget; a uniform volume is adequate and correct. This is not a claim that the scalable volume works |
 | 44 | 2026-11-01 | Mapping publishers use reliable keep-last 1; camera subscribers use reliable keep-last 5 | The latest map replaces the previous complete map; camera subscribers must stay compatible with the sim's reliable keep-last 5 publishers |
 | 45 | 2026-11-01 | Scene-change reset compares camera `/tf_static` transforms directly, with 5 mm / 0.01 rad epsilons | tf2 keeps only the latest static transform per frame pair; a jittered camera must not keep ghosts. A reset without jitter needs an explicit `/workspace/reset_map` |
-| 46 | 2026-11-01 | `ObstacleQuery` is a 3-D EDT over surface points; `MapStatus` carries validity, not free space | There is no carving; unknown space is expressed as `NO_DATA`/`STALE`/`LOW_COVERAGE`, and an invalid status is unsafe for Task 11 |
+| 46 | 2026-11-01 | `ObstacleQuery` is a 3-D EDT over surface points; `MapStatus` carries validity, not free space | There is no carving; unknown space is expressed as `NO_DATA`/`STALE`/`LOW_COVERAGE`, and an invalid status is unsafe for the safety watchdog |
 | 47 | 2026-11-01 | The ROS-free core run is the official baseline (`env -u PYTHONPATH -u AMENT_PREFIX_PATH`) | A module-level ROS name once broke CI collection while local runs passed because system `rclpy` was visible |
 | 48 | 2026-11-02 | Contacts are classified by geom groups and explicit rules; only `dist < 0` counts | The old "any contact" flag counted the intended grasp. A pure classifier is testable without MuJoCo and shared by both backends; zero-distance touches still confirm a grasp through the detail text |
 | 49 | 2026-11-02 | Robot self-contacts are reported as `self`, not counted; unknown geoms are flagged | Parent/child and neighbouring links are not environment collisions. No self-contact appeared in the clean survey, so the exclusion hides nothing observed |
 | 50 | 2026-11-02 | The runner aborts with `PHYSICS_INSTABILITY` on non-finite/huge state or an object outside the workspace plus 0.25 m | A 14 m cube displacement must not be recorded as a normal failure; the staged record keeps the reason |
 | 51 | 2026-11-02 | Add a pre-release settle and a wait-until-open release guard; revert grasp-offset compensation | The fixed 5-step release failed when the position actuators needed longer. Offset compensation was worse in all three variants (17/40, 25/40, 26/40) and was reverted |
 | 52 | 2026-11-02 | Re-derive MuJoCo filter thresholds from seeds 1000-1099; `max_collisions=3` from p95 x 1.2 | The collision semantics and expert changed. Clean-success n=47; jerk 8,637,545.0, SPARC -4.53250, path 1.31059; collision runs p95=2, so ceil(2.4)=3 |
-| 53 | 2026-11-02 | Replay writes the shared PNG format, records path+sha256 in the sidecar/manifest, and refuses >1 GiB/10 min without approval | Deterministic replay is the only practical way to add images here (llvmpipe is ~0.2 s/camera frame); curated integration is Task 7 |
-| 54 | 2026-11-02 | Franka position/velocity/acceleration limits verified; jerk/effort remain absent | The official FER table matches the YAML; Task 11 needs the missing jerk/effort values, which must be added deliberately |
+| 53 | 2026-11-02 | Replay writes the shared PNG format, records path+sha256 in the sidecar/manifest, and refuses >1 GiB/10 min without approval | Deterministic replay is the only practical way to add images here (llvmpipe is ~0.2 s/camera frame); curated integration is the dataset-export stage |
+| 54 | 2026-11-02 | Franka position/velocity/acceleration limits verified; jerk/effort remain absent | The official FER table matches the YAML; the safety watchdog needs the missing jerk/effort values, which must be added deliberately |
 | 55 | 2026-11-02 | LeRobot export uses the official 0.6.1/v3.0 creation API in an opt-in CPU `.venv-ml`; image mode is the default | Hand-writing Parquet/MP4 metadata would drift from the loader; image mode avoids an unexercised codec path for 2-episode/local data |
-| 56 | 2026-11-02 | Default dataset decimation is 2, so Panda is 10 Hz; state/action/images use the same steps and fps is derived | Rendering is the expensive step; absolute joint targets subsample without losing meaning. Task 8 must handle 50-step/5 s chunks with padding/masking |
+| 56 | 2026-11-02 | Default dataset decimation is 2, so Panda is 10 Hz; state/action/images use the same steps and fps is derived | Rendering is the expensive step; absolute joint targets subsample without losing meaning. The training pipeline must handle 50-step/5 s chunks with padding/masking |
 | 57 | 2026-11-02 | One renderer per dataset; replay records renderer and fidelity; mixed renderers/errors above tolerance are refused | A dataset mixing PNGs from llvmpipe and D3D12 would silently change appearance; replay must prove it reproduced the episode |
 | 58 | 2026-11-02 | Bridge is an auxiliary, fixture-first source; official slug is `bridge`, not `bridge_orig`; real data stays git-ignored | The official Open X bucket and spreadsheet use `bridge`; BridgeData V2 is CC BY 4.0 and no real subset was downloaded |
 | 59 | 2026-11-02 | Stats are our exact/streaming cross-check; LeRobot `meta/stats.json` is authoritative for training | LeRobot aggregates per-episode histogram quantiles; mean/std agreed to ~1e-6 but q01/q99 differed by up to 0.064 on the demo |
-| 60 | 2026-11-02 | Train/val is an episode-level stable-hash split stored in `meta/sim2real_split.json`; mixtures are explicit manifests | The LeRobot loader sees all episodes; Task 8 must apply the split. The sampler returns references only, never concatenated cross-embodiment action columns |
-| 61 | 2026-11-07 | Decision A: wrap LeRobot's library objects (`make_policy`, `wrap_with_peft`, `make_pre_post_processors`, `LeRobotDataset`) in a small loop; do not spawn `lerobot_train.py` | The 0.6.1 CLI is a draccus entrypoint with `eval_split`, not our stored episode split, and it emits no Task 8 provenance/offline L1 report. The library objects are stable and still do the preprocessing/PEFT |
+| 60 | 2026-11-02 | Train/val is an episode-level stable-hash split stored in `meta/sim2real_split.json`; mixtures are explicit manifests | The LeRobot loader sees all episodes; the training pipeline must apply the split. The sampler returns references only, never concatenated cross-embodiment action columns |
+| 61 | 2026-11-07 | Decision A: wrap LeRobot's library objects (`make_policy`, `wrap_with_peft`, `make_pre_post_processors`, `LeRobotDataset`) in a small loop; do not spawn `lerobot_train.py` | The 0.6.1 CLI is a draccus entrypoint with `eval_split`, not our stored episode split, and it emits no training provenance/offline L1 report. The library objects are stable and still do the preprocessing/PEFT |
 | 62 | 2026-11-07 | Decision B: `chunk_size=50`, `n_action_steps=50`, horizon 5.0 s at 10 Hz; pad/mask short episodes | `chunk_size` is a runtime sequence length with no learned per-chunk positional embedding, so smaller values are weight-compatible. 50 matches pretraining and fits in 1.1 GiB. `n_action_steps` only controls inference replanning |
 | 63 | 2026-11-07 | Decision C: the real path uses LeRobot's processors and dataset stats; `training/normalization.py` is fake/test-only | One normalization path per tensor. The parity test measured a maximum difference of 8.0e-08 versus `NormalizerProcessorStep`; applying both would normalize twice |
 | 64 | 2026-11-07 | LoRA targets are resolved against the loaded model and passed to PEFT as exact module names | PEFT 0.21.2 turns a list into a set and loses regex matching; the verified 37-module scope is 1,485,312 trainable parameters (0.329%) |
 | 65 | 2026-11-07 | torch 2.11.0+cu126 is the verified GPU wheel for driver 551.76 | A scratch-venv 2048x2048 CUDA matmul passed (sum 141957.375); cu124 has no CPython 3.12 torch satisfying `>=2.7,<2.12`; cu128 was not tested |
 | 70 | 2026-11-17 | Camera rendering uses a same-snapshot pair scheduler with round-robin first camera; state/TF stay independent of rendering | Since `51fc817` the single-slot coordinator always submitted overhead first, starving wrist under llvmpipe (pre-fix: overhead 3.25 Hz, wrist color/depth/info 0; `skipped_busy` 600 in 20 s). The pair scheduler serves both cameras from one stamp (0.0 s skew measured over 100 pairs) and gives 67/67 overhead/wrist renders in the live check; 20 Hz control unchanged (20.00 Hz in 3/3 isolated rate runs) |
-| 66 | 2026-11-17 | `/vla/raw_action` uses `time_from_start = k*dt` (k=0 is the first action) and `header.stamp` = observation stamp | Matches the evaluation runner's default linear execution: action k is applied at observation time + k*dt, with linear interpolation between consecutive actions. A JointTrajectory controller conventionally uses `(k+1)*dt`; Task 11 owns the retiming decision, and the raw chunk keeps the stamp plus per-point offsets so it can be retimed without information loss |
+| 66 | 2026-11-17 | `/vla/raw_action` uses `time_from_start = k*dt` (k=0 is the first action) and `header.stamp` = observation stamp | Matches the evaluation runner's default linear execution: action k is applied at observation time + k*dt, with linear interpolation between consecutive actions. A JointTrajectory controller conventionally uses `(k+1)*dt`; the safety watchdog owns the retiming decision, and the raw chunk keeps the stamp plus per-point offsets so it can be retimed without information loss |
 | 67 | 2026-11-17 | Inference uses a single-slot, latest-observation-wins mailbox and one worker thread | The measured throttled call is ~1.33-1.39 s versus a 0.1 s policy period; an unbounded queue would publish obsolete actions. Callbacks only copy data, so the executor is never blocked |
 | 68 | 2026-11-17 | No torch in the ROS process; the model lives behind the verified policy-server protocol | Keeps ROS and ML ABI/install constraints separate and makes the node testable with fake servers. The node asserts `torch` is absent from `sys.modules` |
 | 69 | 2026-11-17 | The launch file defaults to `policy_backend:=fake` | Nothing heavy starts by default; selecting a checkpoint is explicit. The fake backend holds the current state and makes no policy-quality claim |
@@ -1961,8 +1956,8 @@ Apache-2.0 LICENSE before copying.
 | 75 | 2026-11-17 | `ESTOP` latches; reset requires fresh valid inputs for `estop_reset_hold_s` since the e-stop and no other unsafe condition | A single service call must not clear a stop while the map/joint state is stale. Reset commands no motion; a new validated chunk is required |
 | 76 | 2026-11-17 | `/joint_states` has one owner; launch files refuse `sim_node` + `ros2_control` | Two reliable publishers corrupt state estimation for every consumer. The guard is tested; manual process starts remain a configuration error |
 | 77 | 2026-11-17 | Map query grid is expanded by one cell; point cloud is frame `world` and rejected otherwise | Float32 table-top points sit a few microns below `z=0.42`; expanding the query grid keeps them indexed. The mapper already publishes `world`, so rejecting a different frame is smaller and clearer than adding an unexercised tf2 path |
-| 78 | 2026-11-18 | The default obstacle gate stays `strict`; `masked` is opt-in | Strict still rejects the 10/40 Task 11 chunks. Masked removes all 40/40 false positives on both the original and held-out seed sets with the same 1 cm threshold. The user must approve any default change after seeing the measured table |
-| 79 | 2026-11-18 | Masked mode uses exact surface distance + table band + target-object allowance, not a smaller threshold | The Task 11 rejections were the target cube, and the 2 cm EDT reported 0.0 for a TCP 1.86-1.97 cm from the surface. The measured minimum clearance is 4.51 mm; a 4 mm threshold would pass but would also allow an unexpected object at 4.4 mm. Exact distance plus a task-conditioned target exception keeps the 1 cm threshold for everything else |
+| 78 | 2026-11-18 | The default obstacle gate stays `strict`; `masked` is opt-in | Strict still rejects the 10/40 safety chunks. Masked removes all 40/40 false positives on both the original and held-out seed sets with the same 1 cm threshold. The user must approve any default change after seeing the measured table |
+| 79 | 2026-11-18 | Masked mode uses exact surface distance + table band + target-object allowance, not a smaller threshold | The safety watchdog rejections were the target cube, and the 2 cm EDT reported 0.0 for a TCP 1.86-1.97 cm from the surface. The measured minimum clearance is 4.51 mm; a 4 mm threshold would pass but would also allow an unexpected object at 4.4 mm. Exact distance plus a task-conditioned target exception keeps the 1 cm threshold for everything else |
 | 80 | 2026-11-18 | The orchestrator is an explicit seven-stage state machine in `src/sim2real/orchestrator/`, not an implicit script chain | Every stage has declared inputs/outputs, an environment, an executor, and a deterministic id; a cycle writes one lineage manifest. This makes resume, quarantine, bounds, and approval gates testable on the CPU |
 | 81 | 2026-11-18 | Executors are `local`, `external` (TRAIN only), `fake`, and `skip`; fake outputs are labelled | Training needs a GPU host while everything else is CPU. The fake executor keeps the whole pipeline testable without pretending a fake checkpoint is a trained model (`verification: fake_executor`) |
 | 82 | 2026-11-18 | Approval gates are explicit flags and fail closed; the default CLI mode is a dry run | Training, GPU time, large writes/downloads, and extra cycles must never start by accident. A stage that needs approval prints the exact command/flag and stops |
@@ -1972,22 +1967,22 @@ Apache-2.0 LICENSE before copying.
 
 | Version | Date | Change | Reason |
 | --- | --- | --- | --- |
-| v0 | 2026-10-30 | Initial six interfaces: `TrajectoryStep`, `RolloutEpisode`, `FilterMetrics`, `SafetyStatus`, `ResetEnv`, `GenerateRollouts` | Task 1 proposal accepted without field/type refinements |
-| v1 | 2026-11-01 | `TrajectoryStep` adds measured `gripper_position` and `unintended_collision`; new `/sim2real/finalize_dataset` `std_srvs/Trigger` service | Task 5 filtering needs measured gripper state and collision flags; the finalize trigger writes curated output |
-| v2 | 2026-11-01 | New `/workspace/reset_map` `std_srvs/Trigger` service; `/workspace/pointcloud` and `/workspace/tsdf_mesh` now have fixed reliable keep-last 1 QoS and are produced by `sim2real_perception` | Task 6 mapping: consumers need an explicit reset after a scene change without camera jitter, and the latest complete map replaces the previous one |
-| v3 | 2026-11-17 | `/joint_trajectory_controller/joint_trajectory` is produced only by `sim2real_control`; `/safety/status` is reliable keep-last 10; new additive `/safety/diagnostics` `std_msgs/String`; `/estop` and `/estop_reset` are implemented `std_srvs/Trigger` services | Task 11 safety watchdog: the controller needs one validated command source, supervisors need a fixed status rate, and the additive diagnostics keep per-decision counters without changing `SafetyStatus` |
+| v0 | 2026-10-30 | Initial six interfaces: `TrajectoryStep`, `RolloutEpisode`, `FilterMetrics`, `SafetyStatus`, `ResetEnv`, `GenerateRollouts` | Initial-scaffold proposal accepted without field/type refinements |
+| v1 | 2026-11-01 | `TrajectoryStep` adds measured `gripper_position` and `unintended_collision`; new `/sim2real/finalize_dataset` `std_srvs/Trigger` service | Trajectory filtering needs measured gripper state and collision flags; the finalize trigger writes curated output |
+| v2 | 2026-11-01 | New `/workspace/reset_map` `std_srvs/Trigger` service; `/workspace/pointcloud` and `/workspace/tsdf_mesh` now have fixed reliable keep-last 1 QoS and are produced by `sim2real_perception` | Workspace mapping: consumers need an explicit reset after a scene change without camera jitter, and the latest complete map replaces the previous one |
+| v3 | 2026-11-17 | `/joint_trajectory_controller/joint_trajectory` is produced only by `sim2real_control`; `/safety/status` is reliable keep-last 10; new additive `/safety/diagnostics` `std_msgs/String`; `/estop` and `/estop_reset` are implemented `std_srvs/Trigger` services | Safety watchdog: the controller needs one validated command source, supervisors need a fixed status rate, and the additive diagnostics keep per-decision counters without changing `SafetyStatus` |
 
 Wire types in `ros2_ws/src/sim2real_msgs` are the source of truth for ROS.
 `src/sim2real/contracts.py` mirrors names and enum values for the pure-Python
 core. Any change must update both, this table, and `tests/test_contracts.py`.
 
-## Deviations from the Task 1 request
+## Deviations from the scaffold request
 
 1. **Repository path is not assumed.** Scripts resolve their own root, and
-   readers should use `git rev-parse --show-toplevel`. The Task 1 checkout was
+   readers should use `git rev-parse --show-toplevel`. The initial checkout was
    `/home/kunal/Python/sim2real` on the Linux filesystem (not `/mnt/c`); that is
    a verified fact, not a required location.
-2. **`uv` installed during Task 1** from the official installer into
+2. **`uv` installed during the initial setup** from the official installer into
    `~/.local/bin` (approved by the user). No sudo was used.
 3. **`src/sim2real/status.py` added and extended.** It parses the mandatory
    core status line and the optional ROS status line; the core line format is
@@ -2000,16 +1995,15 @@ core. Any change must update both, this table, and `tests/test_contracts.py`.
    `astral-sh/setup-uv@v10.3.3`. `setup-uv` publishes version tags but **no
    floating `v10` tag**, which caused the first CI failure; it is now pinned to
    the exact verified release. Commit-SHA pinning is an open decision.
-6. **`docs/MASTER_SPEC.md` provenance verified.** The committed copy and the
-   original Windows file share SHA-256
-   `3ec2f13b8abc8f61ee65a9b66683346f8557fe85d3ae1959d6cab13986b3d1ad` after
-   normalizing CRLF to LF (both files are 717 lines / 43,406 bytes).
+6. **Design brief kept locally.** The original design brief is kept on disk
+   outside the tracked repository and is not part of it; git history still
+   contains an earlier copy.
 7. **`LICENSE` added.** Apache-2.0 text fetched from
    <https://www.apache.org/licenses/LICENSE-2.0.txt> (11,358 bytes) and stored
    verbatim; `pyproject.toml`, every `package.xml`, and the README agree.
 8. **ROS build verified locally and in CI**: `colcon build --symlink-install
    --parallel-workers 1` and `colcon test` passed on 2026-10-31 with ROS Jazzy.
-   Task 2 adds the `sim` group to the core CI job and fetches Menagerie assets;
+   The simulator backend adds the `sim` group to the core CI job and fetches Menagerie assets;
    rendering tests skip in CI via `SIM2REAL_SKIP_RENDER=1`.
 9. **`.venv-ros` includes an editable install of the core package** so the same
    suite can run with ROS available. It installs no dependencies (`--no-deps`),

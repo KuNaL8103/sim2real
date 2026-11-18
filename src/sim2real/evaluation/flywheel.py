@@ -1,6 +1,6 @@
 """Flywheel loop guards with a persistent, append-only, traceable ledger.
 
-Task 9 **never** starts training or retraining.  The controller only emits a
+The evaluation stage **never** starts training or retraining.  The controller only emits a
 decision: request targeted generation, stop, or (reserved) request retraining.
 Every cycle is appended to ``data/flywheel/ledger.jsonl`` with links back to the
 source datasets, checkpoint hash, evaluation run, and failure distribution, so a
@@ -259,7 +259,7 @@ class FlywheelController:
                     reason = (
                         f"failures={n_failures} below min_failures_to_trigger="
                         f"{guard.min_failures_to_trigger}; retraining would be a separate "
-                        "Task 12 decision (Task 9 never trains)"
+                        "Orchestrator decision (the evaluation stage never trains)"
                     )
                 else:
                     used = sum(record.rollouts_requested for record in records)

@@ -54,7 +54,7 @@ def make_tracker(
     if backend == "none":
         return NullTracker()
     if not offline:
-        raise TrackingError("only offline tracking is approved in Task 8")
+        raise TrackingError("only offline tracking is approved in the training pipeline")
     if backend == "wandb":
         import wandb  # imported lazily; never at module import time
 

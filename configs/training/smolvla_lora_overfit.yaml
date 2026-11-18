@@ -1,4 +1,4 @@
-# SmolVLA + PEFT LoRA overfit sanity run on two train-v1 episodes (Task 9d).
+# SmolVLA + PEFT LoRA overfit sanity run on two train-v1 episodes (trust and overfit diagnosis).
 # Diagnostic only: 2 episodes, same stack, meant to overfit and test closed loop.
 #
 # Bounded from measured full-data batch-16 steps: median 1.176 s, mean 1.741 s

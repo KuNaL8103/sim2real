@@ -1,4 +1,4 @@
-"""Task 11 H21: clean expert trajectories through the safety validator.
+"""Safety H21: clean expert trajectories through the safety validator.
 
 Seeds 20900-20909 are reserved for this check only.  The test reports the
 false-positive rate and every rejection reason; it deliberately does not

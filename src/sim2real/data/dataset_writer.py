@@ -2,7 +2,7 @@
 
 This layout is LeRobot-*style*: the column names and the episode/task metadata
 follow LeRobot's conventions, but it has **not** been validated against the
-LeRobot loader. That validation belongs to Task 7.
+LeRobot loader. That validation belongs to the dataset-export stage.
 
 Layout::
 
@@ -179,7 +179,7 @@ def _features() -> dict[str, Any]:
 def _normalization_placeholders() -> dict[str, Any]:
     return {
         "mode": "none",
-        "note": "No dataset statistics were computed. Task 7/8 must fit normalisation.",
+        "note": "No dataset statistics were computed. Dataset export and training must fit normalisation.",
         "features": {
             name: {"mean": None, "std": None, "min": None, "max": None}
             for name in ("observation.state", "action")
@@ -400,7 +400,7 @@ class CuratedDatasetWriter:
             "num_episodes": len(episodes),
             "num_frames": int(table.num_rows),
             "notes": [
-                "LeRobot-STYLE, not validated against the LeRobot loader until Task 7",
+                "LeRobot-STYLE, not validated against the LeRobot loader until the dataset-export stage",
                 "Columns follow LeRobot naming; no video or image tensors are present",
             ],
         }
@@ -495,7 +495,7 @@ Filter config SHA-256: `{info["filter_config_sha256"]}`.
 ## Limitations
 
 - **LeRobot-STYLE only.** The column names follow LeRobot conventions, but this
-  layout has not been validated against the LeRobot loader (Task 7).
+  layout has not been validated against the LeRobot loader (dataset-export stage).
 - Episodes are accepted from the scripted expert, which fails on some object
   poses; accepted data may skew toward easy poses.
 - No normalisation statistics are computed (`normalization.mode = none`).

@@ -39,7 +39,7 @@ hard_gates:
 #   clean + successful + non-perturbed, n=67; p95 * 1.2 for upper bounds and
 #   p5 - 0.3 (more negative) for SPARC. Never chosen from the hold-out set.
 # Re-derived on 2026-11-02 with the current release-guard code. The old
-# Task 5 fake values are superseded; see docs/FILTER_METRICS.md.
+# The earlier fake values are superseded; see docs/FILTER_METRICS.md.
 soft_thresholds:
   max_dimensionless_squared_jerk: 26311412.708858747
   min_sparc: -5.400654247379501

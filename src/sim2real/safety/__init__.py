@@ -1,4 +1,4 @@
-"""ROS-free safety validation for the Task 11 watchdog."""
+"""ROS-free safety validation for the safety watchdog."""
 
 from __future__ import annotations
 

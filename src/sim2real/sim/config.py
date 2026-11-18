@@ -64,7 +64,7 @@ class PandaConfig:
     acceleration_limits: np.ndarray
     tcp_offset: np.ndarray
     body_frames: tuple[tuple[str, str], ...]
-    # Official FER limits added for the Task 11 safety layer. They are optional
+    # Official FER limits added for the safety layer. They are optional
     # so older configs and tests remain valid; the safety config requires them.
     jerk_limits: np.ndarray | None = None
     effort_limits: np.ndarray | None = None

@@ -1,4 +1,4 @@
-# Closed-loop evaluation, failure analysis and flywheel guards (Task 9).
+# Closed-loop evaluation, failure analysis and flywheel guards (evaluation stage).
 #
 # Timing contract: the dataset is 10 Hz (decimation 2 of the 20 Hz control
 # loop). One policy action is executed for `n_action_steps` policy steps and

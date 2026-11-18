@@ -13,7 +13,7 @@ Limitations (also in ``docs/ARCHITECTURE.md`` and ``docs/SAFETY.md``)
   truncation band, so unknown space is not represented as occupied.
 * A moved object leaves a ghost until the map is reset.
 * "Unknown" is expressed only through :class:`MapStatus` (coverage and
-  staleness).  An invalid status means **unsafe**; the Task 11 safety layer
+  staleness).  An invalid status means **unsafe**; the safety layer
   must not fall back to "no obstacle found".
 * Points outside the grid return ``max_query_distance_m`` and are flagged by
   :meth:`outside_workspace`; they are not silently treated as free.

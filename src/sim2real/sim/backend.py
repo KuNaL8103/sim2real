@@ -1,7 +1,7 @@
 """Simulator-agnostic backend interface.
 
-Only absolute joint-position targets are supported in Task 2. Randomization is
-Task 3 and joint-command subscription is deferred to Task 11.
+Only absolute joint-position targets are supported. Randomization belongs to the randomization
+stage and joint-command subscription is deferred to the safety stage.
 
 Units: metres, radians, seconds. Depth images are float32 metres with ``NaN``
 or ``0`` meaning invalid. RGB images are uint8 ``HxWx3``.
@@ -168,7 +168,7 @@ class BackendCapabilities:
 class ResetConfig:
     """Reset request passed to ``SimBackend.reset``.
 
-    ``reset`` itself always restores nominal model parameters and state. Task 3
+    ``reset`` itself always restores nominal model parameters and state. The randomization stage
     randomization is applied afterwards by
     :func:`sim2real.randomization.applier.apply_randomization`, inside the same
     render-quiesce window.

@@ -1,4 +1,4 @@
-# Embodiment declarations for the Task 7 dataset builder.
+# Embodiment declarations for the dataset builder.
 #
 # fps is always derived as control_rate_hz / decimation.  The Panda dataset
 # therefore runs at 10 Hz when the default image decimation is 2; state, action,

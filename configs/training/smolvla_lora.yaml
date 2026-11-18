@@ -1,4 +1,4 @@
-# SmolVLA + PEFT LoRA fine-tuning (Task 8).
+# SmolVLA + PEFT LoRA fine-tuning (training pipeline).
 #
 # Verified against LeRobot 0.6.1 and lerobot/smolvla_base revision
 # 5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6. The model card and config.json

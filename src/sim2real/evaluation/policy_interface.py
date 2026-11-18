@@ -5,7 +5,7 @@ A policy receives an observation (8-D state, optional cameras) and returns an
 gripper) plus the policy step period.  The closed-loop runner owns execution and
 termination; a policy never steps the backend itself.
 
-``ScriptedExpertPolicy`` is the reference upper bound: it runs the Task 4 expert
+``ScriptedExpertPolicy`` is the reference upper bound: it runs the scripted expert
 on its own backend instance at reset and replays the recorded executed actions
 against the evaluation backend.  The evaluation backend is reset from the same
 seed, so replay is faithful for both the deterministic fake backend and MuJoCo.
@@ -169,7 +169,7 @@ class RandomPolicy:
 
 
 class ScriptedExpertPolicy:
-    """Replay the Task 4 expert's executed actions as the reference policy."""
+    """Replay the scripted expert's executed actions as the reference policy."""
 
     name = "scripted_expert"
     needs_images = False

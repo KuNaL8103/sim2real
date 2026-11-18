@@ -39,8 +39,8 @@ def select_stale_points(
     """Apply the configured stale policy to raw chunk points.
 
     Points at or before the current age are dropped.  This always drops the
-    raw ``k=0`` point once any measurable time has passed, matching the Task
-    10b observation that a real chunk's first point is usually already gone.
+    raw ``k=0`` point once any measurable time has passed, matching the
+    latency observation that a real chunk's first point is usually already gone.
 
     ``reject`` rejects the whole chunk when every point is past or the age
     exceeds ``max_chunk_age_s``; otherwise it forwards the surviving points at

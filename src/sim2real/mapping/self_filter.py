@@ -12,7 +12,7 @@ Known failure modes
 * Link positions come from TF; a missing transform means that link is not
   filtered at all (and is reported in ``missing_links``).
 
-The Task 11 safety layer must not treat this filter as a guarantee that the
+The safety layer must not treat this filter as a guarantee that the
 remaining points are obstacle-free.
 """
 

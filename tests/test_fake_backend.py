@@ -36,7 +36,7 @@ def test_same_seed_produces_identical_observations(backend):
 def test_reset_is_nominal_and_deterministic(backend):
     first = backend.reset(seed=1)
     second = backend.reset(seed=2)
-    # Task 3 moved seed-driven pose variation into the sampler; reset itself is
+    # randomization moved seed-driven pose variation into the sampler; reset itself is
     # always nominal so the applier can start from a known scene.
     for name, cube in backend.configs.scene.cubes.items():
         np.testing.assert_allclose(first.object_poses[name][:3, 3], cube.position)

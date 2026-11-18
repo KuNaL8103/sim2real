@@ -4,7 +4,7 @@ Only the end-effector point is checked.  This is deliberately **not** a
 whole-arm, self-collision, or swept-volume check.  The table and the
 manipulated object are in the map, so a naive threshold can reject a legitimate
 grasp; the configured 1 cm threshold is measured against clean expert
-trajectories in the Task 11 report rather than assumed safe.
+trajectories in the safety report rather than assumed safe.
 """
 
 from __future__ import annotations

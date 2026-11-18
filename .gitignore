@@ -56,6 +56,9 @@ outputs/
 .idea/
 .DS_Store
 
+# Local design brief (kept on disk, not part of the repository)
+docs/MASTER_SPEC.md
+
 # Local agent/tooling configuration (not part of the project)
 CLAUDE.md
 CLAUDE.local.md

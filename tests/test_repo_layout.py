@@ -1,4 +1,4 @@
-"""The repository layout promised by Task 1 must actually exist."""
+"""The repository layout promised by the initial scaffold must actually exist."""
 
 from __future__ import annotations
 
@@ -39,7 +39,6 @@ REQUIRED_FILES = [
     "docs/DATASETS.md",
     "docs/SAFETY.md",
     "docs/DEPLOYMENT.md",
-    "docs/MASTER_SPEC.md",
     "scripts/dev_env_check.sh",
     "scripts/setup_envs.sh",
     "scripts/run_core_tests.sh",
@@ -82,7 +81,7 @@ def test_required_files_exist():
 
 
 def test_data_directory_keeps_only_gitkeep_tracked():
-    # Generated staging/curated/rejected data is expected after Task 5 and is
+    # Generated staging/curated/rejected data is expected after the filtering stage and is
     # git-ignored. The invariant is that only data/.gitkeep is tracked.
     assert (ROOT / "data" / ".gitkeep").is_file()
     tracked = subprocess.run(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the two environments used in Task 1.
+# Create the two environments used by the project.
 #   .venv      core/CI environment, no ROS
 #   .venv-ros  ROS adapter/test environment built on the system Python 3.12
 # .venv-ml (torch/LeRobot/PEFT) is opt-in with --with-ml and is never created by
@@ -51,7 +51,7 @@ uv pip install --python .venv-ros/bin/python "pytest>=8,<9" "pyyaml>=6,<7" "ruff
 # Editable core package so .venv-ros can run the same test suite. No deps.
 uv pip install --python .venv-ros/bin/python --no-deps -e .
 
-# SciPy and PyArrow for Task 5 metrics/Parquet. These are the newest pins that
+# SciPy and PyArrow for the filtering metrics/Parquet. These are the newest pins that
 # still work with system NumPy 1.26.4 (scipy 1.18 requires NumPy >= 2.0 and
 # pyarrow 26 refuses NumPy < 2.0; both were reproduced failing in a scratch
 # system-site-packages venv under the sourced ROS environment). --no-deps keeps
@@ -60,7 +60,7 @@ uv pip install --python .venv-ros/bin/python --no-deps \
   "scipy==1.16.3" \
   "pyarrow==21.0.0"
 
-# Open3D CPU wheel for Task 6 mapping. --no-deps keeps system NumPy 1.26.4
+# Open3D CPU wheel for workspace mapping. --no-deps keeps system NumPy 1.26.4
 # visible. Open3D 0.20.0 imports open3d.visualization at the top level, which
 # needs plotly and dash; install those (and their pure-Python deps) normally,
 # but do NOT let uv install a NumPy. 0.20.0 is pinned for both environments:
@@ -71,7 +71,7 @@ uv pip install --python .venv-ros/bin/python --no-deps "open3d-cpu==0.20.0"
 uv pip install --python .venv-ros/bin/python "plotly==7.1.0" "dash==4.5.0"
 
 # MuJoCo and its rendering dependencies, without NumPy: system NumPy 1.26.4
-# must remain the visible version. These versions are the approved Task 2 set.
+# must remain the visible version. These versions are the approved simulator set.
 uv pip install --python .venv-ros/bin/python --no-deps \
   "mujoco==3.17.0" \
   "glfw==2.11.0" \

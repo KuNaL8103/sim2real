@@ -1,9 +1,9 @@
-# Closed-loop evaluation (Task 9)
+# Closed-loop evaluation
 
-Status: **implemented**. Task 9 evaluates policies in closed loop in simulation,
+Status: **implemented**. The evaluation stage evaluates policies in closed loop in simulation,
 records rich per-episode results, analyses failures over randomization features,
 requests failure-targeted rollouts, and enforces flywheel guards with a
-persistent ledger. **Task 9 never starts training.**
+persistent ledger. **The evaluation stage never starts training.**
 
 Everything here is simulation-only. Simulator success is not a safety case, and
 no physical robot is connected.
@@ -16,13 +16,13 @@ no physical robot is connected.
 | backend control rate | 20 Hz | Each policy action covers **2 control steps**. |
 | `eval.execution` | **`linear`** (default) | Linear joint-space interpolation between consecutive 10 Hz actions; `hold` is the legacy zero-order hold. |
 | `eval.n_action_steps` | **10** (1.0 s) | Not the training value 50 (5.0 s, longer than an episode). |
-| success definition | Task 4 expert `_success_check` | Same thresholds, so paired comparisons are meaningful. |
+| success definition | the scripted expert's `_success_check` | Same thresholds, so paired comparisons are meaningful. |
 
 A chunk is re-planned every `n_action_steps` policy steps (20 control steps at
 the defaults). In `linear` mode, control step `2i` receives action `a_i` and
 step `2i+1` receives the midpoint `(a_i + a_{i+1})/2`; the last action in a
 chunk is held constant for both steps. In `hold` mode both steps receive `a_i`.
-The earlier 9b/9c numbers were measured in **hold mode** and are legacy.
+The earlier real-checkpoint and parity-diagnosis numbers were measured in **hold mode** and are legacy.
 
 Oracle on the 32 train-split seeds (recorded 10 Hz actions, n_action_steps 10):
 
@@ -40,8 +40,7 @@ which matches the interpolation style. However, the `/vla/raw_action` contract
 uses `time_from_start=(k+1)*dt`, i.e. point `k` is at `(k+1)*0.1 s`, while the
 evaluation applies `a_k` at control step `2k` (`k*0.1 s`). A live trajectory
 therefore lags the evaluation convention by one policy period unless the
-publisher uses `k*dt` or the consumer accounts for the offset. This is a Task 10
-contract decision, not a measurement claim.
+publisher uses `k*dt` or the consumer accounts for the offset. This is an inference contract decision, not a measurement claim.
 
 `n_action_steps` sweep (fake backend, `noisy_expert`, 30 seeds from 20000, same
 noise seed, expert 30/30 on every setting):
@@ -70,7 +69,7 @@ Policy.info: dict  # name, checkpoint hash, ...
 
 Implementations:
 
-- `ScriptedExpertPolicy` — runs the Task 4 expert on its **own** backend at reset
+- `ScriptedExpertPolicy` — runs the scripted expert on its **own** backend at reset
   and replays the recorded executed actions. It is the reference upper bound.
 - `NoisyExpertPolicy` — expert actions plus deterministic Gaussian noise and
   step dropout; the scale can be coupled to the sampled initial object x.
@@ -88,7 +87,7 @@ Policies never step the backend. A policy exception, NaN, or wrong shape becomes
 - `collision_terminate` defaults to `false` (measure, do not stop). Remember
   `collision_count` is **not** a safety signal.
 - `terminate_on_limit` defaults to `true`.
-- The physics guard mirrors the Task 4 guard (non-finite state, huge qacc,
+- The physics guard mirrors the scripted-expert guard (non-finite state, huge qacc,
   object outside the workspace margin) without modifying expert code.
 
 ## Records
@@ -100,7 +99,7 @@ flag inconsistent with the reason.
 Fields: episode/run id, seed, episode index, randomization profile and the full
 flattened sample, initial object pose, friction/mass/lighting/camera values,
 task instruction, `success`, `task_completion`, `collision_count`, termination
-reason, Task 5 metrics (dimensionless squared jerk, SPARC, path length, limit
+reason, the filtering metrics (dimensionless squared jerk, SPARC, path length, limit
 margins; `degenerate` marker instead of raising), failure metadata (terminal
 state and last policy info), policy id and checkpoint hash, config hash, git
 commit and dirty flag, `n_action_steps`, renderer, and every control step.
@@ -237,7 +236,7 @@ Guards:
 | `STOP` file | `data/flywheel/STOP` | kill switch |
 | idempotency | — | the same `eval_run_id` is refused twice |
 
-Decisions: `REQUEST_TARGETED_GENERATION`, `REQUEST_RETRAIN` (reserved; Task 9
+Decisions: `REQUEST_TARGETED_GENERATION`, `REQUEST_RETRAIN` (reserved; the evaluation stage
 never trains), `STOP`. Corrupt or partial ledger lines are reported and skipped.
 
 ## Policy server
@@ -285,12 +284,12 @@ recorded.
 | 8000-8059 | reserved | used |
 | 10000-10199 | training/evaluation diagnosis | used |
 | 20000-20999 | closed-loop evaluation | used |
-| **20900-20919** | **Task 11 expert false-positive check** | **20900-20909 used; 20910-20919 reserved** |
-| **20950-20969** | **Task 12 fake-backend end-to-end tests** | **reserved for the fake backend only; a MuJoCo run must not use it** |
+| **20900-20919** | **Safety expert false-positive check** | **20900-20909 used; 20910-20919 reserved** |
+| **20950-20969** | **Pipeline fake-backend end-to-end tests** | **reserved for the fake backend only; a MuJoCo run must not use it** |
 | **21000-21099** | **pipeline generation default (`configs/pipeline/default.yaml`)** | **reserved; not yet run** |
 | 30000-30999 | targeted generation | used |
 
-The Task 11 range is carved out of the evaluation range for this one diagnostic
+The safety range is carved out of the evaluation range for this one diagnostic
 only. It is not an evaluation seed set and must not be reused for a new choice
 without updating this ledger.
 
@@ -306,9 +305,9 @@ The training dataset was rendered with **llvmpipe**. Evaluation records
 fake backend, `llvmpipe` for MuJoCo by default, and `d3d12...-OPT_IN` if the
 opt-in D3D12 environment is present. Opt-in settings are never used silently.
 
-## Task 9b real-checkpoint verification (2026-11-11)
+## Real-checkpoint verification (2026-11-11)
 
-Test subject: `outputs/task8/train_v1_lora/checkpoint-00001000` (LoRA, 1,000
+Test subject: the full-data checkpoint under `outputs/` (LoRA, 1,000
 steps, constant LR 1e-4, `git_commit=bf74c84`, `git_dirty=false`, chunk 50,
 `n_action_steps=50`, fps 10, metadata SHA-256
 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3`).
@@ -425,7 +424,7 @@ The test skips with a reason when sklearn is absent.
 
 ### Test-claim audit
 
-Task 9 tests were searched for success-rate/threshold assertions. Two groups
+Evaluation tests were searched for success-rate/threshold assertions. Two groups
 were relaxed (no policy-quality threshold is asserted anywhere):
 
 - `tests/test_evaluation_policies.py` asserted `expert num_success >= 1`,
@@ -443,7 +442,7 @@ The ROS suite delta (+52 vs core +51) is exactly one extra test:
 `ros2_ws/src/sim2real_sim/test/test_closed_loop_eval.py::test_run_eval_publishes_a_summary`,
 which is ROS-marked and therefore skipped in the core-only run.
 
-## Task 9c policy diagnosis (2026-11-11)
+## Observation-parity diagnosis (2026-11-11)
 
 Goal: explain why the real checkpoint scored 1/30 in closed loop. No training,
 no new rollout seeds. Existing train episodes were reused with their recorded
@@ -538,12 +537,12 @@ actions.
 
 ### E. Frames and gripper traces
 
-Under `log/task9c/` (git-ignored):
+Under the diagnostics log directory (git-ignored):
 
 - `train_seed10000_n10/` — 30 policy steps x overhead+wrist, `gripper_trace.csv`,
   `policy_calls.csv`
-- `eval_seed600278683/` — failed 9b episode (index 0), same files
-- `eval_seed132083934/` — the 9b "success" (index 10), one frame set
+- `eval_seed600278683/` — failed real-checkpoint episode (index 0), same files
+- `eval_seed132083934/` — the real-checkpoint "success" (index 10), one frame set
 - `gripper_summary.csv` — selected calls across the three episodes
 
 Observed behaviour from the produced frames and numbers: in the train-seed and
@@ -554,7 +553,7 @@ gripper opens and closes (train seed 10000 measured range 0.0001-0.0399 m) but
 never grasps, and frames 15 and 29 of the train episode are visually almost
 identical. It does not approach the target cube.
 
-The 9b "success" is a **false positive**: the cube starts 0.0565 m from the zone
+The real-checkpoint "success" is a **false positive**: the cube starts 0.0565 m from the zone
 centre (success tolerance 0.06 m), the arm is still at home, and the episode
 ends after 4 control steps with `task_completion=0.0`. The policy only opened
 the gripper enough to satisfy `gripper_open`; it did not pick or place anything.
@@ -578,15 +577,14 @@ not 1/30.
 Closed-loop simulation evaluation is **synchronous**: `policy.act` blocks the
 runner, and simulation time does not advance while the GPU inference runs. A
 1.3 s policy call therefore costs wall time only, not simulated time. A live ROS
-node will **not** pause the robot while it waits. Task 10 must therefore run
+node will **not** pause the robot while it waits. The VLA inference node must therefore run
 inference asynchronously, buffer action chunks with observation timestamps,
 reject stale or late chunks, keep the control loop non-blocking, define a
 safe fallback when no fresh action is available, and monitor end-to-end latency.
 
-Task 10 implemented that asynchronous path (latest-observation-wins mailbox,
+The VLA inference node implemented that asynchronous path (latest-observation-wins mailbox,
 observation stamps, stale-chunk counting, `/vla/status`); see
-`docs/VLA_INFERENCE.md`. The pre-registered overfit rule is still unmet: Task 10
-proceeded under the documented exception recorded in `docs/TRAINING.md` section
+`docs/VLA_INFERENCE.md`. The pre-registered overfit rule is still unmet: inference work proceeded under the documented exception recorded in `docs/TRAINING.md` section
 17 and `docs/VLA_INFERENCE.md`. A real-checkpoint run of the node is expected to
 fail the task, and no policy-quality claim follows from it.
 
@@ -597,10 +595,10 @@ fail the task, and no policy-quality claim follows from it.
 | A/B state/image parity | **no mismatch** | Nothing to fix in the observation path. |
 | C oracle hold 24/32 vs 20 Hz 32/32 | **parity/contract mismatch** | Evaluation-side information loss from the 10 Hz zero-order hold. Proposed: interpolate between consecutive 10 Hz actions (30/32 in the variant replay) or retain odd 20 Hz commands; requires approval and a 30-seed rerun. Not changed today. |
 | D real policy 0/4 train at n=10 and 0/4 at n=50 | **under-training** (not generalisation) | Propose: complete the 2,000-step bound, add an LR schedule, more episodes/diversity, and verify gripper calibration. Do not retrain today. |
-| 9b 1/30 "success" | **success-definition false positive** | Initial cube within 0.06 m of the zone. Effective policy success is 0/30. Proposed: require displacement or start outside the success radius in evaluation-only success accounting. Expert code unchanged. |
+| real-checkpoint 1/30 "success" | **success-definition false positive** | Initial cube within 0.06 m of the zone. Effective policy success is 0/30. Proposed: require displacement or start outside the success radius in evaluation-only success accounting. Expert code unchanged. |
 | everything else | next hypotheses | gripper range/clipping, chunk open-loop at n=50, and model action accuracy. Image scale/normalization is not implicated: inputs are exact and the server uses LeRobot pre/post with dataset stats. |
 
-## Task 9d trust and overfit diagnosis (2026-11-13)
+## Trust and overfit diagnosis (2026-11-13)
 
 ### A. Success-definition audit
 
@@ -613,13 +611,13 @@ The success tolerance is read from the success function:
   **0.05108 m**, recorded outcome success. The other 39 start outside.
 - **30 eval seeds (derived from 20000):** **1** starts inside — index 10, derived
   seed **132083934**, initial distance **0.056518 m**; it is also an expert
-  success and was the 9b policy "success". Expert success excluding starts:
+  success and was the real-checkpoint policy "success". Expert success excluding starts:
   **23/29 = 0.793**, Wilson **[0.6161, 0.9015]** (recorded all-seed expert 24/30).
 - **Sampler minimum:** the default profile allows `cube_red` at
   `x=0.38, y=-0.20`, i.e. **0.020 m** from the left zone centre, below the
   0.060 m tolerance. The sampler **can** spawn inside the success region.
 
-ZeroPolicy reconciliation on the exact 9b seed (132083934, index 10):
+ZeroPolicy reconciliation on the exact real-checkpoint seed (132083934, index 10):
 
 | step | xy error | allowed+tole | height error | gripper open | stable | result |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -632,7 +630,7 @@ ZeroPolicy commands the measured opening (0.04); the MuJoCo fingers sag to
 holds the arm but commands the gripper target to 0.04 reaches 0.03672 and
 succeeds at step 4 with `task_completion=0.0`. The **gripper component**, not
 the cube-in-zone test, is the difference. Neither run manipulates the cube; the
-9b "success" is a success-definition false positive and the effective policy
+The real-checkpoint "success" is a success-definition false positive and the effective policy
 manipulation success is **0/30**.
 
 `EvalEpisodeRecord` now carries `starts_in_success_region` (bool or null;
@@ -642,7 +640,7 @@ same key in metadata. Aggregates report both all-episode and
 `*_excluding_start_in_region` success/Wilson fields. Options and consequences:
 
 - **Exclude starts from evaluation sampling:** changes the seed meaning (a seed
-  may now be skipped), and previous 9b/9c counts are not directly comparable.
+  may now be skipped), and previous real-checkpoint and parity counts are not directly comparable.
 - **Require displacement:** needs a displacement threshold and would change the
   success function (expert code; not changed today).
 - **Exclude starts from training data:** the existing `train_v1` has one such
@@ -659,7 +657,7 @@ exact difference at indices 21 and 24: the runner continues holding the last
 action after the recorded actions run out, while the independent replay stopped
 at the final recorded action. Phase, action-to-control-step assignment,
 re-planning and randomization were otherwise identical. **Cause: truncation at
-episode end plus repeat-last, not a phase or seed difference.** (The 9c script
+episode end plus repeat-last, not a phase or seed difference.** (The parity-diagnosis script
 reported 20 with a slightly different loop; the side-by-side numbers above are
 the reproducible comparison.)
 
@@ -680,8 +678,8 @@ The ROS 2 Jazzy documentation says positions-only `spline` trajectories use
 **linear** interpolation, matching the interpolation style. But the live
 `/vla/raw_action` contract uses `time_from_start=(k+1)*dt`, so a live
 trajectory is one policy period behind the evaluation convention (`a_k` at
-`k*dt`); Task 10 must decide whether to publish `k*dt` or account for the
-offset. Hold-mode 9b/9c numbers are legacy.
+`k*dt`); the VLA inference node must decide whether to publish `k*dt` or account for the
+offset. Hold-mode real-checkpoint and parity numbers are legacy.
 
 ### C. Reproducible, language-aware calls
 
@@ -708,7 +706,7 @@ offset. Hold-mode 9b/9c numbers are legacy.
 | 10 | 0.01451 | 0.02275 | 0.02373 | 0.03699 |
 | 20 | 0.01958 | 0.03854 | 0.02639 | 0.11623 |
 
-  The 9c frame-0/frame-20 single-sample values were 0.056724 and 0.056681; they
+  The parity-diagnosis frame-0/frame-20 single-sample values were 0.056724 and 0.056681; they
   were **not identical**, just coincidentally close. The averaged values are
   clearly distinct.
 - The model beats hold-last on first-step and first-10 at frames 10/20, but not
@@ -724,8 +722,8 @@ batch **4**, 250 steps, lr **1e-4**, chunk 50, LoRA settings unchanged,
 
 - Wall **15:06**, step median **2.992 s**, first 11.3 s; peak VRAM **1,733 MiB**,
   peak RSS **3,908 MiB**; GPU **210 MHz**, 59-60 C (SW Power Cap and SW Thermal
-  Slowdown active; 9b ran at ~1,185 MHz). Checkpoint
-  `outputs/task9d/overfit_v1/checkpoint-00000250`, `git_commit=e2a25e3`,
+  Slowdown active; the earlier run used ~1,185 MHz). Checkpoint
+  the overfit checkpoint under `outputs/`, `git_commit=e2a25e3`,
   `git_dirty=false`, metadata SHA-256 `9be5ce5a...`.
 - Loss blocks (50 steps): **2.1746 -> 0.9834 -> 0.8210 -> 0.6818 -> 0.6396**;
   final **0.49675**, min 0.22072. This is **not** a converged overfit.
@@ -740,16 +738,16 @@ test is **inconclusive as a pipeline-bug detector**. It does not show that the
 pipeline can overfit and then fail in closed loop; it shows that 250 steps at
 1e-4 under the 210 MHz/15-minute constraint were insufficient to fit even two
 episodes. A/B parity is exact, so the leading hypothesis remains insufficient
-optimization, not an observation/normalization bug. Task 10 waits for a true
+optimization, not an observation/normalization bug. The VLA inference node waits for a true
 overfit (or a GPU-clock fix) before further training.
 
-### Decision table (Task 9d)
+### Decision table
 
 | observation | row | consequence |
 | --- | --- | --- |
-| 1/40 train and 1/30 eval start inside tolerance | **trivial-start episodes found** | Flagged; plan exclusion for the next dataset; 9b policy success is effectively **0/30**. |
-| Linear oracle 31/32 vs hold 24/32, 20 Hz 32/32 | **linear beats hold** | Adopt `linear` for evaluation and Task 10; hold results are legacy. |
-| Overfit 0/6 but training loss 0.64, step-capped at 210 MHz | **overfit fails / inconclusive** | Pipeline bug hunt before further training; Task 10 waits. Parity exact and loss not converged make insufficient optimization the first hypothesis. |
+| 1/40 train and 1/30 eval start inside tolerance | **trivial-start episodes found** | Flagged; plan exclusion for the next dataset; the real-checkpoint policy success is effectively **0/30**. |
+| Linear oracle 31/32 vs hold 24/32, 20 Hz 32/32 | **linear beats hold** | Adopt `linear` for evaluation and the VLA inference node; hold results are legacy. |
+| Overfit 0/6 but training loss 0.64, step-capped at 210 MHz | **overfit fails / inconclusive** | Pipeline bug hunt before further training; the VLA inference node waits. Parity exact and loss not converged make insufficient optimization the first hypothesis. |
 | Instruction cross-difference 0.019 vs noise 0.017 | **instruction sensitivity weak/uncertain** | Language conditioning is not clearly learned; the next plan starts with one instruction and checks instruction-conditioned behaviour. |
 
 Next pipeline hypotheses with evidence: optimization budget/LR (loss still
@@ -761,7 +759,7 @@ against); frozen vision/expert-only (intended; may need more capacity/steps);
 instruction handling (weak sensitivity - observed but not the train-seed failure
 cause).
 
-## Task 9e GPU gate, drift and instruction diagnosis (2026-11-13)
+## GPU gate, drift and instruction diagnosis (2026-11-13)
 
 ### GPU health gate: FAILED - training parts not run
 
@@ -769,7 +767,7 @@ cause).
 samples, 2280 matmuls): SM clock **210 / 210 / 210 MHz** (min/median/max),
 power **4.36 / 7.245 / 7.35 W**, temperature **52 / 55 / 56 C**, throttle reason
 `0x24` on **32/32** samples (SW Power Cap + SW Thermal Slowdown). This is the
-same 210 MHz cap as Task 9d. The gate requires median >=1000 MHz and no power
+same 210 MHz cap as the trust and overfit diagnosis. The gate requires median >=1000 MHz and no power
 cap, so **B (real overfit) and C (fix variant) were not run**. No system or
 driver setting was changed. The GPU needs a charger/power-plan/vendor-software
 check first.
@@ -819,7 +817,7 @@ Base `lerobot/smolvla_base` (same observations, 10 seeds):
 
 **Instruction effects are below the sampling noise in all six cases, for both
 the base and fine-tuned models.** The language pathway is not measurably
-affecting the action chunk with this setup. The thin 9d result (ratio 1.1) did
+affecting the action chunk with this setup. The thin overfit result (ratio 1.1) did
 not survive 10 samples. The training plan should start with one instruction and
 include an explicit instruction-conditioned test before multi-instruction
 training.
@@ -827,9 +825,9 @@ training.
 ### B/C status and conclusion
 
 B (real overfit) and C (fix variant) are **NOT RUN** because the GPU health
-gate failed. The 9d overfit remains unconverged and inconclusive. Decision:
+gate failed. The overfit run remains unconverged and inconclusive. Decision:
 **GPU unhealthy -> hardware fix first** (charger, Windows power plan, vendor
-software). Task 10 stays blocked until the GPU clock is healthy and a true
+software). The VLA inference node stays blocked until the GPU clock is healthy and a true
 overfit either succeeds (pipeline sound) or fails at low training loss (pipeline
 bug hunt). No policy-quality claim.
 
@@ -853,7 +851,7 @@ disable) because `policy_only` failure analysis needs paired data in
 ## Known limitations
 
 - Only simulation; no physical robot and no safety claim.
-- **Task 9e GPU health gate failed.** 60 s synthetic load held SM at **210 MHz**
+- **The GPU health gate failed.** 60 s synthetic load held SM at **210 MHz**
   with SW Power Cap + SW Thermal Slowdown active (4.36-7.35 W, 52-56 C), so the
   real overfit and fix-variant runs were **not run**. The GPU needs a charger /
   Windows power-plan / vendor-software check first.
@@ -866,31 +864,31 @@ disable) because `policy_only` failure analysis needs paired data in
   cross/within ratios 0.59-0.85; base model 0.53-0.67. The language pathway is
   not measurably affecting the action chunk; start with one instruction and
   test instruction conditioning explicitly.
-- **Task 9d trust findings:** the success region radius is **0.060 m**; 1/40
-  train episodes and 1/30 eval seeds start inside it, so the 9b 1/30 policy
+- **Trust and overfit findings:** the success region radius is **0.060 m**; 1/40
+  train episodes and 1/30 eval seeds start inside it, so the real-checkpoint 1/30 policy
   success is a false positive (effective **0/30**). `starts_in_success_region`
   is now recorded and aggregates report with/without such starts. Linear
   execution succeeds **31/32** oracle episodes vs hold **24/32**; linear is the
-  default and hold-mode 9b/9c numbers are legacy.
-- **Task 9d overfit run is inconclusive, not a pipeline-bug proof.** 250 steps
+  default and hold-mode real-checkpoint and parity numbers are legacy.
+- **The overfit run is inconclusive, not a pipeline-bug proof.** 250 steps
   on 2 episodes reached training loss **0.49675** (block mean 0.640) and closed
   loop failed **0/6** on the same seeds. The GPU was pinned at **210 MHz** with
   SW Power Cap/Thermal Slowdown active (15:06 wall), so the run did not
-  converge. A true overfit is still required before Task 10 or further
+  converge. A true overfit is still required before the VLA inference node or further
   training.
 - **Instruction sensitivity is weak.** Six instructions x 5 samples gave a mean
   cross-instruction chunk difference **0.01903** vs within-instruction noise
   **0.01712** (max 0.03737 vs 0.01824). Language conditioning is not clearly
   learned or used.
 - The fake backend is kinematic; success rates there are not MuJoCo numbers.
-- **Task 9c diagnosis:** observation parity is exact (state ≤1.18e-7; images
+- **The observation-parity diagnosis:** observation parity is exact (state ≤1.18e-7; images
   byte-identical; frame t = control step 2t). The 10 Hz zero-order hold loses
   the odd 20 Hz action: the dataset-action oracle succeeds **24/32** (6 clean
   failures) while the 20 Hz expert succeeds 32/32; linear interpolation reaches
   30/32 in the variant replay. The real policy also fails **0/4 train-seed
   episodes at both n_action_steps 10 and 50**, so under-training dominates; this
   is not a generalisation gap.
-- **The 9b 1/30 "success" is a success-definition false positive.** The cube
+- **The real-checkpoint 1/30 "success" is a success-definition false positive.** The cube
   starts 0.0565 m from the zone centre (tolerance 0.06 m), the arm stays near
   home, and the episode ends after 4 steps with `task_completion=0.0`. Effective
   policy manipulation success on 20000-20029 is **0/30**.
@@ -904,14 +902,14 @@ disable) because `policy_only` failure analysis needs paired data in
   server is reused across resets.
 - **Closed-loop sim pauses the world during inference.** The evaluator is
   synchronous, so 1.3 s calls cost wall time, not sim time. A live ROS node will
-  not pause; Task 10 must use asynchronous inference, timestamped chunk
+  not pause; the VLA inference node must use asynchronous inference, timestamped chunk
   buffering, staleness rejection and a safe fallback.
 - **scikit-learn is a core `.venv`-only, optional cross-check dependency.** It is
   not in `pyproject.toml`/`uv.lock`; CI skips the cross-check with a reason.
   Installed size is ~33 MiB for sklearn plus `joblib`/`threadpoolctl`/`cloudpickle`.
-- **Rendered episode frames for Task 9b were not saved.** Task 9c saved frames
-  for only 2 eval and 1 train episode under `log/task9c/`.
-- `REQUEST_RETRAIN` is a reserved decision; Task 12 will orchestrate any
+- **Rendered episode frames for the real-checkpoint evaluation were not saved.** The observation-parity diagnosis saved frames
+  for only 2 eval and 1 train episode under the diagnostics log directory.
+- `REQUEST_RETRAIN` is a reserved decision; the pipeline orchestrator will manage any
   retraining.
 - The checkpoint used for the pipeline test is a LoRA run that stopped at 1,000
   of the 2,000-step bound with a constant learning rate (no scheduler), so it is
@@ -919,14 +917,14 @@ disable) because `policy_only` failure analysis needs paired data in
 - One renderer per dataset: use llvmpipe for the real model unless the D3D12
   choice is explicitly approved and recorded.
 
-## Task 9f Part A: first-chunk error analysis (2026-11-13)
+## First-chunk error analysis (2026-11-13)
 
 Purpose: explain how a small teacher-forced L1 can coexist with leaving the
 0.1 rad tube at frame 2. This is inference-only on the **throttled local GPU**
 (210 MHz, SW Power Cap/Thermal Slowdown). The runs took 71 s and 75 s wall
 including model load; that is **throttled, not a performance figure**.
 
-Setup: checkpoint `outputs/task8/train_v1_lora/checkpoint-00001000`, dataset
+Setup: the full-data checkpoint under `outputs/`, dataset
 index 0 (seed 10000, `ep0000`), frames 0..5, action chunk 50, postprocessed
 actions in physical units. The prediction is the mean first-step action over
 five deterministic sample seeds **101-105** (not rollout seeds). "Motion" is the
@@ -1025,11 +1023,11 @@ radians; it is a large fraction of the 0.1 rad acceptance and larger than the
 first-frame motion. Flow-matching sampling noise (per-seed std up to 0.10 rad)
 and under-training, not an input/pipeline mismatch, are the measured causes.
 
-## Task 9g wider first-chunk analysis (2026-11-13, throttled GPU)
+## Wider first-chunk analysis (2026-11-13, throttled GPU)
 
 Scope: train-split dataset indices **0, 1 and 2**, frames **0-5, 10, 20**, five
 deterministic sample seeds **101-105**. The checkpoint is the same 1,000-step
-full-data run (`outputs/task8/train_v1_lora/checkpoint-00001000`). The run took
+full-data run (the full-data checkpoint under `outputs/`). The run took
 **255 s** wall on the local GPU; that is **throttled, not a performance
 figure**. It is a diagnostic only.
 
@@ -1104,7 +1102,7 @@ std is 0.018-0.091 rad, while the mean error is 0.027 rad. A five-seed mean is
 still noisy; the pre-registered rule uses it deliberately to reduce this noise,
 but it cannot make a single deterministic sample representative.
 
-## Task 9h GPU gate and branch R (2026-11-15)
+## GPU gate and branch R (2026-11-15)
 
 The 60 s synthetic matmul gate ran on the local RTX 4050 in `.venv-ml`
 (2,280 matmuls, 60.11 s). It sampled `nvidia-smi` every 2 s (30 samples):
@@ -1125,14 +1123,14 @@ The authoritative bundle `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`
 (95,909,403 bytes, sha256 `658df551...afe4e`) passed `--check-only` in a clean
 temp clone at `d7a0c90`: 13 manifest hashes, clean commit, Python 3.12,
 `lerobot Requires-Python >=3.12`, GPU/driver printed, no install/download/
-training. Task 10 remains blocked pending a healthy-GPU overfit result.
+training. The VLA inference node remains blocked pending a healthy-GPU overfit result.
 
-## Task 9i: interpretation of the first remote overfit result (2026-11-17)
+## First remote overfit result (2026-11-17)
 
 The returned d7a0c90 remote run produced a checkpoint that verifies locally
 (all metadata/adapter hashes match `RUN_REPORT.json`; stats and config hashes
 match the bundle), but the run had recorded protocol overrides; see
-`docs/REMOTE_TRAINING.md` "Task 9i". The pre-registered rule was applied
+`docs/REMOTE_TRAINING.md` "Remote overfit result". The pre-registered rule was applied
 unchanged.
 
 ### The six `POLICY_ERROR` episodes were a harness timeout, not a policy fault
@@ -1161,7 +1159,7 @@ Cause, established in this session:
 
 This is **environment/harness**, not policy output: no NaN/inf, no shape error,
 no joint-limit rejection. It is aggravated by the throttled local GPU, and the
-repo already documented a 39.8 s first load in `docs/EVALUATION.md` (9c), i.e.
+repo already documented a 39.8 s first load in `docs/EVALUATION.md` (parity diagnosis), i.e.
 the 30 s default was already shorter than a documented cold start.
 
 Fix (evaluation-side, no contract change): `CheckpointPolicy` now takes a
@@ -1207,7 +1205,7 @@ number; `mean5 L1` is the error of the 5-seed mean.
 | remote 200 | 14 | 0.0634 | 0.0493 | 0.0748 | 0.0634 | 0.659 |
 | remote 500 | 14 | 0.0348 | 0.0369 | 0.0472 | 0.0348 | 0.781 |
 | remote 1,000 | 14 | 0.0223 | 0.0280 | 0.0329 | 0.0223 | 0.850 |
-| 9d 250 (pre-adapter_hash) | 14 | 0.0550 | 0.0507 | 0.0684 | 0.0550 | 0.741 |
+| overfit 250 (pre-adapter_hash) | 14 | 0.0550 | 0.0507 | 0.0684 | 0.0550 | 0.741 |
 | train_v1 1,000 (pre-adapter_hash) | 14 | 0.0186 | 0.0324 | 0.0318 | 0.0186 | 1.019 |
 
 (Bias per arm dimension for remote 1,000: 0.0079, 0.0445, 0.0057, 0.0252,

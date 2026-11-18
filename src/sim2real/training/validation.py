@@ -124,7 +124,7 @@ def valid_mask_from_padding(action_is_pad: Any) -> np.ndarray:
 
     LeRobot sets ``action_is_pad=True`` for **padded** positions, while
     ``evaluate_l1`` treats ``True`` as **valid**. Keeping this inversion in one
-    named helper is the regression guard for the Task 8 validation bug where the
+    named helper is the regression guard for the training pipeline validation bug where the
     mask was passed through unchanged and every real step was excluded.
     """
     return ~np.asarray(action_is_pad, dtype=bool)

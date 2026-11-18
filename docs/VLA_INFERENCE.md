@@ -1,4 +1,4 @@
-# VLA inference node (Task 10)
+# VLA inference node
 
 `vla_inference_node` (`sim2real_vla`) turns synchronized camera images, joint
 state, and a task instruction into **raw, unsafe** action chunks. It is
@@ -6,7 +6,7 @@ policy-agnostic: the real checkpoint is reached only through the verified
 policy-server protocol, and the node never imports torch.
 
 **This node makes no claim about policy quality.** It is the transport and
-timing pipeline. Task 11 owns safety filtering, clipping, and forwarding to a
+timing pipeline. The safety watchdog handles filtering, clipping, and forwarding to a
 controller.
 
 ## Node graph
@@ -16,7 +16,7 @@ controller.
 /camera/wrist/color/image_raw ────┼─ ApproximateTimeSynchronizer (slop = max_camera_skew_s)
                                   ▼
 /joint_states ───────────────► vla_inference_node ──► /vla/raw_action (JointTrajectory, RAW/UNSAFE)
-/task_instruction ───────────►        │              └─► [Task 11 safety node] ─► controller
+/task_instruction ───────────►        │              └─► [safety node] ─► controller
                                       └──────────────► /vla/status (String, JSON, 1 Hz)
 ```
 
@@ -59,7 +59,7 @@ are shipped with the package.
 | `checkpoint_path` | `""` | path | required for `server` |
 | `server_python` | `""` | path | empty: `$SIM2REAL_POLICY_PYTHON`, else `<repo>/.venv-ml/bin/python`; resolved and checked |
 | `server_script` | `""` | path | empty: `<repo>/scripts/policy_server.py` |
-| `startup_timeout_s` | `180` | s | cold start (torch import + model load); measured local time-to-ready 107.38 s (Task 10b), remote load 34.71 s (user-reported T4 provenance) |
+| `startup_timeout_s` | `180` | s | cold start (torch import + model load); measured local time-to-ready 107.38 s (latency budget measurement), remote load 34.71 s (user-reported T4 provenance) |
 | `call_timeout_s` | `30` | s | one `act` call |
 | `policy_period_s` | `0.1` | s | dataset/policy period (10 Hz) |
 | `n_action_steps` | `10` | steps | horizon published (1.0 s); training chunk is 50 |
@@ -75,7 +75,7 @@ are shipped with the package.
 | `max_chunk_length` | `100` | rows | server chunk bound |
 | `status_rate_hz` | `1` | Hz | `/vla/status` timer |
 
-`sample_seed` is an inference seed, not a rollout seed. Task 10 draws no new
+`sample_seed` is an inference seed, not a rollout seed. The VLA inference node draws no new
 rollout seeds.
 
 ## State machine
@@ -136,7 +136,7 @@ latency-aware path exists because of this difference.
 Why `k*dt`: the evaluation runner's default `linear` execution applies action
 `k` at observation time + `k*dt` and linearly interpolates consecutive actions.
 A `JointTrajectory` controller conventionally places point `k` at `(k+1)*dt`,
-one policy period later. **Task 11 owns which convention the final controller
+one policy period later. **The safety watchdog owns which convention the final controller
 path uses**; the raw chunk keeps the observation stamp and per-point offsets, so
 it can be retimed without losing information. The earlier `(k+1)*dt` table
 entry was superseded by decision log entry 66.
@@ -160,7 +160,7 @@ already passed:
 - `header.stamp` is **not** rebased, so a consumer sees the true age;
 - if nothing useful remains, the chunk is not published, a stale counter
   increments, and a throttled warning is logged;
-- set it to false to publish the full raw chunk and let Task 11 retime it.
+- set it to false to publish the full raw chunk and let the safety watchdog retime it.
 
 With the measured ~1.3 s call and the default 1.0 s horizon, a real-checkpoint
 run is expected to drop every selected point. That is an honest latency result,
@@ -195,7 +195,7 @@ not a safety or quality claim.
   `/joint_trajectory_controller/joint_trajectory`.
 - No claim that "the VLA controls the robot successfully".
 
-The **Task 11 safety watchdog** (`sim2real_control/safety_watchdog_node`) is
+The **safety watchdog** (`sim2real_control/safety_watchdog_node`) is
 the only consumer allowed to forward `/vla/raw_action` to a controller. It now
 validates workspace/joint/obstacle constraints, applies EMA, chooses the final
 time convention, and publishes only the final command. See `docs/SAFETY.md`
@@ -203,7 +203,7 @@ for the limits, stale-chunk policy, hold behaviour, and the explicit statement
 that mock hardware is not physical safety. The raw `/vla/raw_action`
 convention in this document is unchanged.
 
-## Live two-camera validation (Task 10b)
+## Live two-camera validation
 
 The pre-fix live check under MuJoCo+llvmpipe measured overhead color at
 **3.25 Hz** and wrist color, wrist depth and wrist camera_info at **0** messages
@@ -212,9 +212,9 @@ was scheduling, not the simulator: `RenderCoordinator` has one slot and the
 async `_camera_tick` always submitted `overhead` first, so `wrist` was always
 `skipped_busy` when a render outlasted the camera tick. Before commit `51fc817`
 (2026-10-31) the callback rendered both cameras synchronously, so both were
-served; the async change introduced the starvation. The Task 2b docs' "images
+served; the async change introduced the starvation. The rendering-decoupling notes' "images
 2.67 Hz" is not evidence that the wrist ROS topic worked: the rate test and
-the Task 2b test subscribed to overhead only.
+The earlier test subscribed to overhead only.
 
 After the pair-scheduler fix, a 20 s live probe measured:
 
@@ -244,9 +244,9 @@ increased steadily. Every action had **9 points** with `time_from_start`
 keeps `time_from_start >= elapsed`, and any positive elapsed time (even the
 fake policy's ~0.0003 s call) is greater than 0.0 s, so the first point is
 dropped. The raw chunk still carries the observation stamp and all per-point
-offsets; Task 11 chooses the final convention.
+offsets; the safety watchdog chooses the final convention.
 
-## Live latency budget (Task 10b; throttled, not a performance figure)
+## Live latency budget (throttled, not a performance figure)
 
 The checkpoint `outputs/remote/overfit_remote/checkpoint-00001000` exists and
 passed `scripts/verify_remote_checkpoint.py --handshake skip` with
@@ -281,7 +281,7 @@ it produced only 5 chunks and is **not** a valid 90 s window. Its measured
 latency was median 3.69 s, max 6.21 s over 5 calls. That harness stall is a
 test-publisher limitation, not a policy error. Runs 3 and 4 were not started.
 
-The earlier Task 10 report's "21 chunks vs 53 latency samples" came from
+The earlier inference report's "21 chunks vs 53 latency samples" came from
 sampling the 1 Hz `last_latency_s` field, not from per-call samples; the new
 status carries a bounded per-call `latency` summary, and run 2 shows 42 samples
 for 43 received chunks. The measured median is **1.88 s** here, versus the
@@ -290,10 +290,10 @@ attributed beyond what was measured (sim rendering/CPU contention and a longer
 cold start were present in this run). The measured consequence is plain: a
 10-point chunk covers only **0.9 s**, while calls took **1.88-5.90 s**, so live
 chunks are almost entirely past by the time they arrive unless they are
-retimed/extended. Task 11 must choose the stale-chunk and retiming policy; this
+retimed/extended. The safety watchdog must choose the stale-chunk and retiming policy; this
 node does not change its convention or defaults.
 
-## Documented exception for starting Task 10
+## Documented exception for starting inference
 
 The pre-registered overfit decision rule (`docs/TRAINING.md` section 17,
 `configs/evaluation/overfit_rule.yaml`) has **not** been met:
@@ -305,10 +305,10 @@ The pre-registered overfit decision rule (`docs/TRAINING.md` section 17,
   clip delta **0.00170 m** (PASS).
 - Closed loop on recorded training seeds 10000/10004, 3 repeats each:
   **0/6 success, 6/6 TIMEOUT**.
-- Earlier results: the 9b policy "1/30" was a success-definition false positive
+- Earlier results: the real-checkpoint policy "1/30" was a success-definition false positive
   (effective **0/30**); the real 1,000-step full-data checkpoint was **0/4** on
   training seeds.
-- The instruction effect on the output is below sampling noise (9e).
+- The instruction effect on the output is below sampling noise (GPU gate).
 - The local GPU is capped at **210 MHz**; local timings are **"throttled, not a
   performance figure"**. Measured model load **34.71 s**; median policy call
   about **1.33-1.39 s** on that throttled GPU.
@@ -340,7 +340,7 @@ ros2 launch sim2real_vla vla_inference.launch.py \
 ```
 
 The launch file never starts or connects a controller. `/vla/raw_action` must
-not be wired to the joint trajectory controller until Task 11 exists.
+not be wired to the joint trajectory controller until the safety watchdog exists.
 
 ## Manual checkpoint (PENDING user confirmation)
 

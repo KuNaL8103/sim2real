@@ -1,12 +1,12 @@
-# VLA fine-tuning (Task 8)
+# VLA fine-tuning
 
 Status: **implemented, smoke-tested, and trained for 1,000 steps on `train_v1`.**
 A real LoRA checkpoint exists at
-`outputs/task8/train_v1_lora/checkpoint-00001000` with clean provenance
+the full-data checkpoint under `outputs/` with clean provenance
 (`git_dirty=false`). Offline L1 on 8 validation episodes beats both trivial
 baselines per dimension, but there is **no closed-loop or generalisation
 result** yet. The earlier two-step smoke run remains the pipeline check; the
-1,000-step run is the Task 8b test subject for Task 9.
+1,000-step run is the full-data training-run test subject for the evaluation stage.
 
 Pinned stack: **LeRobot 0.6.1**, dataset format **v3.0**, **torch 2.11.0+cu126**,
 **PEFT 0.21.2**, **accelerate 1.15.0**, **transformers 5.5.4**, Python 3.12.3,
@@ -212,7 +212,7 @@ Built from the existing accepted episodes, seed order, up to 40:
 | Rendering cost | 38 new episodes, 3,514 frames, **650.3 s (10.84 min)** |
 
 The local dataset card is `data/lerobot/train_v1/DATASET_CARD.md` (git-ignored).
-The first two episodes already had llvmpipe images from Task 7; the remaining 38
+The first two episodes already had llvmpipe images from the dataset-export stage; the remaining 38
 were rendered with the same renderer, so the dataset is single-renderer. No
 renderer/GPU training ran concurrently.
 
@@ -235,7 +235,7 @@ Command:
 | Peak VRAM (`torch.cuda.max_memory_allocated`) | **1,117.21 MiB** |
 | Peak host RSS (`resource` / `/usr/bin/time`) | **3,807 MiB / 3,906 MiB (~3.7 GiB)** |
 | Trainable / total parameters | **1,485,312 / 451,531,488** |
-| Checkpoint | `outputs/task8/smolvla_smoke/checkpoint-00000002` |
+| Checkpoint | the two-step smoke checkpoint under `outputs/` |
 | Adapter size | **5,952,536 B** (`adapter_model.safetensors`) |
 
 Reproducibility: two runs from the same seed produced **identical losses**
@@ -243,7 +243,7 @@ Reproducibility: two runs from the same seed produced **identical losses**
 (1,117.21 MiB). Step timing varies with warm-up.
 
 The checkpoint's `checkpoint_metadata.json` records `git_dirty: true` because it
-was created before the Task 8 commit; that is accurate, not a failure.
+was created before the training pipeline commit; that is accurate, not a failure.
 
 ## 7. Offline action validation (L1)
 
@@ -328,9 +328,9 @@ fields before evaluating.
 `ML_TORCH_BACKEND=cu126 ./scripts/setup_envs.sh --with-ml` lines; CI never
 creates or installs `.venv-ml`.
 
-## 11. Task 8b: train_v1 LoRA run (1,000 steps)
+## 11. Full-data LoRA run on train_v1 (1,000 steps)
 
-This is the checkpoint intended as a Task 9 test subject. It was trained from
+This is the checkpoint intended as an evaluation test subject. It was trained from
 clean commit `bf74c84` so the metadata records `git_dirty=false`.
 
 | Setting | Value |
@@ -406,7 +406,7 @@ throttle reason was not instrumented.
 
 | Item | Value |
 | --- | --- |
-| Path | `outputs/task8/train_v1_lora/checkpoint-00001000` |
+| Path | the full-data checkpoint under `outputs/` |
 | Metadata | 8,491 B, SHA-256 `b87f5094d414d97590166ba8691989dd930b21b4c166ddf5de4a4f28234422e3` |
 | Adapter | `adapter_model.safetensors`, **5,952,536 B** |
 | Whole checkpoint | **5.70 MiB** |
@@ -464,7 +464,7 @@ success, robustness, or generalisation.
 - The base expects **3 cameras**; this dataset supplies 2, and the third slot is
   absent (`empty_cameras: 0`).
 - `n_action_steps = 50` matches pretraining but is not a tuned replanning
-  horizon; Task 9 should choose it for closed-loop execution.
+  horizon; the evaluation stage should choose it for closed-loop execution.
 - The smoke checkpoint was written from a **dirty** tree (`git_dirty: true`).
 - Two steps prove the pipeline runs; they do not prove learning.
 - **The 1,000-step run is not the full approved 2,000-step bound.** The
@@ -476,10 +476,10 @@ success, robustness, or generalisation.
 - **The GPU reached 88 °C** with a median training SM clock of 1,185 MHz versus
   a 2,670 MHz maximum sample; the exact throttle reason was not instrumented.
 
-## 14. Task 9d measured training plan (document only, not run)
+## 14. Measured training plan from the trust and overfit diagnosis (document only, not run)
 
-The Task 9d diagnosis (see `docs/EVALUATION.md`) changes the next training plan
-in four ways: the 9b "success" is a start-in-success-region false positive; the
+The trust and overfit diagnosis (see `docs/EVALUATION.md`) changes the next training plan
+in four ways: the real-checkpoint "success" is a start-in-success-region false positive; the
 evaluation execution contract is now `linear`; the overfit run was step-limited
 at 210 MHz and did not converge; and instruction sensitivity is weak.
 
@@ -490,14 +490,14 @@ response and closed-loop progress.
 
 **Episodes and arithmetic.** The MuJoCo expert succeeded **24/30 = 0.80** on
 the evaluation seeds; the accepted-data filter accepted **123/131** successful
-Task 7 episodes, and clean acceptance was **114/117**. Excluding start-in-region
+dataset episodes, and clean acceptance was **114/117**. Excluding start-in-region
 spawns removes about **1/30 = 3.3%**. A 40-episode target therefore needs roughly
 `40 / (0.80 * 0.94 * 0.97) ≈ 55` clean attempts; budget **70** attempts to allow
 for the expert's ~20% failure rate and the observed easy-pose skew. This is an
 estimate, not a guarantee.
 
-**Steps and wall time.** The measured Task 9d batch-4 step is **2.99 s** at
-210 MHz; batch 16 was **1.5 s** in 9b at ~1,185 MHz. At the current clock,
+**Steps and wall time.** The measured trust-and-overfit batch-4 step is **2.99 s** at
+210 MHz; batch 16 was **1.5 s** in the real-checkpoint run at ~1,185 MHz. At the current clock,
 2,000 steps at batch 4 is about **100 min**; if the GPU clock is restored,
 2,000 steps at batch 16 is about **50 min**, and 5,000 steps about **125 min**.
 Choose the step count after the GPU clock is healthy and the overfit test
@@ -516,17 +516,17 @@ double the data and is not justified before a single-instruction policy works.
 execution, `n_action_steps=10`, deterministic sampling, llvmpipe, and report
 success both **with and without** start-in-success-region episodes. The paired
 expert baseline on those seeds is **24/30** (23/29 excluding the trivial start);
-do not compare against the hold-mode 9b policy numbers without labelling them
+do not compare against the hold-mode real-checkpoint policy numbers without labelling them
 legacy.
 
 **What is not claimed.** No expected success rate, no generalisation claim, and
 no claim that the current 1,000-step checkpoint is representative.
 
-### Task 9e addendum (2026-11-13)
+### GPU health gate addendum (2026-11-13)
 
 The GPU health gate failed: 60 s synthetic load held SM at **210 MHz** with
 **SW Power Cap and SW Thermal Slowdown** active (power 4.36-7.35 W, 52-56 C).
-The Task 9e overfit and fix-variant runs were therefore **not run**; the 9d
+The overfit and fix-variant runs were therefore **not run**; the overfit diagnosis
 overfit remains unconverged and inconclusive.
 
 Closed-loop drift with the existing checkpoint: with linear execution and
@@ -542,14 +542,13 @@ is not measurably affecting the action chunk; start with one instruction and
 verify instruction conditioning explicitly before multi-instruction training.
 
 Do not start the next real training run until the GPU clock/power issue is
-fixed and a true overfit (mean last-20-step loss below 0.1) is achieved. Task
-10 remains blocked pending that evidence.
+fixed and a true overfit (mean last-20-step loss below 0.1) is achieved. The VLA inference node remains blocked pending that evidence.
 
-## 15. Remote overfit protocol (Task 9f; document only, not run)
+## 15. Remote overfit protocol (document only, not run)
 
 This is the exact protocol to execute on a remote GPU that passes the bundle's
-clock/memory gate. It is the pipeline-health test before Task 10, not a policy
-quality experiment. No part of it ran in the Task 9f session.
+clock/memory gate. It is the pipeline-health test before the VLA inference node, not a policy
+quality experiment. No part of it ran in the remote-bundle preparation session.
 
 **Config.** `configs/training/smolvla_lora_overfit_remote.yaml`:
 
@@ -565,7 +564,7 @@ quality experiment. No part of it ran in the Task 9f session.
 
 **Convergence.** The pre-registered deciding rule is in section 17: it uses
 teacher-forced error, not the training loss. The training loss is reported
-advisory only. The Task 9d 250-step run ended at **0.49675** and was still
+advisory only. The earlier 250-step run ended at **0.49675** and was still
 falling; a last-20 mean below 0.1 is noted but does **not** decide pass/fail.
 
 **Batch and step arithmetic (healthy-GPU measurements, not remote guesses).**
@@ -579,7 +578,7 @@ and 4,377 MiB at batch 16. Choose batch 4 and 1,000 steps:
 - batch 4 keeps VRAM near 1.7 GiB and is the faster total run.
 
 Remote step time is **unknown until measured**. `RUN_REPORT.json` records it;
-do not substitute the local 210 MHz 9d median (2.992 s/step), which would make
+do not substitute the local 210 MHz overfit median (2.992 s/step), which would make
 1,000 steps ~50 min and is explicitly a throttled figure.
 
 **Execution.** Follow `docs/REMOTE_TRAINING.md`:
@@ -625,7 +624,7 @@ Then run the pre-registered teacher-forced rule:
 **Local closed-loop evaluation after verification.** Use the two training
 seeds, linear execution, `n_action_steps=10`, deterministic sampling, and
 **3 repeats per seed**. The runner resets with seed 10000 and 10004 and episode
-index 0 (the 9d convention; dataset indices 0 and 1 are `ep0000`/`ep0004`).
+index 0 (the overfit convention; dataset indices 0 and 1 are `ep0000`/`ep0004`).
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -686,18 +685,18 @@ the closed-loop outcome; it is not a policy-quality metric.
 
 | Outcome | Interpretation | Next action |
 | --- | --- | --- |
-| Converged and closed loop progresses/succeeds | pipeline is sound; the local failure was optimization + the degraded GPU | proceed to Task 10 preparation and a larger run |
+| Converged and closed loop progresses/succeeds | pipeline is sound; the local failure was optimization + the degraded GPU | proceed to inference-node preparation and a larger run |
 | Converged but closed loop still fails | pipeline bug hunt, in this order: state/action alignment; normalization vs units; gripper dimension; camera mapping / unused camera3; frozen vision encoder and `train_expert_only`; LoRA coverage; instruction handling | test the single hypothesis with the existing checkpoint, no retraining first |
 | Not converged | the limiter is named by the curve (still falling vs flat); the single smallest change is, in order: more steps (1,000 -> 2,000 at the same batch/lr), then LoRA rank, then LR | change one thing only and rerun the same protocol |
 
 Do not call a non-converged run a pipeline bug; do not call a converged run a
 policy-quality result.
 
-## 16. Single-instruction dataset count (Task 9f; document only)
+## 16. Single-instruction dataset count (document only)
 
 `train_v1` contains **one** instruction only. `meta/tasks.parquet` has one row,
 `task_index=0`, text `pick up the red cube and place it in the left zone`; all
-**40/40** accepted episodes use it. The six-instruction matrix used in the 9d
+**40/40** accepted episodes use it. The six-instruction matrix used in the overfit diagnosis
 sensitivity test is 3 cubes x 2 zones, so the other five target combinations
 have **0** accepted episodes in `train_v1`.
 
@@ -714,7 +713,7 @@ have **0** accepted episodes in `train_v1`.
 instructions; a six-instruction dataset must be generated separately.
 
 **Generation attempts for a 40-episode single-instruction dataset.** The
-measured Task 7 run accepted **123/200 = 0.615** generated episodes overall
+measured dataset-export run accepted **123/200 = 0.615** generated episodes overall
 (200 generated, 131 successful, 123 accepted). Excluding start-in-success-region
 spawns removes about **1/30 = 3.3%**:
 
@@ -730,7 +729,7 @@ instruction works.
 ## 17. Overfit decision rule (pre-registered)
 
 This rule was written and committed **before** any bundle or remote-run change in
-Task 9g and before any remote overfit result exists. The numeric bars are a
+in the bundle-hardening work and before any remote overfit result exists. The numeric bars are a
 judgement chosen in advance; they are **not derived from the remote data** and
 must not be edited after the remote run.
 
@@ -767,7 +766,7 @@ pass AND at least one of the three repeats succeeds on each seed**.
 
 | Criteria 1-3 | Closed loop | Interpretation | Next action |
 | --- | --- | --- | --- |
-| pass | succeeds on each seed | pipeline is sound | proceed to Task 10 preparation |
+| pass | succeeds on each seed | pipeline is sound | proceed to inference-node preparation |
 | pass | fails | execution/contract bug hunt (runner, units, reset, action timing) | test the execution path with the existing checkpoint; do not call it under-training |
 | fail | any | if training loss is still falling: **under-training** | propose more steps or an LR change, one change at a time |
 | fail | any | if training loss has plateaued: **capacity/pipeline hunt** | test the hypotheses below |
@@ -777,13 +776,13 @@ normalization vs units; gripper dimension; camera mapping and the unused
 `camera3` slot; frozen vision encoder and expert-only flags; LoRA coverage;
 instruction handling; absolute-vs-delta action parameterization.
 
-The existing 9d run (250 steps, loss 0.49675, 0/6 closed loop) did not meet this
+The existing overfit run (250 steps, loss 0.49675, 0/6 closed loop) did not meet this
 rule; it is not evidence of a pipeline bug by itself.
 
-**Task 10 documented exception (2026-11-17).** The rule above and the bars in
+**Inference documented exception (2026-11-17).** The rule above and the bars in
 `configs/evaluation/overfit_rule.yaml` are **unchanged and still unmet** (arm
 0.0333 rad vs 0.010, gripper 0.00688 m vs 0.005, closed loop 0/6 on training
-seeds). Task 10 proceeded anyway because the inference node is policy-agnostic:
+seeds). Inference proceeded anyway because the node is policy-agnostic:
 it talks to the verified policy-server protocol, is tested with fake models, and
 makes no policy-quality claim. See `docs/VLA_INFERENCE.md` for the full
 exception text. Retraining remains an open item.
@@ -837,10 +836,9 @@ target scale by about **2.6-7.6x** on the arm dimensions. It is **not free**:
 it needs a new dataset export/format, new normalization statistics, changes to
 the training data loader and action decoding, and a new observation/action
 contract (plus new evaluation checks). It also changes the meaning of the
-gripper dimension and the recorded oracle. Nothing was implemented or changed in
-Task 9g; this is recorded as a hypothesis for a later decision.
+gripper dimension and the recorded oracle. Nothing was implemented or changed in the bundle-hardening work; this is recorded as a hypothesis for a later decision.
 
-## 19. Task 9h status: GPU gate failed, branch R (2026-11-15)
+## 19. GPU gate failed, branch R (2026-11-15)
 
 The 60 s synthetic load held the local RTX 4050 at **210 MHz** SM (min/median/
 max 210/210/210), power **4.68/7.17/7.25 W**, temperature **54/56/57 C**, and
@@ -855,16 +853,16 @@ The d7a0c90 bundle was verified with `--check-only` in a clean temp clone:
 Requires-Python `>=3.12`, GPU/driver printed, no install or download. The remote
 sequence remains the one in `docs/REMOTE_TRAINING.md`; the remote checks out the
 MANIFEST commit (`d7a0c90` for this archive), not later docs-only HEAD commits.
-Task 10 cannot start until a healthy GPU produces and locally verifies the
+The VLA inference node cannot start until a healthy GPU produces and locally verifies the
 pre-registered result.
 
-## 20. Task 9i result: first remote overfit, interpreted (2026-11-17)
+## 20. First remote overfit result (2026-11-17)
 
 The returned d7a0c90 run is verified locally at the file level (all 10
 checkpoint metadata and adapter hashes match `RUN_REPORT.json`; config and
 stats hashes match the bundle). It is **not** a clean-protocol run: the clock
 gate was patched, requirements and the manifest hash were edited, and
-`skip-worktree` hid the dirty tree. See `docs/REMOTE_TRAINING.md` "Task 9i".
+`skip-worktree` hid the dirty tree. See `docs/REMOTE_TRAINING.md` "Remote overfit result".
 Section 17's rule and bars were applied **unchanged**.
 
 ### Criteria 1-3 (pre-registered, same frames and seeds)
@@ -931,9 +929,9 @@ Wall time is an **estimate** from the measured 1.21 s/step on the T4:
 2,000 x 1.21 s = 2,420 s = **40.3 min** of compute, plus model load and
 checkpoint writes. T4 clocks vary; this is not a guarantee.
 
-### Task 10
+### Inference node
 
-**Task 10 cannot start.** Criteria 1-3 fail, the closed loop is 0/6 on the
-training seeds, and the run carried protocol overrides. No Task 10 work was
+**Inference cannot start.** Criteria 1-3 fail, the closed loop is 0/6 on the
+training seeds, and the run carried protocol overrides. No inference work was
 done and the pre-registered rule was not edited.
 

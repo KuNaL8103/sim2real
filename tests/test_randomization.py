@@ -1,4 +1,4 @@
-"""Task 3 domain randomization: config, sampler, applier, and quiesce."""
+"""Domain randomization: config, sampler, applier, and quiesce."""
 
 from __future__ import annotations
 
@@ -355,7 +355,7 @@ def test_mujoco_applies_mass_friction_damping_camera_and_resets(configs):
 
         # Regression: the physics group calls mj_setConst, which resets MjData to
         # qpos0. The arm must stay at home and the sampled object poses must
-        # survive; Task 3 did not assert this and the reset silently zeroed both.
+        # survive; the randomization stage did not assert this and the reset silently zeroed both.
         np.testing.assert_allclose(backend.data.qpos[backend._arm_qpos_adr], configs.panda.home_arm)
         for name, pose in result.object_pose.poses.items():
             address = int(model.jnt_qposadr[model.joint(f"{name}_joint").id])

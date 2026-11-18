@@ -71,7 +71,7 @@ def _assert_handshake_failure(checkpoint: Path, **kwargs):
 def test_cold_start_timeout_is_separate_from_call_timeout(tmp_path):
     """A slow model load must not be charged against the per-call timeout.
 
-    Regression for the Task 9i POLICY_ERROR: the real server sends ``hello``
+    Regression for the remote overfit analysis POLICY_ERROR: the real server sends ``hello``
     immediately, then loads the base model, then sends ``ready``. On a slow
     machine that load exceeded the 30 s per-call timeout and every episode
     failed before its first control step.

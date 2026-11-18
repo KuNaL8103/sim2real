@@ -17,6 +17,6 @@ uint8 ACTION_JOINT_POSITION_TARGET=0
 uint8 ACTION_JOINT_DELTA=1
 uint8 ACTION_EE_DELTA=2
 
-# Measured state, not the command. Task 5 filtering needs both.
+# Measured state, not the command. Trajectory filtering needs both.
 float64 gripper_position
 bool unintended_collision

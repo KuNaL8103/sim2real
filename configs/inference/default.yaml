@@ -1,4 +1,4 @@
-# VLA inference node (Task 10).
+# VLA inference node.
 #
 # This file is shipped by the sim2real_vla package (setup.py reads the canonical
 # path), so the installed launch file and the repository tests use one source.
@@ -22,7 +22,7 @@ inference:
   server_script: ""
 
   # Cold start (torch import + base model load). Measured local time-to-ready
-  # was 107.38 s in Task 10b, so 120 s left too little headroom; the default is
+  # was 107.38 s in the latency budget measurement, so 120 s left too little headroom; the default is
   # 180 s. The measured remote load was 34.71 s (user-reported T4 provenance).
   # This is a timeout, not a promise.
   startup_timeout_s: 180.0
@@ -45,11 +45,11 @@ inference:
 
   # -1 means unseeded (logged). A non-negative value resets the server's
   # sampling seed deterministically. This is an inference seed, not a new
-  # rollout seed; Task 10 draws no rollout seeds.
+  # rollout seed; the VLA inference node draws no rollout seeds.
   sample_seed: -1
 
   # true: drop chunk points whose target time has already passed (stale chunk
-  # counted and not published). false: publish the full raw chunk so Task 11 can
+  # counted and not published). false: publish the full raw chunk so the safety watchdog can
   # retime it. The header stamp always stays the observation stamp.
   latency_compensation: true
 

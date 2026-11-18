@@ -1,4 +1,4 @@
-# SmolVLA + PEFT LoRA training run on train_v1 (Task 8b).
+# SmolVLA + PEFT LoRA training run on train_v1 (full-data training run).
 #
 # Bounded from measured full-data batch-16 steps: median 1.176 s, mean 1.741 s
 # (including a 9.65 s first step). 2,000 steps is the largest requested bound

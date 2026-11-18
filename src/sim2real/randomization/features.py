@@ -1,6 +1,6 @@
 """Normalised failure-space feature vector for domain-randomization samples.
 
-The feature space is the bridge between closed-loop failure analysis (Task 9)
+The feature space is the bridge between closed-loop failure analysis (evaluation stage)
 and the existing seeded sampler.  Every feature is normalised to ``[0, 1]``
 using the **configured profile bounds**, so a model fitted on failures lives in
 a stable, backend-independent space.

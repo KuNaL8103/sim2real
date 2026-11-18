@@ -1,10 +1,10 @@
-# SmolVLA + PEFT LoRA overfit protocol, 2,000-step follow-up (Task 9i).
+# SmolVLA + PEFT LoRA overfit protocol, 2,000-step follow-up (remote overfit analysis).
 #
 # Identical to smolvla_lora_overfit_remote.yaml except training.max_steps:
 # 1,000 -> 2,000. One change only, per the pre-registered interpretation table
 # ("more steps (1,000 -> 2,000 at the same batch/lr)").
 #
-# Why: the Task 9i bias/spread analysis measured teacher-forced first-step arm
+# Why: the remote overfit bias/spread analysis measured teacher-forced first-step arm
 # L1 of 0.0748 (step 200), 0.0472 (500) and 0.0329 (1,000) on the same frames
 # and seeds; the error is still falling, but the 100-step block mean training
 # loss flattened from 0.232 (801-900) to 0.234 (901-1000). Extrapolating the

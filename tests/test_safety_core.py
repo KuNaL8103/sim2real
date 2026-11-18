@@ -342,7 +342,7 @@ def test_valid_chunk_is_accepted_with_final_times(safety):
     assert decision.command is not None
     assert decision.command.header_stamp_ns == 0
     # The raw k=0 point is at/before "now" and is dropped, matching the Task
-    # 10b latency observation. The remaining points keep their offsets.
+    # Latency observation. The remaining points keep their offsets.
     assert decision.command.time_from_start_s == pytest.approx((0.1, 0.2))
     assert decision.command.joint_names == contracts.CONTROLLED_JOINT_NAMES
     assert decision.command.positions == pytest.approx(np.tile(_home(panda), (2, 1)))

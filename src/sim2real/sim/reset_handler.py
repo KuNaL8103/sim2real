@@ -1,6 +1,6 @@
 """Pure reset-service logic, importable without ``rclpy``.
 
-Task 3 flow (always called inside the node's render-quiesce window):
+The randomization stage flow (always called inside the node's render-quiesce window):
 
 1. validate the seed, profile, and any object-pose override **before** touching
    the backend, so a bad request cannot leave a half-applied scene;

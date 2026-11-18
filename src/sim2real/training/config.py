@@ -172,7 +172,7 @@ class LoraConfig:
         if self.bias not in LORA_BIASES:
             raise ConfigError(f"lora.bias: expected one of {list(LORA_BIASES)}")
         if self.method_type.upper() != "LORA":
-            raise ConfigError("lora.method_type: only 'LORA' is validated in Task 8")
+            raise ConfigError("lora.method_type: only 'LORA' is validated in the training pipeline")
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@ Every row states what the level proves, what it does **not** prove, the status,
 and the evidence (command, date, commit). A skipped test is not a pass. Levels
 that were not run are marked NOT RUN; unavailable hardware is marked UNAVAILABLE.
 
-Date of this record: 2026-11-18. Base commit before the Task 12 commit:
+Date of this record: 2026-11-18. Base commit before the release-validation commit:
 `27bf958`.
 
 ## Summary
@@ -30,7 +30,7 @@ Date of this record: 2026-11-18. Base commit before the Task 12 commit:
 | `scripts/run_ml_tests.sh` (default `.venv-ml`) | **4 passed / 1 deselected** | ML-marked tests in the existing ML env | the clean rebuild (below) |
 | `.venv-ml` rebuild and swap (2026-11-18) | **PASSED / DONE** — see below | a clean ML environment without scipy/mujoco, swapped in | the old environment (retained as `.venv-ml.old`) |
 
-### `.venv-ml.new` rebuild (Task 12)
+### `.venv-ml.new` rebuild
 
 Built with the pins in `scripts/setup_envs.sh` (no pin changes), CUDA index
 `https://download.pytorch.org/whl/cu126`:
@@ -69,7 +69,7 @@ assertion. The clean clone then passed **663 passed / 36 skipped**.
 | `colcon test` + `colcon test-result --verbose` | recorded in the status record | package-level tests | physical behaviour |
 | `.venv-ros/bin/python -m pytest -ra` (sourced ROS, after the swap) | **699 passed / 0 failed / 5 skipped / 0 errors** | full ROS-marked integration suite, including the new pipeline graph tests | policy quality or safety |
 | `test_pipeline_mock_integration.py` (5 tests) | **5 passed** | fake observations → `vla_inference_node` → `safety_watchdog_node` → controller topic; safety is the only publisher; NaN chunk and missing map produce nothing; strict profile forwards a clean chunk and rejects a 4 mm obstacle; `sim_mock` differs only in `obstacle_mode` | a trained policy; physical safety |
-| HIL guarded test (`test_safety_watchdog.py::TestHilIntegration`) | reused from Task 11; skips with an explicit reason if `controller_manager` is unavailable | the mock stack follows commands, e-stop stops dispatch, reset needs fresh inputs | physical safety |
+| HIL guarded test (`test_safety_watchdog.py::TestHilIntegration`) | reused from the safety stage; skips with an explicit reason if `controller_manager` is unavailable | the mock stack follows commands, e-stop stops dispatch, reset needs fresh inputs | physical safety |
 
 ## L3 — Headless MuJoCo and the orchestrator
 
@@ -124,7 +124,7 @@ velocity enforcement, or collisions. This is **not** physical safety.
 drive the arm even if run: `sim_node` has no command subscription, and with the
 measured 1.88 s median / 5.90 s max calls on this throttled GPU against a 0.9 s
 chunk, the default `stale_chunk_policy=reject` refuses essentially every real
-chunk. The Task 10b optional smoke (21 chunks/120 s, median 2.526 s, max
+chunk. The optional latency smoke (21 chunks/120 s, median 2.526 s, max
 10.250 s, no GPU performance claim) is the only real-checkpoint inference
 evidence and is user-reported from that session.
 
@@ -150,7 +150,7 @@ tested. See `docs/ISAAC_SIM.md`. No install is authorized.
   decision, not implemented.
 - Latency runs 3 and 4 are **NOT RUN** under the approved hard stop.
 - Remote-run provenance is **user-reported**; no audited `as_used/` copy exists.
-- Manual checkpoints for Task 8 smoke, Task 8b, Task 10, Task 11, Task 11b,
+- Manual checkpoints for the training smoke, the full-data run, inference, safety, obstacle mode,
   RViz mapping, the flywheel ledger, the `.venv-ml` swap, and CI are **PENDING**
   in `docs/MANUAL_CHECKS.md`.
 - MoveIt 2 and OctoMap are not verified.
@@ -179,6 +179,6 @@ tested. See `docs/ISAAC_SIM.md`. No install is authorized.
 - Isaac Sim support on this machine;
 - a validated ROS → MuJoCo closed loop, MoveIt, OctoMap, or real Bridge data.
 
-Proposed tag: `v0.12.0-task12-validation`. Annotated tag text would summarise
+Proposed tag: `v0.12.0-release-validation`. Annotated tag text would summarise
 the above and point to this file. **No tag has been created**; it requires the
 operator's explicit yes and a user-confirmed green CI run.

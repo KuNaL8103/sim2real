@@ -119,7 +119,7 @@ class FakeBackend(SimBackend):
         )
 
     def reset(self, seed: int, config: ResetConfig | None = None) -> Observation:
-        del config  # reset is always nominal; Task 3 randomization is applied after
+        del config  # reset is always nominal; randomization is applied after
         if seed < 0:
             raise ValueError("seed must be non-negative")
         self._arm = np.asarray(self.configs.panda.home_arm, dtype=np.float64).copy()

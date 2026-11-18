@@ -168,7 +168,7 @@ class EvalEpisodeRecord:
 
     @property
     def outcome(self) -> int:
-        """Task-5-compatible success code for ``compute_metrics``."""
+        """Filtering-compatible success code for ``compute_metrics``."""
         return 1 if self.success else 2
 
     def __post_init__(self) -> None:
@@ -332,7 +332,7 @@ def validate_record_dict(data: dict[str, Any]) -> None:
 
 
 def metrics_for_record(record: EvalEpisodeRecord, filter_config: Any) -> dict[str, Any]:
-    """Reuse Task 5 metrics; return a DEGENERATE marker instead of raising.
+    """Reuse the filtering metrics; return a DEGENERATE marker instead of raising.
 
     Imports are lazy so the evaluation package (and the ROS targeted-generation
     path) can be imported where scipy is unavailable.

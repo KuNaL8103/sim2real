@@ -1,7 +1,7 @@
 """In-process rollout runner for the scripted pick-and-place expert.
 
 The runner owns the episode lifecycle: deterministic reset through the same
-Task 3 path (``reset_environment``), planning, execution, failure handling, and
+the randomization path (``reset_environment``), planning, execution, failure handling, and
 recording. It never drops or crashes on a failed episode.
 
 Rendering is **off** by default: this module calls ``backend.step`` and

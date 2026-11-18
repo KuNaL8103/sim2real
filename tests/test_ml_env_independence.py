@@ -94,5 +94,5 @@ def test_ml_venv_has_no_simulator_stack():
     if present:
         pytest.skip(
             "local .venv-ml currently deviates from setup_envs.sh (installed: "
-            f"{present}); tracked for Task 9i, not a test failure"
+            f"{present}); tracked for the remote overfit analysis, not a test failure"
         )

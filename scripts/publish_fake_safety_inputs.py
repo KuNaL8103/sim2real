@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish fake safety inputs for the manual Task 11 checkpoint.
+"""Publish fake safety inputs for the manual safety-watchdog checkpoint.
 
 This is a test utility, not a controller and not a simulator.  It publishes a
 synthetic tabletop PointCloud2 on `/workspace/pointcloud` and periodic raw

@@ -1,6 +1,6 @@
 # Safety
 
-## Status (Task 11 and 11b)
+## Status (safety and obstacle mode)
 
 The software safety watchdog and a **mock-hardware** control stack are
 implemented. The watchdog is the only component allowed to forward
@@ -50,7 +50,7 @@ vla_inference_node
 ### 2. Stale-chunk policy (default `reject`)
 
 Points at or before the current age are dropped. This always drops the raw
-`k=0` point once measurable time has passed, matching the Task 10b observation
+`k=0` point once measurable time has passed, matching the latency budget measurement observation
 that a real chunk's first point is usually already gone.
 
 - `reject`: reject the whole chunk with `STALE_CHUNK` when every point is past
@@ -60,7 +60,7 @@ that a real chunk's first point is usually already gone.
   now as `(j+1)*command_period_s`. The continuity gate and every limit check
   still apply to the final retimed trajectory.
 
-**Measured consequence (Task 10b, user-reported):** with a 0.9 s chunk and
+**Measured consequence (latency budget measurement, user-reported):** with a 0.9 s chunk and
 1.88 s median / 5.90 s max calls on the throttled local GPU, the default
 `reject` policy rejects essentially every real chunk: all points are past the
 0.5 s `max_chunk_age_s`. The live chain will not move with the real checkpoint
@@ -148,7 +148,7 @@ The table and the manipulated object appear in the map. A naive threshold can
 reject a legitimate grasp, so the default threshold is deliberately small
 (1 cm) and the effect is measured rather than assumed.
 
-**Task 11 H21 result (synthetic map, kinematic fake backend).** The Task 11
+**Safety H21 result (synthetic map, kinematic fake backend).** The safety check
 check used a **synthetic** point map (600 table points + 450 cube-surface
 points) and the `FakeBackend` expert, not the real mapper cloud. Seeds
 20900-20909, 40 chunks: **10 rejected**, all `OBSTACLE_TOO_CLOSE`. Every
@@ -177,7 +177,7 @@ both **0.02248 m**. The 2 cm grid reported **0.0 m**, 1 cm grid **0.010 m**
 (borderline), 5 mm grid **0.01581 m**. The strict grid is a quantisation
 problem, not a table problem.
 
-**Measured strict vs masked (Task 11b, fake backend, synthetic map):**
+**Measured strict vs masked (obstacle-mode measurement, fake backend, synthetic map):**
 
 | seed set | strict accepted/rejected | masked accepted/rejected |
 | --- | --- | --- |
@@ -239,7 +239,7 @@ distractor inside that configured volume/radius, the obstacle gate ignores
 those points by design. Everything outside the allowance keeps the 1 cm
 threshold.
 
-**Rate-test note.** Task 11 A1 lowered the sim-node rate-test floor from
+**Rate-test note.** Safety carry-over A1 lowered the sim-node rate-test floor from
 **16 Hz** (0.8 x 20) to **8 Hz** (0.4 x 20) for load robustness after the test
 measured **20.00 Hz in 10/10 isolated runs**. The 8 Hz floor still catches the
 documented 1.87-3.28 Hz and 4.98-6.5 Hz starvation regressions.
@@ -324,12 +324,12 @@ page, section "Limits for Franka Emika Robot (FER)", fetched **2026-11-17**:
 | `q_max` (rad) | 2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973 | **yes** |
 | `dq_max` (rad/s) | 2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100 | **yes** |
 | `ddq_max` (rad/s^2) | 15, 7.5, 10, 12.5, 15, 20, 20 | **yes** |
-| `dddq_max` (rad/s^3) | 7500, 3750, 5000, 6250, 7500, 10000, 10000 | **yes** (added Task 11) |
-| `tau_max` (Nm) | 87, 87, 87, 87, 12, 12, 12 | **yes** (added Task 11) |
-| `dtau_max` (Nm/s) | 1000 | **yes** (added Task 11) |
+| `dddq_max` (rad/s^3) | 7500, 3750, 5000, 6250, 7500, 10000, 10000 | **yes** (added for safety) |
+| `tau_max` (Nm) | 87, 87, 87, 87, 12, 12, 12 | **yes** (added for safety) |
+| `dtau_max` (Nm/s) | 1000 | **yes** (added for safety) |
 
-Position, velocity, and acceleration were already verified in Task 6b. Jerk,
-effort, and torque rate were added in Task 11 with the source and date in
+Position, velocity, and acceleration were already verified during contact classification. Jerk,
+effort, and torque rate were added in the safety work with the source and date in
 `configs/sim/panda.yaml`. The safety layer enforces position/velocity/
 acceleration/jerk; effort and torque rate are not computed because there is no
 dynamics model in this layer.

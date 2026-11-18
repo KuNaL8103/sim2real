@@ -105,7 +105,7 @@ class MuJoCoBackend(SimBackend):
             for name, camera in self.configs.cameras.items()
         }
         # Nominal model parameters, captured once so reset can always restore
-        # them. Task 3 only mutates these inside the reset-quiesce window.
+        # them. The randomization stage only mutates these inside the reset-quiesce window.
         self._nominal_cube_mass = {
             name: float(self.model.body_mass[self.model.body(name).id])
             for name in self.configs.scene.cubes
@@ -219,7 +219,7 @@ class MuJoCoBackend(SimBackend):
         )
 
     def reset(self, seed: int, config: ResetConfig | None = None) -> Observation:
-        del config  # reset is always nominal; Task 3 randomization is applied after
+        del config  # reset is always nominal; randomization is applied after
         if seed < 0:
             raise ValueError("seed must be non-negative")
         data = self.data
@@ -504,7 +504,7 @@ class MuJoCoBackend(SimBackend):
 
     # -- internals ---------------------------------------------------------
     def _restore_nominal_model(self) -> None:
-        """Restore every model parameter Task 3 may change."""
+        """Restore every model parameter randomization may change."""
         for name in self.configs.scene.cubes:
             body = self.model.body(name)
             geom = self.model.geom(f"{name}_geom")

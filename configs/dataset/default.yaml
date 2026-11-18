@@ -1,9 +1,9 @@
-# Dataset builder defaults (Task 7).
+# Dataset builder defaults (dataset-export stage).
 #
 # The default image decimation is 2, so a 20 Hz Panda staging episode becomes a
 # 10 Hz LeRobot dataset.  Observation state, action, and images are selected at
 # the SAME source steps.  A 50-step action chunk at 10 Hz spans 5 s; see
-# docs/DATASETS.md for the Task 8 padding/masking consequence.
+# docs/DATASETS.md for the training padding/masking consequence.
 schema_version: 1
 
 dataset:

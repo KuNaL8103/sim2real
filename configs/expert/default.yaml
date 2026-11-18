@@ -71,7 +71,7 @@ staging:
   capture_images: false
   image_decimation: 5
   resolution: [256, 256]
-  # llvmpipe measured 0.18 s (colour) + 0.14 s (depth) per camera in Task 2b.
+  # llvmpipe measured 0.18 s (colour) + 0.14 s (depth) per camera during the rendering-decoupling measurement.
   desired_render_seconds_per_frame: 0.25
 
 instructions_file: instructions.yaml

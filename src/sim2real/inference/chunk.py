@@ -5,12 +5,12 @@ own postprocessor. This module never normalizes or de-normalizes again; it only
 checks the array, selects the first ``n_action_steps``, and maps them to a
 ROS-independent trajectory description.
 
-Time convention (Task 10 decision): action ``k`` is applied at
+Time convention (inference decision): action ``k`` is applied at
 ``observation_stamp + k * policy_period_s``, with ``k = 0`` the first action.
 This matches the evaluation runner's default ``linear`` execution, where the
 chunk's first action is used immediately after the observation and consecutive
 actions are linearly interpolated. A ``JointTrajectory`` controller normally
-places point ``k`` at ``(k + 1) * dt``; Task 11 owns that retiming decision. The
+places point ``k`` at ``(k + 1) * dt``; the safety watchdog owns that retiming decision. The
 raw chunk keeps the observation stamp and per-point offsets, so the information
 needed to retime is preserved.
 """
@@ -146,7 +146,7 @@ def trim_for_latency(chunk: TrajectoryChunk, now_ns: int) -> TrajectoryChunk | N
 def finger_out_of_range(chunk: TrajectoryChunk) -> tuple[int, ...]:
     """Rows whose gripper target is outside the dataset's ``[0, 0.04]`` m.
 
-    The raw node passes these through; the Task 11 safety layer owns clipping.
+    The raw node passes these through; the safety layer owns clipping.
     """
     gripper = chunk.positions[:, 7]
     outside = (gripper < FINGER_MIN_M) | (gripper > FINGER_MAX_M)

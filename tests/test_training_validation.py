@@ -15,7 +15,7 @@ from sim2real.training.validation import (
 
 
 def test_action_is_pad_true_means_padded_not_valid():
-    """Regression guard for the Task 8 inverted validation mask."""
+    """Regression guard for the training pipeline inverted validation mask."""
     padded = np.array([[True, False, False]])
     valid = valid_mask_from_padding(padded)
     assert valid.tolist() == [[False, True, True]]

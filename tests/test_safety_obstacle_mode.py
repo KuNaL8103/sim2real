@@ -1,4 +1,4 @@
-"""Task 11b: strict vs masked obstacle gating on measured expert chunks."""
+"""Obstacle-mode: strict vs masked obstacle gating on measured expert chunks."""
 
 from __future__ import annotations
 

@@ -35,7 +35,7 @@ EVAL_SUMMARY_QOS = QosSpec(reliability="reliable", durability="volatile", depth=
 # durability keeps compatibility with the usual operator publisher (a
 # transient-local subscriber would refuse a volatile publisher).
 TASK_INSTRUCTION_QOS = QosSpec(reliability="reliable", durability="volatile", depth=1)
-# Raw VLA chunks are consumed by the Task 11 safety node. Keep a short history
+# Raw VLA chunks are consumed by the safety node. Keep a short history
 # so a brief scheduling stall does not lose every chunk; the safety node still
 # owns staleness checks.
 VLA_RAW_ACTION_QOS = QosSpec(reliability="reliable", durability="volatile", depth=10)

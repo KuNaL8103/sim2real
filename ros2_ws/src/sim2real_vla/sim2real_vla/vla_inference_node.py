@@ -3,7 +3,7 @@
 Consumes synchronized overhead/wrist RGB images, ``/joint_states``, and
 ``/task_instruction``; sends the observation to the out-of-process policy
 server on a worker thread; publishes raw, **unsafe** action chunks on
-``/vla/raw_action``. No controller is started or connected here: Task 11 owns
+``/vla/raw_action``. No controller is started or connected here: the safety watchdog owns
 the safety layer and the final time convention.
 
 The node never imports torch. The ML environment is a child process.

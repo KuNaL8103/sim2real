@@ -7,7 +7,7 @@
 #   - verify the pinned revision and VRAM requirement (7B parameters do not fit
 #     a 6 GiB GPU without quantization/full offload);
 #   - verify the camera keys and action normalization from the model card.
-# The adapter raises AdapterUnavailable and Task 8 did not download the weights.
+# The adapter raises AdapterUnavailable and the training pipeline did not download the weights.
 schema_version: 1
 model:
   family: openvla7b

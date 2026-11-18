@@ -107,7 +107,7 @@ def _policy_observation(
 
 
 def _physics_instability(backend: Any, observation: Any, expert_config: Any) -> str | None:
-    """Same checks as the Task 4 expert guard, without changing expert code."""
+    """Same checks as the scripted expert guard, without changing expert code."""
     robot = observation.robot_state
     q = np.asarray(robot.joint_positions, dtype=np.float64)
     qd = np.asarray(robot.joint_velocities, dtype=np.float64)

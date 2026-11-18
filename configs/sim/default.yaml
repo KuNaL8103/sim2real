@@ -1,6 +1,6 @@
 # Simulator configuration entry point.
 #
-# Task 2 splits the settings into three validated files:
+# The simulator backend splits the settings into three validated files:
 #   scene.yaml   world, table, cubes, zones, control/physics rates
 #   panda.yaml   MJCF path, joint/frame names, limits, home pose, TCP offset
 #   cameras.yaml resolution, rate, fovy, extrinsics

@@ -3,7 +3,7 @@
 The node is deliberately thin: all state lives in ``sim2real.sim`` backends and
 all reset logic lives in ``sim2real.sim.reset_handler``.
 
-Publishing/rendering decoupling (Task 2b)
+Publishing/rendering decoupling
 -----------------------------------------
 A ``MultiThreadedExecutor`` runs two mutually-exclusive callback groups:
 
@@ -22,7 +22,7 @@ of the snapshot it rendered. The node exposes a snapshot to the camera group
 only after publishing the dynamic TF for that stamp, so a tf2 lookup at the
 image stamp never extrapolates into the future. ``/clock`` is not published.
 
-Joint-command subscription is still deferred to Task 11.
+Joint-command subscription is still deferred to the safety stage.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ class SimNode(Node):
         self._tf_broadcaster = TransformBroadcaster(self, qos=TF_QOS)
         # tf2_ros.StaticTransformBroadcaster deduplicates by child frame ID, so
         # it silently ignores a changed camera extrinsic. Use a plain
-        # transient-local publisher so Task 3 can republish jittered camera TF.
+        # transient-local publisher so the randomization stage can republish jittered camera TF.
         self._static_tf_publisher = self.create_publisher(
             TFMessage, contracts.TF_STATIC_TOPIC, STATIC_TF_QOS
         )

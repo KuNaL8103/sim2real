@@ -1,4 +1,4 @@
-# Trajectory filtering metrics (Task 5)
+# Trajectory filtering metrics
 
 Status: implemented for the fake backend and MuJoCo. All formulas below are
 computed from the **recorded executed state**, never from the commanded action
@@ -160,10 +160,10 @@ The fake and MuJoCo distributions differ materially, so each has its own file:
 
 ### Tuning distributions (clean + successful + non-perturbed)
 
-> **Superseded for fake on 2026-11-02.** The fake rows below are the Task 5
+> **Superseded for fake on 2026-11-02.** The fake rows below are the earlier filtering
 > numbers, before the release guard changed the trajectories. The current fake
 > thresholds come from the re-derivation section below. The MuJoCo rows are
-> superseded by the Task 6b section.
+> superseded by the contact-classification section.
 
 | backend | n | metric | min | p50 | p95 | max | chosen |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -194,7 +194,7 @@ reported velocities) / 0.332 (MuJoCo). Clean collision runs were 0 (fake) and
 ### Hold-out evaluation (60 episodes per backend, never used for tuning)
 
 > **Superseded for fake on 2026-11-02** by the fresh 8000-8059 hold-out below.
-> The MuJoCo rows are superseded by the Task 6b section.
+> The MuJoCo rows are superseded by the contact-classification section.
 
 | perturbation | fake accepted / n | MuJoCo accepted / n |
 | --- | --- | --- |
@@ -213,11 +213,11 @@ were accepted. Hold-out reason counts: fake `JERK_TOO_HIGH=6`,
 `NOT_SUCCESS=3`, `SPARC_TOO_LOW=1`; MuJoCo `NOT_SUCCESS=35`,
 `JERK_TOO_HIGH=8`, `PATH_TOO_LONG=1`, `SPARC_TOO_LOW=1`.
 
-### Task 6b re-derivation (2026-11-02) — supersedes the MuJoCo Task 5 numbers
+### Contact-classification re-derivation (2026-11-02) — supersedes the MuJoCo filtering numbers
 
 The collision classifier and the expert release guard changed the MuJoCo data.
 The **MuJoCo** rows above (n=40 tuning, hold-out seeds 2000-2059) are
-**superseded**. At the time of Task 6b the fake thresholds in
+**superseded**. At the time of the contact-classification re-derivation the fake thresholds in
 `configs/filtering/default.yaml` were deliberately left unchanged; they were
 re-derived separately on 2026-11-02 after the release guard was found to raise
 fake clean-episode false rejects. The fake result is below.
@@ -253,7 +253,7 @@ thresholds are intentionally unchanged by this task.
 
 ### Fake re-derivation (2026-11-02) — supersedes both fake tables above
 
-After the Task 6b release guard added holds, the old fake thresholds rejected
+After the release guard added holds, the old fake thresholds rejected
 7 of 38 clean-successful hold-out episodes. The fake config was re-derived with
 the **same rule** and no filter-code changes.
 
@@ -286,13 +286,13 @@ The two clean false rejects were seeds 8043 and 8051, both `JERK_TOO_HIGH`.
 Hold-out reason counts: `JERK_TOO_HIGH=11`, `NOT_SUCCESS=4`,
 `SPARC_TOO_LOW=1`. On the tuning set the new thresholds reject 2/67 clean
 successes (seeds 1004 and 1081, both `JERK_TOO_HIGH`), versus 17/67 under the
-old Task 5 values. The old fake numbers (J_d 1.46116e7, SPARC -5.05682, path
+old filtering values. The old fake numbers (J_d 1.46116e7, SPARC -5.05682, path
 1.3032, 31/33 clean acceptance) are **superseded** and retained only for
 history.
 
 ## Known limitations
 
-- **Collision flag over-reporting was fixed in Task 6b.** The old
+- **Collision flag over-reporting was fixed during contact classification.** The old
   `_unintended_collision` ended with `return count > 0` and counted the
   intended grasp. The pure classifier now counts only penetrating unintended
   contacts and classifies cube-cube, hand-cube, finger-table, and
@@ -310,6 +310,6 @@ history.
 - **Small samples.** The tables report counts, not just percentages; 2/33 and
   1/67 are noisy estimates.
 - **LeRobot-style only.** The Parquet columns follow LeRobot naming but are not
-  validated against the LeRobot loader until Task 7.
+  validated against the LeRobot loader until the dataset-export stage.
 - **No images.** Staging captures no images, so the curated dataset cannot train
   a VLA until RGB-D frames are rendered later.

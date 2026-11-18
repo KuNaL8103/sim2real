@@ -452,7 +452,7 @@ class OpenVLAAdapter:
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         raise AdapterUnavailable(
-            "OpenVLA-7B is not validated in Task 8: license (Llama-derived) and "
+            "OpenVLA-7B is not validated in the training pipeline: license (Llama-derived) and "
             "VRAM requirements must be verified first. Use family: smolvla."
         )
 

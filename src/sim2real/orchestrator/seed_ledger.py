@@ -6,7 +6,7 @@ so a pipeline cycle cannot silently reuse a tuning, hold-out, or diagnostic set.
 
 Two carve-outs are inside the 20000-20999 evaluation range:
 
-* 20900-20919: Task 11 / 11b expert false-positive check (already used);
+* 20900-20919: Safety / obstacle-mode expert false-positive check (already used);
 * 20950-20969: fake-backend end-to-end tests only (recorded in the ledger doc).
 
 The 20950-20969 carve-out is accepted only when the configured backend is
@@ -45,7 +45,7 @@ USED_RANGES: tuple[LedgerRange, ...] = (
     LedgerRange(8000, 8059, "reserved"),
     LedgerRange(10000, 10199, "training/evaluation diagnosis"),
     LedgerRange(20000, 20999, "closed-loop evaluation"),
-    LedgerRange(20900, 20919, "Task 11 expert false-positive check"),
+    LedgerRange(20900, 20919, "safety expert false-positive check"),
     LedgerRange(30000, 30999, "targeted generation"),
 )
 

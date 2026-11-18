@@ -104,7 +104,7 @@ def test_full_fake_cycle_writes_complete_lineage(completed_pipeline) -> None:
 # 2. seed-ledger enforcement
 def test_seed_ledger_refuses_owned_range(tmp_path: Path) -> None:
     def owned(raw):
-        raw["pipeline"]["generation"]["seed"] = 20900  # Task 11 range
+        raw["pipeline"]["generation"]["seed"] = 20900  # safety range
         raw["pipeline"]["stages"] = {stage.value: "fake" for stage in Stage}
 
     orchestrator = _orchestrator(tmp_path, owned)

@@ -1,4 +1,4 @@
-"""Task 9 record, seed and aggregate tests (hardware-free)."""
+"""Evaluation record, seed and aggregate tests (hardware-free)."""
 
 from __future__ import annotations
 

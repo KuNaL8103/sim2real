@@ -101,12 +101,12 @@ rather than bypassing the check.
 - Whether the remote environment can reach the Hugging Face Hub; if not,
   pre-download the two pinned repositories and mount the cache.
 
-## Task 9f bundle runbook (2026-11-13)
+## Remote-bundle runbook (2026-11-13)
 
 This section supersedes the older export list above. It is still **documentation
 only**: no upload, account, provider test, or remote training happened in this
 session. The local GPU is treated as degraded/untrusted: it measured **210 MHz**
-under load in 9e/9f (SW Power Cap + SW Thermal Slowdown), even though Task 9g's
+under load in the GPU-gate and bundle-preparation checks (SW Power Cap + SW Thermal Slowdown), even though bundle-hardening's
 idle reading was 2130 MHz. It is not used for training.
 
 ### What to upload
@@ -126,7 +126,7 @@ scans for forbidden files, and writes:
 
 | Content | Detail |
 | --- | --- |
-| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving. The authoritative Task 9g archive is `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`, **95,909,403 bytes (91.47 MiB)**, sha256 `658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`; its payload has 13 files and `repo.bundle` is 771,044 bytes. |
+| `data/lerobot/train_v1/` | Full 40-episode dataset, 91.09 MiB / 95,519,481 bytes before archiving. The authoritative archive is `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`, **95,909,403 bytes (91.47 MiB)**, sha256 `658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`; its payload has 13 files and `repo.bundle` is 771,044 bytes. |
 | `outputs/remote_bundle_payload/configs/training/` | The overfit protocol config and the full `train_v1` config |
 | `outputs/remote_bundle_payload/requirements.txt` | Exact versions read from `.venv-ml`, with `--extra-index-url https://download.pytorch.org/whl/cu126` |
 | `outputs/remote_bundle_payload/repo.bundle` | Git bundle of the exact commit for the offline clone fallback (about 5-6 MiB) |
@@ -282,9 +282,9 @@ It prints PASS/FAIL for the three pre-registered criteria and keeps the training
 loss advisory. The closed-loop follow-up (seeds 10000/10004, three repeats,
 linear, `n_action_steps=10`) is the snippet in `docs/TRAINING.md` section 15.
 
-### Bundle-commit reconciliation (Task 9g)
+### Bundle-commit reconciliation
 
-The Task 9f runbook once named `c3802a5` as the bundle commit. That was a
+The remote-bundle preparation runbook once named `c3802a5` as the bundle commit. That was a
 docs-only commit and is **superseded**; the 9f archive that actually exists was
 built from `b620c91` (95,133,660 bytes, sha256 `967dc109...41b8`). The
 authoritative archive is `sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`
@@ -320,7 +320,7 @@ checkpoints, local closed-loop evaluation and interpretation table) is in
 `docs/TRAINING.md` section 15. Do not redefine convergence after seeing the
 loss curve.
 
-## Task 9i: first remote overfit result and provenance audit (2026-11-17)
+## First remote overfit result and provenance audit (2026-11-17)
 
 The first real remote overfit run returned. This section records what was
 checked locally, every deviation from the bundle protocol, and what remains
@@ -384,7 +384,7 @@ scripts that must run there (`scripts/eval_teacher_forced.py`,
 `PYTHONPATH=src`, and their `--help` paths returned 0. That proves **import
 independence for the exercised paths**, not that every runtime branch avoids
 those modules. A clean rebuild from `scripts/setup_envs.sh --with-ml` is
-required before the final validation (Task 12); that rebuild is a download and
+required before the final validation (release validation); that rebuild is a download and
 needs separate approval. `scripts/setup_envs.sh` was **not** modified.
 
 ### The 1,000 MHz clock floor

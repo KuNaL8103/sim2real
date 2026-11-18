@@ -1,4 +1,4 @@
-# Image replay rendering (Task 6b prototype)
+# Image replay rendering (prototype)
 
 ## Why replay
 
@@ -6,7 +6,7 @@ Rollouts do not render images: MuJoCo under llvmpipe costs about **0.2 s per
 camera frame**, which would dominate collection. The scripted expert is
 deterministic, so a staged episode can be replayed later and rendered offline.
 This document defines the contract, the algorithm, the measured cost, and the
-open questions for Task 7.
+open questions for the dataset-export stage.
 
 ## Determinism contract
 
@@ -102,7 +102,7 @@ The hard refusal thresholds are 1 GiB and 10 minutes without `--i-approved`.
 A staged episode already contains `seed`, `episode_index`,
 `randomization_seed`, `randomization_report` (including the profile and sampled
 object poses), the per-step actions, `control_rate_hz`, and the task ids.
-Task 6b adds `final_object_poses` to the sidecar for the fidelity check; old
+Contact classification adds `final_object_poses` to the sidecar for the fidelity check; old
 records still replay but report `max_object_error_m = null`.
 
 Images live under `<run>/images/<episode_id>/<step>_<camera>.png`. The episode
@@ -115,7 +115,7 @@ sidecar and the manifest row gain an `images` list:
 ```
 
 This is the `images` mapping shape accepted by the `curated_v1` writer; the
-writer is **not** changed in Task 6b. Existing image files are never
+writer is **not** changed. Existing image files are never
 overwritten.
 
 ## Alignment
@@ -128,7 +128,7 @@ overwritten.
 - No cross-camera synchronization is needed: both cameras render the same
   post-step state.
 
-## Open questions for Task 7
+## Open questions for the dataset-export stage
 
 1. Which image size and cameras should the LeRobot builder use (256x256 both,
    or overhead only)?
@@ -136,7 +136,7 @@ overwritten.
    about 3.3 GiB; video would reduce storage but needs an encoder.
 3. Is depth needed (float16 optional, currently off)?
 4. ~~Does LeRobot v3 accept external image references, or must frames be copied
-   into the dataset layout?~~ **Answered in Task 7:** the official writer copies
+   into the dataset layout?~~ **Answered during dataset export:** the official writer copies
    image bytes into its own PNG layout; our builder reads the replay PNGs and
    passes decoded arrays to `LeRobotDataset.add_frame`.
 5. What is the storage/time budget for the first training set, and is the

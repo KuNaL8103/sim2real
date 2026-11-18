@@ -1,4 +1,4 @@
-"""Offline VLA fine-tuning (Task 8).
+"""Offline VLA fine-tuning (training pipeline).
 
 The package imports without torch, PEFT, LeRobot, ROS, or a GPU.  The real
 SmolVLA adapter imports those lazily and raises ``AdapterUnavailable`` with an

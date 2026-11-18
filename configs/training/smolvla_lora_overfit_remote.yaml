@@ -1,6 +1,6 @@
-# SmolVLA + PEFT LoRA overfit protocol for the remote health check (Task 9f).
+# SmolVLA + PEFT LoRA overfit protocol for the remote health check (remote-bundle preparation).
 #
-# Same two train-v1 episodes as the Task 9d diagnostic (dataset indices 0 and 1;
+# Same two train-v1 episodes as the trust-and-overfit diagnostic (dataset indices 0 and 1;
 # episode seeds 10000 and 10004), same LoRA and constant lr 1e-4. The difference
 # is the optimization budget: 1,000 steps instead of 250, chosen from the
 # measured healthy-GPU batch-4 step time (median 0.374 s on full data):

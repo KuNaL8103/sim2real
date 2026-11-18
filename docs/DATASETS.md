@@ -2,16 +2,16 @@
 
 ## Status
 
-**Task 4 staging, Task 5 `curated_v1` filtering, and Task 7 LeRobot export
+**Rollout staging, `curated_v1` filtering, and dataset-export LeRobot export
 exist.** The scripted expert writes raw rollouts to an atomic staging directory.
 `trajectory_filter_node` and `scripts/filter_staging.py` validate, measure, and
 accept/reject them, then write a versioned `curated_v1` dataset and a rejection
-log. Task 7 adds the two-layer dataset builder, official LeRobot v3 writer,
+log. The dataset-export stage adds the two-layer dataset builder, official LeRobot v3 writer,
 replay-image references, normalization statistics, an episode split, a
 deterministic mixture sampler, and a fixture-first Bridge RLDS adapter.
 `data/` is ignored by git except `data/.gitkeep`.
 
-## Task 4 staging layout
+## Rollout staging layout
 
 ```
 data/staging/<run_id>/
@@ -40,11 +40,11 @@ Properties:
   capture images. `scripts/render_replay.py` replays a staged episode offline
   and writes PNG frames under `<run>/images/<episode_id>/`; per-episode image
   capture during a rollout is **not wired in**, and images are not part of the
-  `curated_v1` write yet (Task 7).
+  `curated_v1` write yet (dataset-export stage).
 - **No video yet.** The replay prototype writes PNG frames. Images become video
-  or dataset tensors in Task 7; no encoding is chosen here.
+  or dataset tensors in the dataset-export stage; no encoding is chosen here.
 
-## Replay image references (Task 6b)
+## Replay image references
 
 `scripts/render_replay.py --staging <run> [--episode-id <id>] [--decimation N]`
 rebuilds the scene through the same reset path, steps the recorded actions, and
@@ -59,10 +59,10 @@ writes one PNG per selected step and camera. It:
   fidelity check, and compares them with the recorded values.
 
 The `images` shape is the mapping the `curated_v1` writer accepts; the writer is
-**not** changed in Task 6b. Design, measured render costs, and open questions
+**not** changed in the contact-classification work. Design, measured render costs, and open questions
 are in `docs/IMAGE_REPLAY.md`.
 
-## `curated_v1` layout (Task 5)
+## `curated_v1` layout
 
 ```
 data/curated/<dataset_name>/v<MAJOR.MINOR.PATCH>/
@@ -83,7 +83,7 @@ data/curated/<dataset_name>/v<MAJOR.MINOR.PATCH>/
 
 Parquet columns are **LeRobot-STYLE**: names and shapes follow LeRobot
 conventions, but this layout is **not validated against the LeRobot loader**
-until Task 7. `observation.state` and `action` are fixed-size lists of 8:
+until the dataset-export stage. `observation.state` and `action` are fixed-size lists of 8:
 seven arm joints in radians plus one gripper finger joint in metres. `index` is
 a dataset-global frame index; `next.done` is true only on an episode's last row.
 
@@ -164,12 +164,12 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 - Staging holds **unfiltered** episodes, including intended failures and
   timeouts. Curated output is the filtered subset; staging is not training data.
 - Outcomes are measured by the expert's success rule (zone xy, rest height,
-  stable steps, gripper open). Trajectory metrics are Task 5 and are documented
+  stable steps, gripper open). Trajectory metrics belong to the filtering stage and are documented
   separately.
 - Per-step `unintended_collision` is a coarse mapping of the backend contact
-  report. A Task 4 bug makes it true whenever **any** contact exists, including
+  report. A scripted-expert bug makes it true whenever **any** contact exists, including
   the intended cube↔finger grasp; see `docs/FILTER_METRICS.md`. Expert code was
-  not changed in Task 5.
+  not changed in the filtering stage.
 - The MuJoCo clean success rate measured so far is 7/10 (seeded smoke) and 9/20
   with 30% perturbation. Do not assume a high-quality dataset from this expert
   without filtering and inspection.
@@ -177,7 +177,7 @@ ros2 topic echo --no-arr --once /sim2real/staging_episode
 - No provenance hash of code/config yet beyond `run_id`, seeds, and the
   randomization report.
 
-## Task 7 — LeRobot v3 export and Open X adapter (2026-11-02)
+## LeRobot v3 export and Open X adapter (2026-11-02)
 
 ### Primary-source verification
 
@@ -253,7 +253,7 @@ than silently transformed.
 Default `decimation: 2`. State, action, and image frames are selected at the
 **same** source control steps (`0, 2, 4, ...`), and the stored fps is derived as
 `control_rate_hz / decimation`. Panda is therefore **10 Hz**. This is a config
-key; the writer never hardcodes 10. Consequence for Task 8: horizon in seconds =
+key; the writer never hardcodes 10. Consequence for the training pipeline: horizon in seconds =
 `chunk / fps`; a 50-step chunk at 10 Hz spans **5 s**, longer than a typical
 90-step/4.5 s episode, so padding and masking are mandatory rather than optional.
 
@@ -296,7 +296,7 @@ are written by `scripts/compute_stats.py`.
 within each source, and takes a deterministic validation count. Train and
 validation are disjoint at the episode level. The split is stored in
 `meta/sim2real_split.json` inside the LeRobot dataset; the loader itself sees
-all episodes, so Task 8 must pass the split indices/filters explicitly.
+all episodes, so the training pipeline must pass the split indices/filters explicitly.
 
 `mixing.py` requires an explicit manifest. It supports `frames` or `episodes`
 units, weights, optional `max_fraction`, replacement, deterministic seeding, and
@@ -322,7 +322,7 @@ estimated image GiB, and estimated replay minutes before writing. A replay run
 above 1 GiB or 10 minutes still needs `--i-approved` at the replay script. This
 session used a 2-episode demo only.
 
-### Task 7 runtime evidence (2026-11-02)
+### Dataset-export runtime evidence (2026-11-02)
 
 - `.venv-ml`: Python 3.12, `lerobot==0.6.1`, `torch==2.11.0+cpu`,
   `torchvision==0.26.0+cpu`, `torchcodec==0.11.1+cpu`, `av==15.1.0`,
@@ -359,14 +359,14 @@ CC BY 4.0 attribution.
 
 | Item | Task | Status |
 | --- | --- | --- |
-| Trajectory metrics (dimensionless squared jerk, SPARC, path length, limit margins, collisions) | Task 5 | **implemented** |
-| Acceptance engine and `trajectory_filter_node` | Task 5 | **implemented** |
-| `curated_v1` on-disk episode format | Task 5 | **implemented (LeRobot-style, unvalidated)** |
-| LeRobot dataset export and loader validation | Task 7 | **implemented** (official v3 API; 2-episode real dataset) |
-| Open-X / LeRobot dataset mixing | Task 7 | **implemented** (fixture-first Bridge adapter + mixture sampler) |
-| Dataset statistics and provenance | Task 7 | **implemented** (stats, split manifest, build metadata) |
-| Video encoding path | Task 7 | **not exercised**; image mode only |
-| Real Bridge subset | Task 7 | **not downloaded**; fixture only |
+| Trajectory metrics (dimensionless squared jerk, SPARC, path length, limit margins, collisions) | filtering | **implemented** |
+| Acceptance engine and `trajectory_filter_node` | filtering | **implemented** |
+| `curated_v1` on-disk episode format | filtering | **implemented (LeRobot-style, unvalidated)** |
+| LeRobot dataset export and loader validation | dataset-export | **implemented** (official v3 API; 2-episode real dataset) |
+| Open-X / LeRobot dataset mixing | dataset-export | **implemented** (fixture-first Bridge adapter + mixture sampler) |
+| Dataset statistics and provenance | dataset-export | **implemented** (stats, split manifest, build metadata) |
+| Video encoding path | dataset-export | **not exercised**; image mode only |
+| Real Bridge subset | dataset-export | **not downloaded**; fixture only |
 
 ## Storage policy
 

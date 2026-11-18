@@ -220,7 +220,7 @@ def public_version(version: str) -> str:
 
     Local labels such as ``+cu126`` and ``+cpu`` are wheel-build markers, not
     public releases. Pinning them makes the file unresolvable on another
-    platform (the Task 9i remote run had to hand-edit ``torchcodec==0.11.1+cpu``
+    platform (the remote overfit run had to hand-edit ``torchcodec==0.11.1+cpu``
     and then hand-edit the manifest hash). The CUDA build is selected by the
     documented wheel index instead.
     """

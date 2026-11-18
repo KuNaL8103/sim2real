@@ -3,15 +3,14 @@
 This is the tracked status record. The local status notes file is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=666 failed=0 skipped=33 errors=0 | date=2026-11-18 | base_commit=27bf958
+- Last verified test run: passed=667 failed=0 skipped=32 errors=0 | date=2026-11-18 | base_commit=27bf958
 - Last verified ROS test run: passed=699 failed=0 skipped=5 errors=0 | date=2026-11-18 | base_commit=27bf958
 - Task 1 status: complete
 
-## Task 12 status: integrated pipeline, validation matrix, deployment docs (2026-11-18)
+## Release validation status: integrated pipeline, validation matrix, deployment docs (2026-11-18)
 
-`docs/MASTER_SPEC.md` is kept verbatim as the input specification and still
-contains the original prompt text; it is a provenance record, not project
-documentation.
+The original design brief is kept locally on disk and is not part of the tracked
+repository; git history still contains an earlier copy.
 
 **Implemented.** A pure-Python orchestrator (`src/sim2real/orchestrator/`) with
 the explicit stages `GENERATE -> FILTER -> BUILD -> TRAIN -> EVALUATE ->
@@ -45,7 +44,7 @@ it.
 | `scripts/ci_parity.sh --clean-clone` (commit `9cce529`) | **663 passed / 36 skipped**, rc 0 |
 | `.venv-ml` rebuild and swap | **PASSED / DONE** (see below) |
 
-New tests: 10 core orchestrator tests plus 5 ROS integration tests; the Task 11
+New tests: 10 core orchestrator tests plus 5 ROS integration tests; the safety watchdog
 guarded HIL test is reused. Skips are explicit (no `rclpy`, no `.venv-ml`, no
 decoded PNGs, optional sklearn cross-check).
 
@@ -95,21 +94,21 @@ in-process runner. Masked-mode target allowance comes from
 so a randomized offset, a perception error, or a distractor inside that
 configured volume is ignored. No bridge was built.
 
-**CI.** Both CI jobs for the pre-Task-12 push at `27bf958` are
+**CI.** Both CI jobs for the push before the orchestrator stage at `27bf958` are
 **user-confirmed green** (2026-11-18, Actions tab; supporting evidence only).
-CI for the Task 12 push still needs the user's Actions-tab confirmation.
+CI for the pipeline orchestrator push still needs the user's Actions-tab confirmation.
 
 **Open/pending.** The pre-registered overfit rule is unchanged and **UNMET**
 (arm 0.0333 vs 0.010, gripper 0.00688 vs 0.005, closed loop 0/6); the policy is
 under-trained. L5 real-checkpoint smoke **NOT RUN**; L6 Isaac **UNAVAILABLE**;
 L7 physical **NOT RUN**; latency runs 3/4 **NOT RUN**; remote provenance
-**user-reported**; manual checkpoints (Tasks 8, 8b, 10, 11, 11b, RViz, flywheel,
+**user-reported**; manual checkpoints (training, full-data run, inference, safety, obstacle mode, RViz, flywheel,
 `.venv-ml` swap, CI) **PENDING** in `docs/MANUAL_CHECKS.md`; MoveIt/OctoMap
 unverified. No policy-quality or physical-safety claim is made. A release tag is
 proposed but **not created**; it needs the user's explicit yes.
 
 
-The Task 10b checks used the code commit `1d8d882` (scheduler, status
+The latency measurements used the code commit `1d8d882` (scheduler, status
 instrumentation, colcon pytest visibility). Both baseline conventions, side by
 side:
 
@@ -125,9 +124,9 @@ skipped** (6 `sim2real_msgs` + 1 CTest + 6 pytest). `.venv-ros` was **627/6**
 and `run_ml_tests.sh` **4 passed / 1 deselected**. `.venv-ml` was not rebuilt;
 see the deviations below.
 
-## Task 11b status: measured obstacle-mode fix (2026-11-18)
+## Obstacle-mode measurement status (2026-11-18)
 
-**Why the 10 Task 11 chunks were rejected.** The Task 11 H21 check used a
+**Why the 10 safety chunks were rejected.** The safety watchdog H21 check used a
 **synthetic** map (600 table points + 450 cube-surface points) and the
 kinematic `FakeBackend` expert. All 10 rejections were chunk window 1 (start
 step 20) at the same TCP: the **target red cube**, not the table. The 2 cm grid
@@ -186,15 +185,15 @@ deselected**; `ci_parity` **654 passed / 30 skipped** (ROS half **22 / 0 / 0 /
 8 skipped**); clean clone at `3779336` **653 passed / 31 skipped**.
 
 **Rate-test note:** the sim-node rate floor was lowered from **16 Hz** to
-**8 Hz** in Task 11 A1 for load robustness after **20.00 Hz in 10/10 isolated
+**8 Hz** in safety carry-over A1 for load robustness after **20.00 Hz in 10/10 isolated
 runs**. It still catches the documented 1.87-3.28 Hz and 4.98-6.5 Hz
 starvation regressions.
 
-Both CI jobs for the pre-11b push at `3aad245` are **user-confirmed green**
-(2026-11-18, Actions tab; supporting evidence only). The Task 11b push still
+Both CI jobs for the push before the obstacle-mode measurement at `3aad245` are **user-confirmed green**
+(2026-11-18, Actions tab; supporting evidence only). The obstacle-mode measurement push still
 needs the user's Actions-tab confirmation.
 
-## Task 11 status: safety watchdog and mock control (2026-11-17)
+## Safety watchdog and mock control status (2026-11-17)
 
 Implemented the ROS-free safety core (`src/sim2real/safety/`), the
 `sim2real_control` `safety_watchdog_node`, the latched `/estop` and
@@ -214,8 +213,8 @@ and never zeros or the last chunk. A rejected chunk does not latch; `ESTOP`
 does. A software e-stop is **not** safety-rated, and mock hardware is **not**
 physical safety.
 
-Both CI jobs for the pre-Task-11 push at `4a92cbe` are **user-confirmed green**
-(2026-11-17, Actions tab; supporting evidence only). The Task 11 push
+Both CI jobs for the push before the safety stage at `4a92cbe` are **user-confirmed green**
+(2026-11-17, Actions tab; supporting evidence only). The safety push
 (`2519aad`) still needs the user's Actions-tab confirmation.
 
 **Verified counts in this session (sklearn absent in the core `.venv`):**
@@ -238,15 +237,14 @@ passed **10/10** alone. Both are test-only changes.
 
 **Carry-over A2.** `startup_timeout_s` default raised from 120 s to **180 s** in
 both `configs/inference/default.yaml` and `InferenceConfig`, with a test that
-they agree and that the validator still bounds the value. Task 10b measured
+they agree and that the validator still bounds the value. The latency budget measurement reported
 time-to-ready **107.38 s**; this is the only default change.
 
 **Carry-over A3 (live two-camera mapping, 2026-11-17).** With MuJoCo headless
 plus `workspace_mapper_node`: `/workspace/pointcloud` measured **2.001 Hz**
 (window min 0.488 s, max 0.504 s), `frame_id=world`, **666 points**,
 `point_step=16`. The mapper's own new per-camera counters at n=160 were
-`{'overhead': 80, 'wrist': 79}`: **both cameras are integrated**. Before Task
-10b the wrist was starved (overhead-only), so earlier Task 6 mapping claims
+`{'overhead': 80, 'wrist': 79}`: **both cameras are integrated**. Before the wrist scheduling fix the wrist was starved (overhead-only), so earlier workspace mapping claims
 that implied two-camera operation were overhead-only evidence; the corrected
 wording is in `docs/ARCHITECTURE.md`. RViz visual confirmation remains
 **PENDING** for the user.
@@ -256,8 +254,7 @@ wording is in `docs/ARCHITECTURE.md`. RViz visual confirmation remains
 docs (fetched 2026-11-17) say zero means start now. The raw
 `/vla/raw_action` convention is unchanged. Default `stale_chunk_policy=reject`:
 all-past or age over `max_chunk_age_s=0.5 s` rejects; surviving points keep
-their original offsets. `retime_if_continuous` is opt-in. With the Task 10b
-user-reported 1.88 s median / 5.90 s max calls, the default rejects essentially
+their original offsets. `retime_if_continuous` is opt-in. With the user-reported 1.88 s median / 5.90 s max calls, the default rejects essentially
 every real chunk here; the live chain will not move with the real checkpoint.
 A 50-point chunk spans 4.9 s (arithmetic estimate, not measured).
 
@@ -301,14 +298,14 @@ refusal boundary.
 `/joint_states` still has exactly one owner. Manual process starts remain a
 configuration error.
 
-**Open/pending for Task 11:** manual checkpoint (PENDING user confirmation; no
+**Open/pending for the safety stage:** manual checkpoint (PENDING user confirmation; no
 pass claimed), CI confirmation by the user in the Actions tab, RViz visual
 mapping confirmation, remote provenance (user-reported, no audited `as_used/`),
 latency runs 3/4 NOT RUN, `.venv-ml` rebuild (needs approval), MoveIt, Isaac
-Sim, and any physical bring-up (Task 12, explicit confirmation required).
+Sim, and any physical bring-up (release validation, explicit confirmation required).
 No policy-quality claim and no physical-safety claim is made.
 
-## Task 10 status: ROS 2 VLA inference node (2026-11-17)
+## VLA inference node status (2026-11-17)
 
 Implemented `vla_inference_node` (`sim2real_vla`) plus the ROS-free core in
 `src/sim2real/inference/`: observation assembly/validation, a single-slot
@@ -318,8 +315,8 @@ node never imports torch; the model stays behind `scripts/policy_server.py`.
 `/vla/status` is an additive `std_msgs/msg/String` contract. The launch default
 is `policy_backend:=fake`; nothing in this node connects to a controller.
 
-Both CI jobs for the pre-Task-10 push at `fae2724` are **user-confirmed green**
-(2026-11-17, Actions tab; supporting evidence only). The Task 10 push
+Both CI jobs for the push before the inference stage at `fae2724` are **user-confirmed green**
+(2026-11-17, Actions tab; supporting evidence only). The VLA inference node push
 (`1ed799b`) still needs the user's Actions-tab confirmation.
 
 **Measured results in this session (all local unless stated):**
@@ -350,7 +347,7 @@ MuJoCo+llvmpipe, `sim_node`'s single-slot render coordinator always starts with
 overhead, so `/camera/wrist/color/image_raw` received **0** messages (overhead
 ~4 Hz; render stats `published=1212 skipped_busy=6600`). The live check fed the
 same overhead frame to the wrist topic with an identical stamp to exercise the
-node's real sync path. This is a sim_node scheduling defect, not a Task 10
+node's real sync path. This is a sim_node scheduling defect, not an inference
 claim; it is an open item.
 
 **Optional real-checkpoint smoke (throttled, not a performance figure).**
@@ -377,12 +374,12 @@ Isaac Sim.
 
 **Open items:** the policy remains under-trained (pre-registered rule unmet);
 `.venv-ml` still holds unapproved `scipy 1.18.1` and `mujoco 4.0.1` and needs a
-clean rebuild before Task 12; `sim_node` wrist-camera starvation needs its own
+clean rebuild before final validation; `sim_node` wrist-camera starvation needs its own
 fix; the manual checkpoint below is **PENDING** user confirmation.
 
-## Task 10b status: wrist camera fix and live latency budget (2026-11-17)
+## Wrist camera fix and latency budget status (2026-11-17)
 
-**Cause (file/line evidence).** `sim_node._camera_tick` (`ros2_ws/src/sim2real_sim/sim2real_sim/sim_node.py`, Task 10 lines 318-333) looped over `contracts.CAMERAS` and called `RenderCoordinator.submit`. `RenderCoordinator` has one slot (`src/sim2real/sim/rendering.py:73-90`); the first submit sets `_busy`, so the second camera was always rejected as `skipped_busy` when a render outlasted the 0.1 s camera tick. The order was fixed (`overhead` first). Before `51fc817` (2026-10-31, `fix: submit camera renders asynchronously`) `_camera_tick` used blocking `render()` for both cameras, so both were served. The Task 2b docs' "images 2.67 Hz" and its rate test covered overhead only; they are not evidence that the wrist topic worked.
+**Cause (file/line evidence).** `sim_node._camera_tick` (`ros2_ws/src/sim2real_sim/sim2real_sim/sim_node.py`, lines 318-333) looped over `contracts.CAMERAS` and called `RenderCoordinator.submit`. `RenderCoordinator` has one slot (`src/sim2real/sim/rendering.py:73-90`); the first submit sets `_busy`, so the second camera was always rejected as `skipped_busy` when a render outlasted the 0.1 s camera tick. The order was fixed (`overhead` first). Before `51fc817` (2026-10-31, `fix: submit camera renders asynchronously`) `_camera_tick` used blocking `render()` for both cameras, so both were served. The rendering-decoupling notes' "images 2.67 Hz" and its rate test covered overhead only; they are not evidence that the wrist topic worked.
 
 **Fix.** `CameraPairScheduler` in `src/sim2real/sim/rendering.py` keeps one pending snapshot, submits at most one camera per slot, retries the same camera while the coordinator is busy, and advances only after every camera in the pair has been submitted. The first camera alternates round-robin between pairs. Both cameras therefore share the snapshot stamp. `RenderCoordinator` now also exposes per-camera `published` and `skipped_busy` counters. State/TF/joint-state publication is unchanged and remains independent of rendering; the reset quiesce clears the pending pair.
 
@@ -390,15 +387,15 @@ fix; the manual checkpoint below is **PENDING** user confirmation.
 
 **Inference on the real two-camera stream (fake policy, no shim).** 100 actions in 60 s; status `READY`; no failures/restarts; `image_pairs_received` and `observations_submitted` increased. `latency_compensation=true` published **9 points at 0.1-0.9 s**; `latency_compensation=false` published **10 points at 0.0-0.9 s**. Explanation from code: `trim_for_latency` keeps `time_from_start >= elapsed`; any positive elapsed time (even the fake call's ~0.0003 s) drops the 0.0 s point. The raw chunk still carries the observation stamp and offsets.
 
-**Latency budget.** Cold start measured directly: **77.33 s**. The approved 16-minute GPU block was hard-stopped after run 2; runs 3 and 4 are **NOT RUN**. Valid run 2 (sim_node, real server, `latency_compensation=false`, `n_action_steps=10`, 90 s after ready): time to ready **107.38 s**; chunks received/published **43/42**; stale **0**; **42** per-call latency samples; median **1.88085 s**, p95 **3.61568 s**, max **5.90400 s**; submitted/replaced **149/105**; median action interval 1.88091 s; published future fraction **0.0** (all selected points already past at publish). Run 1 (server alone, synthetic 10 Hz stream) reached ready at **74.41 s** but the synthetic stream stalled after ready (cameras stale); it produced 5 chunks (median 3.69 s, max 6.21 s) and is **not** a valid 90 s window. The earlier "21 chunks vs 53 latency samples" is reconciled as 1 Hz sampling of `last_latency_s`; the new status tracks per-call samples (42 for 43 chunks in run 2). The median 1.88 s is above the earlier 1.33-1.39 s; only the measured conditions (sim rendering/CPU contention and a longer cold start) are stated, no causal claim. Consequence: a 10-point chunk covers 0.9 s while calls took 1.88-5.90 s, so Task 11 must choose stale handling and retiming; no default or convention changed.
+**Latency budget.** Cold start measured directly: **77.33 s**. The approved 16-minute GPU block was hard-stopped after run 2; runs 3 and 4 are **NOT RUN**. Valid run 2 (sim_node, real server, `latency_compensation=false`, `n_action_steps=10`, 90 s after ready): time to ready **107.38 s**; chunks received/published **43/42**; stale **0**; **42** per-call latency samples; median **1.88085 s**, p95 **3.61568 s**, max **5.90400 s**; submitted/replaced **149/105**; median action interval 1.88091 s; published future fraction **0.0** (all selected points already past at publish). Run 1 (server alone, synthetic 10 Hz stream) reached ready at **74.41 s** but the synthetic stream stalled after ready (cameras stale); it produced 5 chunks (median 3.69 s, max 6.21 s) and is **not** a valid 90 s window. The earlier "21 chunks vs 53 latency samples" is reconciled as 1 Hz sampling of `last_latency_s`; the new status tracks per-call samples (42 for 43 chunks in run 2). The median 1.88 s is above the earlier 1.33-1.39 s; only the measured conditions (sim rendering/CPU contention and a longer cold start) are stated, no causal claim. Consequence: a 10-point chunk covers 0.9 s while calls took 1.88-5.90 s, so the safety watchdog must choose stale handling and retiming; no default or convention changed.
 
 **Colcon visibility.** Root cause: `colcon`'s pytest extension only matches when the package declares a pytest test dependency; otherwise it runs `python -m unittest`, which emits no xunit. Added `tests_require`/`extras_require={"test": ["pytest"]}` and a package-local `pytest.ini`; `colcon test-result` now reads `build/sim2real_vla/pytest.xml` and reports **13 tests / 0 failures** (6 msgs + 1 CTest + 6 vla).
 
 **Test counts (measured, sklearn absent in the core `.venv`):** core **608 passed / 0 failed / 20 skipped / 0 errors**; `.venv-ros` **627 / 0 / 6 / 0**; colcon **13 / 0 / 0 / 0**; `run_ml_tests.sh` **4 passed / 1 deselected**; `ci_parity` **606 / 22**; `ci_parity --clean-clone` **605 passed / 23 skipped** (one extra `.venv-ml`-absent skip). New tests cover the pair scheduler, per-camera fairness, reset clearing, per-call latency/future-fraction summaries, time-to-ready, and the node status fields.
 
-**Unverified:** remote provenance (user-reported; no `as_used/`); ros2_controllers `JointTrajectoryController` timing semantics (not fetched); MoveIt; Isaac Sim. **Open:** policy remains under-trained; `.venv-ml` still has unapproved `scipy 1.18.1`/`mujoco 4.0.1` and needs a clean rebuild before Task 12; manual checkpoint PENDING.
+**Unverified:** remote provenance (user-reported; no `as_used/`); ros2_controllers `JointTrajectoryController` timing semantics (not fetched); MoveIt; Isaac Sim. **Open:** policy remains under-trained; `.venv-ml` still has unapproved `scipy 1.18.1`/`mujoco 4.0.1` and needs a clean rebuild before final validation; manual checkpoint PENDING.
 
-## Documented exception for starting Task 10
+## Documented exception for starting the VLA inference node
 
 The pre-registered overfit decision rule (`docs/TRAINING.md` section 17,
 `configs/evaluation/overfit_rule.yaml`) has **NOT** been met. Facts verified
@@ -409,10 +406,10 @@ unless `outputs/remote/overfit_remote/as_used/` exists, and it does not):
 first-step L1 **0.00688 m** (bar 0.005: FAIL), first-10-beats-hold fraction
 **1.0** (PASS), gripper clip delta **0.00170 m** (PASS). Closed loop on recorded
 training seeds 10000/10004, 3 repeats each: **0/6 success, 6/6 TIMEOUT**.
-Earlier results: the 9b policy "1/30" was a success-definition false positive
+Earlier results: the real-checkpoint policy "1/30" was a success-definition false positive
 (effective **0/30**); the real 1,000-step full-data checkpoint was **0/4** on
 training seeds. The instruction effect on the output is below sampling noise
-(9e). The local GPU is capped at **210 MHz**; local timings are **"throttled, not
+(GPU gate). The local GPU is capped at **210 MHz**; local timings are **"throttled, not
 a performance figure"**. Measured model load **34.71 s**; median policy call
 about **1.33-1.39 s** on that throttled GPU.
 
@@ -424,7 +421,7 @@ is expected to fail the task; (2) nothing may be described as "the VLA controls
 the robot successfully"; (3) the pre-registered rule is unchanged and still
 unmet; (4) retraining remains an open item.
 
-## Task 9i status: first remote overfit result interpreted (2026-11-17)
+## Remote overfit result status (2026-11-17)
 
 - **POLICY_ERROR cause:** environment/harness timeout, not policy output. All
   six closed-loop records (`eval_closed_loop_seed20000`, `..._seed20004`) have
@@ -451,7 +448,7 @@ unmet; (4) retraining remains an open item.
 - **Deviations:** the d7a0c90 remote run patched the clock gate, edited
   `requirements.txt` and the MANIFEST hash, used a `uv` Python, and used
   `skip-worktree`; therefore `git_dirty=false` does **not** prove the code
-  matched `d7a0c90`. Full table in `docs/REMOTE_TRAINING.md` "Task 9i".
+  matched `d7a0c90`. Full table in `docs/REMOTE_TRAINING.md` "Remote overfit result".
 - **Local environment deviation:** `.venv-ml` contains `scipy 1.18.1` and
   `mujoco 4.0.1` (+ `mujoco-core`, `mujoco-studio`, `mujoco-studio-wasm`).
   These were **unapproved local installs** made during the remote-overfit
@@ -460,7 +457,7 @@ unmet; (4) retraining remains an open item.
   with `scipy`/`mujoco`/`open3d` blocked and `PYTHONPATH=src`, which proves
   import independence for those paths only; a clean rebuild from
   `scripts/setup_envs.sh --with-ml` is required before final validation
-  (Task 12) and needs separate approval. `scripts/setup_envs.sh` was not
+  (pipeline orchestrator) and needs separate approval. `scripts/setup_envs.sh` was not
   modified.
 - **Gate 0 note:** an untracked copy of the overfit config was found at the repo
   root, byte-identical to `configs/training/smolvla_lora_overfit_remote.yaml`
@@ -478,11 +475,11 @@ unmet; (4) retraining remains an open item.
   `max_steps` 1,000 -> 2,000 at the same lr/batch. Estimated 0.023 rad
   single-sample L1 at 2,000 steps (probably still above 0.010) and ~40.3 min on
   the measured 1.21 s/step T4 rate; both are estimates.
-- **Task 10 was started under the documented exception below.** Criteria fail,
+- **Inference work was started under the documented exception below.** Criteria fail,
   the loop is 0/6 on training seeds, and the run carried protocol overrides.
   The pre-registered rule and bars were not edited.
 
-## Authoritative bundle after Task 9i
+## Authoritative bundle after the remote overfit analysis
 
 `outputs/remote_bundle/sim2real_remote_3ddf112_20261117T084815Z.tar.gz`:
 **95,934,401 bytes**, sha256
@@ -495,7 +492,7 @@ wheel index is a documented line). The sidecar is
 install/download/training). The superseded d7a0c90 archive is kept for the
 provenance record and must not be used for new runs.
 
-## Task 9h GPU gate and branch R status (2026-11-15)
+## GPU gate and branch R status (2026-11-15)
 
 - Both CI jobs for `d7a0c90` are **user-confirmed green** (2026-11-15,
   Actions tab); the author also observed run `43717234280` with both jobs
@@ -514,10 +511,10 @@ provenance record and must not be used for new runs.
   Requires-Python `>=3.12`, GPU/driver printed, no install/download/training.
 - `scripts/ci_parity.sh --clean-clone` was added and passed; the flag is
   covered by a test.
-- Task 10 was subsequently started under the documented exception (the rule is
+- Inference work was subsequently started under the documented exception (the rule is
   still unmet and retraining is open).
 
-## Task 9g cleanup-and-hardening status (2026-11-15)
+## Cleanup-and-hardening status (2026-11-15)
 
 - The user confirmed **both CI jobs green** for the 9f push at `b620c91`
   (supporting evidence only; confirmed in the Actions tab).
@@ -537,7 +534,7 @@ provenance record and must not be used for new runs.
   and the repo.bundle hash.
 - The 9f archive extracts to exactly `data/` and `outputs/`; its payload is
   `outputs/remote_bundle_payload/`. The old archive was rejected by the new
-  `--check-only` because its manifest lacks `python.major_minor`; the Task 9g
+  `--check-only` because its manifest lacks `python.major_minor`; the bundle hardening
   rebuild fixes that.
 - The verifier on the real `checkpoint-00001000` correctly refused it: the old
   checkpoint metadata has no `adapter_hash` field (created before the field
@@ -550,7 +547,7 @@ provenance record and must not be used for new runs.
 - Action parameterization statistics are documented as a hypothesis only: arm
   delta std is **0.13-0.38x** the absolute-action std, but nothing was changed.
 
-## Task 9f-remote status (2026-11-13)
+## Remote bundle status (2026-11-13)
 
 Part A (first-chunk error analysis) is complete. Part B (bundle, remote script,
 local verifier, tests) is implemented but no remote run was executed. Part C
@@ -571,15 +568,15 @@ per-step motion. Details and full per-dimension tables are in
 
 ## Remote bundle
 
-**Superseded (Task 9g, kept for the provenance record; do not use for new
+**Superseded (bundle hardening, kept for the provenance record; do not use for new
 runs):** `outputs/remote_bundle/sim2real_remote_d7a0c90_20261115T131152Z.tar.gz`,
 **95,909,403 bytes (91.47 MiB)**, sha256
 `658df5514c7345c97343fc0dc6681f6d3d6adc5367a12a6f4660f4d0770afe4e`, MANIFEST
 commit `d7a0c90c4077a8f9bf4ffbbe79aa841c1b0f51a5`. It is the archive the first
-remote run used (with the local edits listed in the Task 9i deviations table).
+remote run used (with the local edits listed in the remote overfit analysis deviations table).
 `c3802a5` is also superseded.
 
-The current authoritative archive is the Task 9i bundle listed above
+The current authoritative archive is the remote overfit analysis bundle listed above
 (`sim2real_remote_3ddf112_20261117T084815Z.tar.gz`). The remote checks out the
 **MANIFEST commit**, not the repository HEAD, so later docs-only commits are
 safe. An archive contains the full 40-episode `train_v1` dataset, the training
@@ -591,7 +588,7 @@ MANIFEST with every file hash. No model weights or HF cache are included.
 
 - [x] Run the overfit protocol on a remote GPU; `RUN_REPORT.json` and the
   checkpoint folder were returned (2026-11-16, user-reported T4) with protocol
-  overrides; see Task 9i.
+  overrides; see the remote overfit analysis.
 - [x] Verify the returned checkpoint locally with
   `scripts/verify_remote_checkpoint.py` (CPU handshake): `checkpoint verified`,
   all 10 metadata/adapter hashes match `RUN_REPORT.json`.
@@ -599,20 +596,20 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   `configs/evaluation/overfit_rule.yaml` (overall FAIL: arm 0.0333, gripper
   0.00688 m) and the closed loop on the training seeds (0/6, all TIMEOUT).
 - [x] Implement `vla_inference_node`, its ROS-free inference core, launch/config,
-  contract/QoS rows, and CPU/ROS tests (Task 10).
+  contract/QoS rows, and CPU/ROS tests (inference node).
 - [x] Run the core, `.venv-ros`, colcon, ML, CI-parity, clean-clone, and
   fake-backend live graph checks; record the real-checkpoint smoke above.
 - [x] Fix the sim_node wrist starvation fairly, prove both cameras and same-stamp
   pairs live, add deterministic scheduler/reset tests, and measure the 20 Hz
-  control rate 3/3 (Task 10b).
+  control rate 3/3 (latency measurement).
 - [x] Add per-call latency/future-fraction and `time_to_ready_s` status fields;
   measure one valid real-checkpoint run (run 2) and record runs 3/4 as NOT RUN
   under the approved 16-minute hard stop.
 - [x] Make colcon count the `sim2real_vla` tests (13 tests / 0 failures).
-- [ ] **Task 10 manual checkpoint (PENDING user confirmation):** inspect both
+- [ ] **VLA inference node manual checkpoint (PENDING user confirmation):** inspect both
   cameras, `/vla/status`, `/vla/raw_action`, and server-kill recovery with the
   commands in `docs/VLA_INFERENCE.md`. Do not mark this passed without the user.
-- [ ] **Task 11 manual checkpoint (PENDING user confirmation):** run the mock
+- [ ] **Safety watchdog manual checkpoint (PENDING user confirmation):** run the mock
   stack and fake chunk publisher, observe `/safety/status`, trigger `/estop`,
   try `/estop_reset` immediately (expect refusal) and after the hold (expect
   success), stop the map publisher and observe UNSAFE, and (if RViz is
@@ -620,28 +617,28 @@ MANIFEST with every file hash. No model weights or HF cache are included.
   `docs/SAFETY.md` and `docs/STATUS.md`; do not mark this passed without the
   user.
 - [ ] **Decision needed:** keep `obstacle_mode: strict` as the default (shipped
-  now) or make `masked` the default. Strict rejects 10/40 Task 11 chunks;
+  now) or make `masked` the default. Strict rejects 10/40 safety chunks;
   masked rejects 0/40 on both seed sets, but it deliberately ignores the
   commanded target object inside its approach radius. Do not change the default
   without the user's explicit yes.
 - [ ] Confirm this push's GitHub Actions tab (supporting evidence only; the user
-  confirms the Actions tab). Task 11b CI is not yet confirmed.
+  confirms the Actions tab). The obstacle-mode measurement CI is not yet confirmed.
 - [ ] RViz visual confirmation of `/workspace/pointcloud` with both cameras
   (PENDING; the headless 2.001 Hz / 666-point / both-camera check passed).
 - [ ] Run the prepared 2,000-step follow-up
   (`configs/training/smolvla_lora_overfit_remote_2000.yaml`) on a GPU that
-  passes the clock/memory gate; not run and not uploaded in Task 9i.
+  passes the clock/memory gate; not run and not uploaded in the remote overfit analysis.
 - [ ] Rebuild `.venv-ml` from `scripts/setup_envs.sh --with-ml` before final
   validation (removes the unapproved scipy/mujoco installs); needs approval.
-- [x] Task 10 interpretation: **started under the documented exception**. Criteria
+- [x] Inference interpretation: **started under the documented exception**. Criteria
   1-3 fail, the closed loop is 0/6 on training seeds, and the run carried
   protocol overrides; the rule remains unmet.
 
 ## GPU finding
 
-The local RTX 4050 Laptop is degraded. The Task 9h 60 s matmul gate measured
+The local RTX 4050 Laptop is degraded. The GPU gate measured
 **210/210/210 MHz** SM (min/median/max), **4.68/7.17/7.25 W**, **54/56/57 C**,
-throttle **`0x24`** on 30/30 samples. Task 9e/9f measured the same 210 MHz
+throttle **`0x24`** on 30/30 samples. The GPU health gate and remote-bundle checks measured the same 210 MHz
 signature. Treat the local GPU as degraded: short inference diagnostics only;
 every timing is labelled **"throttled, not a performance figure"**. No local
 training.
