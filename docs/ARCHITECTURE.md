@@ -19,8 +19,9 @@ length, limit margins, collision runs, a deterministic acceptance engine, and
 Open3D TSDF map, a coarse robot self-filter, `/workspace/pointcloud`, a
 `TRIANGLE_LIST` mesh Marker, `/workspace/reset_map`, and a vectorized
 obstacle-distance query. Task 7 adds the LeRobot v3 writer and Open X/Bridge
-fixture adapter; real Bridge data, training, inference, and safety remain
-unimplemented. Isaac Sim is **UNAVAILABLE on this machine**
+fixture adapter; real Bridge data, physical deployment, and the Task 12
+orchestrator remain unimplemented. Training (Task 8), inference (Task 10), and
+the safety watchdog (Task 11) are implemented. Isaac Sim is **UNAVAILABLE on this machine**
 (requirements-based, not tested); MoveIt 2 is **not installed** and its planner
 adapter is an unexercised guard.
 
@@ -244,7 +245,7 @@ ROS adapter rules:
 | `sim2real_msgs` | `ament_cmake` | Messages/services for episodes, metrics, safety, reset, rollout generation | interfaces defined; builds if ROS deps present |
 | `sim2real_sim` | `ament_python` | Simulator backend adapter, `/joint_states` owner, reset service | **implemented** (fake, MuJoCo, guarded Isaac) |
 | `sim2real_perception` | `ament_python` | RGB-D mapping, point cloud, TSDF mesh publication | **implemented** (workspace mapper) |
-| `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node; skeleton otherwise) |
+| `sim2real_vla` | `ament_python` | Task instruction intake, asynchronous policy inference, raw action chunk publication | **implemented** (Task 10 inference node) |
 | `sim2real_control` | `ament_python` | Safety watchdog, final trajectory dispatch, e-stop services, mock-hardware launch | **implemented** (Task 11; mock hardware only, no physical safety claim) |
 
 ## Data flow
@@ -922,6 +923,16 @@ indexed, and publishes no map if the cloud is malformed. Only the TCP point is
 checked: no whole-arm, swept-volume, or self-collision check. The table and
 manipulated object are in the map; the measured expert false-positive result is
 in `docs/SAFETY.md`.
+
+`obstacle_mode` is `strict` (default) or `masked`. Strict keeps the Task 11
+2 cm grid-EDT distance. Masked is an opt-in accuracy mode: it computes the
+exact distance to the surface points, ignores points within
+`table_mask_band_m` of `table_surface_z_m`, and ignores points of the
+commanded target object inside `target_allowance_radius_m` of its centre. The
+target object comes from `/task_instruction` parsed against
+`configs/sim/scene.yaml`; without a resolvable target, masked does exact
+distance + table masking only. The 1 cm threshold is unchanged; default stays
+strict until the user approves otherwise.
 
 ### Mock control stack
 
@@ -1813,6 +1824,8 @@ Apache-2.0 LICENSE before copying.
 | 75 | 2026-11-17 | `ESTOP` latches; reset requires fresh valid inputs for `estop_reset_hold_s` since the e-stop and no other unsafe condition | A single service call must not clear a stop while the map/joint state is stale. Reset commands no motion; a new validated chunk is required |
 | 76 | 2026-11-17 | `/joint_states` has one owner; launch files refuse `sim_node` + `ros2_control` | Two reliable publishers corrupt state estimation for every consumer. The guard is tested; manual process starts remain a configuration error |
 | 77 | 2026-11-17 | Map query grid is expanded by one cell; point cloud is frame `world` and rejected otherwise | Float32 table-top points sit a few microns below `z=0.42`; expanding the query grid keeps them indexed. The mapper already publishes `world`, so rejecting a different frame is smaller and clearer than adding an unexercised tf2 path |
+| 78 | 2026-11-18 | The default obstacle gate stays `strict`; `masked` is opt-in | Strict still rejects the 10/40 Task 11 chunks. Masked removes all 40/40 false positives on both the original and held-out seed sets with the same 1 cm threshold. The user must approve any default change after seeing the measured table |
+| 79 | 2026-11-18 | Masked mode uses exact surface distance + table band + target-object allowance, not a smaller threshold | The Task 11 rejections were the target cube, and the 2 cm EDT reported 0.0 for a TCP 1.86-1.97 cm from the surface. The measured minimum clearance is 4.51 mm; a 4 mm threshold would pass but would also allow an unexpected object at 4.4 mm. Exact distance plus a task-conditioned target exception keeps the 1 cm threshold for everything else |
 
 ## Interface changelog
 

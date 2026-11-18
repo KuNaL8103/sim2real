@@ -80,6 +80,7 @@ class ObstacleQuery:
         )
         self._occupied = np.zeros(self.shape, dtype=bool)
         points = np.asarray(occupied_points, dtype=np.float64).reshape(-1, 3)
+        self._points = np.array(points, dtype=np.float64, copy=True)
         if len(points):
             indices, outside = self._index(points)
             inside = ~outside
@@ -147,6 +148,15 @@ class ObstacleQuery:
             coverage_ratio=1.0 if valid else 0.0,
             reasons=() if valid else (NO_DATA,),
         )
+
+    @property
+    def points(self) -> np.ndarray:
+        """The input surface points, for exact-distance checks.
+
+        The grid EDT is deliberately quantised; the masked safety mode needs
+        the actual points so a 1 cm threshold is not dominated by a 2 cm cell.
+        """
+        return self._points
 
     @property
     def occupied_cells(self) -> int:

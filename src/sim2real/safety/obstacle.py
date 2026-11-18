@@ -45,11 +45,39 @@ def _reason_for_status(status: MapStatus) -> str:
     return MAP_UNAVAILABLE
 
 
+def _masked_distance(
+    ee: np.ndarray,
+    query: ObstacleQuery,
+    config: SafetyConfig,
+    target_center_m: np.ndarray | None,
+    target_half_extent_m: float | None,
+) -> float:
+    points = query.points
+    if points.size == 0:
+        return float("nan")
+    keep = np.abs(points[:, 2] - config.table_surface_z_m) > config.table_mask_band_m
+    masked = points[keep]
+    if (
+        target_center_m is not None
+        and target_half_extent_m is not None
+        and np.linalg.norm(ee - target_center_m) <= config.target_allowance_radius_m
+    ):
+        half = float(target_half_extent_m) + config.target_allowance_margin_m
+        inside = np.all(np.abs(masked - target_center_m) <= half, axis=1)
+        masked = masked[~inside]
+    if masked.size == 0:
+        return float("nan")
+    return float(np.min(np.linalg.norm(masked - ee, axis=1)))
+
+
 def check_obstacle_distance(
     ee_positions: np.ndarray,
     query: ObstacleQuery | None,
     status: MapStatus | None,
     config: SafetyConfig,
+    *,
+    target_center_m: np.ndarray | None = None,
+    target_half_extent_m: float | None = None,
 ) -> ObstacleCheck:
     """Return the minimum end-effector clearance and whether it is safe.
 
@@ -105,19 +133,46 @@ def check_obstacle_distance(
             )
         return ObstacleCheck(True, None, float("nan"), False, "low coverage but not required")
 
-    distances = query.distance(points)
-    if np.any(query.outside_workspace(points)):
-        # A query outside the mapped grid is a clamp, not proof of clearance.
-        return ObstacleCheck(
-            False,
-            OUTSIDE_MAP,
-            float(np.min(distances)),
-            False,
-            "end effector outside the mapped workspace",
+    if config.obstacle_mode == "masked":
+        masked_distances = np.array(
+            [
+                _masked_distance(ee, query, config, target_center_m, target_half_extent_m)
+                for ee in points
+            ],
+            dtype=np.float64,
         )
+        if not np.all(np.isfinite(masked_distances)):
+            return ObstacleCheck(
+                False,
+                MAP_NO_DATA,
+                float("nan"),
+                False,
+                "masked mode left no map points to check",
+            )
+        if np.any(query.outside_workspace(points)):
+            return ObstacleCheck(
+                False,
+                OUTSIDE_MAP,
+                float(np.min(masked_distances)),
+                False,
+                "end effector outside the mapped workspace",
+            )
+        clearance = masked_distances - config.obstacle_safety_radius_m
+        minimum = float(np.min(clearance))
+    else:
+        distances = query.distance(points)
+        if np.any(query.outside_workspace(points)):
+            # A query outside the mapped grid is a clamp, not proof of clearance.
+            return ObstacleCheck(
+                False,
+                OUTSIDE_MAP,
+                float(np.min(distances)),
+                False,
+                "end effector outside the mapped workspace",
+            )
+        clearance = distances - config.obstacle_safety_radius_m
+        minimum = float(np.min(clearance))
 
-    clearance = distances - config.obstacle_safety_radius_m
-    minimum = float(np.min(clearance))
     if minimum < config.min_obstacle_distance_m:
         return ObstacleCheck(
             False,

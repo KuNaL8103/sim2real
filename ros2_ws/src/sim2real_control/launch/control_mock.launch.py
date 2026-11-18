@@ -33,8 +33,12 @@ def _launch(context):
     sim_share = get_package_share_directory("sim2real_sim")
     urdf_path = os.path.join(control_share, "urdf", "panda_mock.urdf")
     controllers = os.path.join(control_share, "config", "ros2_control.yaml")
-    safety_config = os.path.join(control_share, "config", "default.yaml")
+    safety_config = context.perform_substitution(
+        LaunchConfiguration("safety_config")
+    ) or os.path.join(control_share, "config", "default.yaml")
     panda_config = os.path.join(sim_share, "config", "panda.yaml")
+    sim_config_dir = os.path.join(sim_share, "config")
+    instructions_config = os.path.join(sim_share, "expert", "instructions.yaml")
     with open(urdf_path, encoding="utf-8") as handle:
         robot_description = handle.read()
 
@@ -67,7 +71,14 @@ def _launch(context):
         executable="safety_watchdog_node",
         name="safety_watchdog_node",
         output="screen",
-        parameters=[{"config_file": safety_config, "panda_config": panda_config}],
+        parameters=[
+            {
+                "config_file": safety_config,
+                "panda_config": panda_config,
+                "sim_config_dir": sim_config_dir,
+                "instructions_config": instructions_config,
+            }
+        ],
     )
     return [
         controller_manager,
@@ -85,6 +96,11 @@ def generate_launch_description() -> LaunchDescription:
                 "start_sim",
                 default_value="false",
                 description="Must stay false; sim_node and ros2_control cannot share /joint_states",
+            ),
+            DeclareLaunchArgument(
+                "safety_config",
+                default_value="",
+                description="Optional safety YAML; empty uses the installed default",
             ),
             OpaqueFunction(function=_launch),
         ]

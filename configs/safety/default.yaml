@@ -30,6 +30,21 @@ safety:
   min_obstacle_distance_m: 0.01
   obstacle_safety_radius_m: 0.0
 
+  # `strict` keeps the Task 11 grid-EDT gate. `masked` is an opt-in accuracy
+  # mode: it uses the exact surface-point distance (the 2 cm EDT cell can report
+  # 0.0 for a TCP 2 cm from a surface), ignores table-plane points inside the
+  # band, and can ignore the commanded target object inside its approach volume.
+  # The target allowance is only used when a target object is known from
+  # /task_instruction; without one, masked still does exact-distance + table mask.
+  obstacle_mode: strict
+  # Table top = 0.40 + 0.04/2 = 0.42 m from configs/sim/scene.yaml.
+  table_surface_z_m: 0.42
+  table_mask_band_m: 0.01
+  # Target-object allowance: exclude points within (half extent + margin) of the
+  # commanded target object's centre while the TCP is within this radius.
+  target_allowance_margin_m: 0.01
+  target_allowance_radius_m: 0.05
+
   # An unavailable/stale/low-coverage map is unsafe. The mapper publishes at
   # 2 Hz; 2 s allows for a brief scheduling gap but fails a dead publisher.
   map_required: true

@@ -58,10 +58,32 @@ def _duration(seconds: float) -> Duration:
     return Duration(sec=ns // 10**9, nanosec=ns % 10**9)
 
 
-def _table_cloud() -> PointCloud2:
+def _table_points() -> np.ndarray:
     xs = np.arange(0.26, 0.65, 0.02)
     ys = np.arange(-0.28, 0.29, 0.02)
-    points = np.array([[x, y, 0.43] for x in xs for y in ys], dtype=np.float64)
+    return np.array([[x, y, 0.43] for x in xs for y in ys], dtype=np.float64)
+
+
+def _block_points(center: np.ndarray, half: float = 0.01) -> np.ndarray:
+    axis = np.linspace(-half, half, 3)
+    points = []
+    x, y, z = center
+    for u in axis:
+        for v in axis:
+            points.extend(
+                [
+                    [x + u, y + v, z + half],
+                    [x + u, y + v, z - half],
+                    [x + u, y + half, z + v],
+                    [x + u, y - half, z + v],
+                    [x + half, y + u, z + v],
+                    [x - half, y + u, z + v],
+                ]
+            )
+    return np.asarray(points, dtype=np.float64)
+
+
+def _pointcloud(points: np.ndarray) -> PointCloud2:
     data = build_pointcloud2(points, frame_id=contracts.WORLD_FRAME, stamp_ns=time.time_ns())
     message = PointCloud2()
     message.header.stamp = _stamp(data.stamp_ns)
@@ -91,6 +113,20 @@ def main() -> int:
         help="publish fake camera streams for the fake inference backend; do not publish chunks",
     )
     parser.add_argument("--task-instruction", type=str, default="")
+    parser.add_argument(
+        "--cloud-file",
+        type=str,
+        default="",
+        help="optional .npz with a 'points' array; replaces the synthetic table",
+    )
+    parser.add_argument(
+        "--inject-block",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="add a 2 cm surface block at this point after --inject-after-s",
+    )
+    parser.add_argument("--inject-after-s", type=float, default=10.0)
     args = parser.parse_args()
 
     rclpy.init()
@@ -128,13 +164,28 @@ def main() -> int:
         instruction = String()
         instruction.data = args.task_instruction
         instruction_pub.publish(instruction)
+    base_points = _table_points()
+    if args.cloud_file:
+        base_points = np.load(args.cloud_file)["points"]
+    inject_center = (
+        None if args.inject_block is None else np.asarray(args.inject_block, dtype=float)
+    )
     next_camera = time.monotonic()
+    next_instruction = time.monotonic()
     start = time.monotonic()
     next_chunk = start + 1.0
     try:
         while time.monotonic() - start < args.duration_s:
-            map_pub.publish(_table_cloud())
             now = time.monotonic()
+            points = base_points
+            if inject_center is not None and now - start >= args.inject_after_s:
+                points = np.vstack([base_points, _block_points(inject_center)])
+            map_pub.publish(_pointcloud(points))
+            if args.task_instruction and now >= next_instruction:
+                instruction = String()
+                instruction.data = args.task_instruction
+                instruction_pub.publish(instruction)
+                next_instruction = now + 1.0
             if camera_pubs and now >= next_camera:
                 stamp_ns = time.time_ns()
                 for camera, color_pub, depth_pub, info_pub in camera_pubs:
@@ -165,7 +216,10 @@ def main() -> int:
                     depth_pub.publish(depth)
                     info_pub.publish(info)
                 next_camera = now + 0.1
-            executor.spin_once(timeout_sec=0.02)
+            try:
+                executor.spin_once(timeout_sec=0.02)
+            except Exception:
+                break
             if args.cameras or latest["joint"] is None or time.monotonic() < next_chunk:
                 continue
             status = latest["status"]

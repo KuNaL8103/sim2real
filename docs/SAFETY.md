@@ -1,6 +1,6 @@
 # Safety
 
-## Status (Task 11)
+## Status (Task 11 and 11b)
 
 The software safety watchdog and a **mock-hardware** control stack are
 implemented. The watchdog is the only component allowed to forward
@@ -148,14 +148,84 @@ The table and the manipulated object appear in the map. A naive threshold can
 reject a legitimate grasp, so the default threshold is deliberately small
 (1 cm) and the effect is measured rather than assumed.
 
-**Measured effect (Task 11 H21, seeds 20900-20909, fake backend, synthetic
-table + cube map):** 40 chunks from 10 clean expert episodes; **10 rejected**,
-all with `OBSTACLE_TOO_CLOSE` (one chunk per episode, at the grasp/place
-approach). Nine-tenths of the clean chunks passed. The limits were **not**
-loosened to make the check pass. The rejected chunks are a real limitation of a
-TCP-only 1 cm gate near the manipulated object; options are to mask the known
-grasp volume, use a smaller approach radius, or add a real collision model.
-Each option changes what the safety layer can claim and needs review.
+**Task 11 H21 result (synthetic map, kinematic fake backend).** The Task 11
+check used a **synthetic** point map (600 table points + 450 cube-surface
+points) and the `FakeBackend` expert, not the real mapper cloud. Seeds
+20900-20909, 40 chunks: **10 rejected**, all `OBSTACLE_TOO_CLOSE`. Every
+rejection was chunk window 1 (start step 20) and the same TCP: the target red
+cube. The 2 cm query grid reported **0.0 m** at command point 0 because the TCP
+at the cube centre shared an occupied cell. The exact surface distance at that
+point was **0.01861 m**; the closest exact point in the chunk was **0.00451 m**
+at command point 6 during lift (finger target 0.00063 m). The nearest point was
+always the target cube, never the table: nearest non-table `0.01861 m`, nearest
+excluding the target cube `0.03525 m` (point 0). The table was not the cause.
+
+**Real mapper cloud (2026-11-18, MuJoCo headless + workspace mapper, 60 s).**
+667 points, frame `world`; z min/median/max **0.41994 / 0.419996 / 0.74742 m**;
+**81.7%** of points within 5 mm and **84.9%** within 20 mm of the table plane
+z=0.42; x extent **0.265-0.645 m**, y extent **-0.265-0.275 m**. Cube points
+were present near the red (33 within 3 cm, min 0.02069 m) and blue (10, min
+0.02149 m); the green cube had none within 3 cm (min 0.03242 m). Mapper
+per-camera counters at n=280 were **overhead 140 / wrist 139**. The mapper
+self-filter leaves some robot points (z up to 0.747), so the real cloud is not
+just the table and cubes.
+
+For the real cloud and the same expert grasp TCP
+`[0.44977, -0.11995, 0.44139]`: exact nearest **0.01974 m** (red cube);
+table-masked exact **0.01974 m**; target-cube-excluded exact **0.02248 m**;
+both **0.02248 m**. The 2 cm grid reported **0.0 m**, 1 cm grid **0.010 m**
+(borderline), 5 mm grid **0.01581 m**. The strict grid is a quantisation
+problem, not a table problem.
+
+**Measured strict vs masked (Task 11b, fake backend, synthetic map):**
+
+| seed set | strict accepted/rejected | masked accepted/rejected |
+| --- | --- | --- |
+| 20900-20909 | **30 / 10** (all `OBSTACLE_TOO_CLOSE`) | **40 / 0** |
+| 20910-20919 (held-out) | **30 / 10** (all `OBSTACLE_TOO_CLOSE`) | **40 / 0** |
+
+**Options evaluated.**
+
+- (a) Table-plane masking alone: with the existing grid it still rejects
+  10/40; with exact distance it also rejects 10/40 because the target cube is
+  the nearest point. Not sufficient alone.
+- (b) Task-conditioned target-object allowance: excluding only the commanded
+  target object inside its approach volume removes all 10 rejections. The
+  originally suggested "finger above a value" gate would **not** fix the lift
+  point (finger 0.00063 m at command point 6), so the implemented allowance
+  uses the target object's identity and proximity, not finger opening.
+- (c) Smaller `min_obstacle_distance_m`: the minimum clearance the expert needs
+  is **4.51 mm**; a 4 mm threshold would pass. That is a blind global
+  relaxation (an unexpected object at 4.4 mm would pass) and was not chosen.
+- (d) **Chosen: `obstacle_mode: masked`** — exact surface-point distance (not
+  the 2 cm EDT cell), table points inside `table_mask_band_m` ignored, and the
+  known target object ignored only inside `target_allowance_radius_m` of its
+  centre. The threshold remains **1 cm**. Default stays `strict`.
+
+**Injected obstacle test:** a 2 cm surface block at 2, 5, and 9 mm from the TCP
+is rejected in **both** strict and masked modes. At 12 mm it is outside the
+1 cm threshold and passes, as specified. The target-object exception is
+deliberate: an unexpected object **at the target object's configured volume**
+would be allowed; an object elsewhere near the TCP is not.
+
+**Live re-check (2026-11-18, no GPU).** The mock control stack + safety node +
+`vla_inference_node policy_backend:=fake` + the saved real cloud (published as
+a test-only fake map; `sim_node` did **not** run with the broadcaster) was run
+in both modes. Strict: **108** forwarded commands before the injected block,
+**0** after; last reason `OBSTACLE_TOO_CLOSE`, min distance **0.0**. Masked:
+**112** before, **0** after; min distance **0.0040 m**. The strict count is
+higher than masked in this run only because of scheduling; both forwarded real
+commands before injection and stopped after. The saved cloud is not a
+substitute for live mapping; it is the measured cloud replayed for the
+single-owner-safe check.
+
+The map is a surface TSDF; it does not carve free space, and a moved object
+leaves a ghost until reset.
+
+**Rate-test note.** Task 11 A1 lowered the sim-node rate-test floor from
+**16 Hz** (0.8 x 20) to **8 Hz** (0.4 x 20) for load robustness after the test
+measured **20.00 Hz in 10/10 isolated runs**. The 8 Hz floor still catches the
+documented 1.87-3.28 Hz and 4.98-6.5 Hz starvation regressions.
 
 The map is a surface TSDF; it does not carve free space, and a moved object
 leaves a ghost until reset.

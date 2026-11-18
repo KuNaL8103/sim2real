@@ -27,6 +27,7 @@ from sim2real.sim.config import PandaConfig, load_panda_config
 SCHEMA_VERSION = 1
 STALE_POLICIES = ("reject", "retime_if_continuous")
 COMMAND_TIME_CONVENTIONS = ("zero_stamp_now_plus_dt",)
+OBSTACLE_MODES = ("strict", "masked")
 
 
 class SafetyConfigError(ValueError):
@@ -115,6 +116,11 @@ class SafetyConfig:
     safety_frame: str
     min_obstacle_distance_m: float
     obstacle_safety_radius_m: float
+    obstacle_mode: str
+    table_surface_z_m: float
+    table_mask_band_m: float
+    target_allowance_margin_m: float
+    target_allowance_radius_m: float
     map_required: bool
     max_map_age_s: float
     min_map_coverage_ratio: float
@@ -179,6 +185,11 @@ class SafetyConfig:
             "safety_frame": self.safety_frame,
             "min_obstacle_distance_m": self.min_obstacle_distance_m,
             "obstacle_safety_radius_m": self.obstacle_safety_radius_m,
+            "obstacle_mode": self.obstacle_mode,
+            "table_surface_z_m": self.table_surface_z_m,
+            "table_mask_band_m": self.table_mask_band_m,
+            "target_allowance_margin_m": self.target_allowance_margin_m,
+            "target_allowance_radius_m": self.target_allowance_radius_m,
             "map_required": self.map_required,
             "max_map_age_s": self.max_map_age_s,
             "min_map_coverage_ratio": self.min_map_coverage_ratio,
@@ -287,6 +298,13 @@ def _from_mapping(data: dict[str, Any], panda: PandaConfig, path: str) -> Safety
         safety_frame=text("safety_frame"),
         min_obstacle_distance_m=number("min_obstacle_distance_m", minimum=0.0),
         obstacle_safety_radius_m=number("obstacle_safety_radius_m", minimum=0.0),
+        obstacle_mode=text("obstacle_mode", choices=OBSTACLE_MODES),
+        table_surface_z_m=number("table_surface_z_m", minimum=-1.0, maximum=2.0),
+        table_mask_band_m=number("table_mask_band_m", minimum=0.0, maximum=0.2),
+        target_allowance_margin_m=number("target_allowance_margin_m", minimum=0.0, maximum=0.2),
+        target_allowance_radius_m=number(
+            "target_allowance_radius_m", minimum=0.0, maximum=0.5, exclusive_minimum=True
+        ),
         map_required=boolean("map_required"),
         max_map_age_s=number("max_map_age_s", minimum=0.0, exclusive_minimum=True),
         min_map_coverage_ratio=number("min_map_coverage_ratio", minimum=0.0, maximum=1.0),

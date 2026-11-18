@@ -50,6 +50,8 @@ class ValidationContext:
     received_monotonic_s: float
     query: ObstacleQuery | None = None
     map_status: MapStatus | None = None
+    target_center_m: np.ndarray | None = None
+    target_half_extent_m: float | None = None
 
 
 def _reject(
@@ -177,7 +179,12 @@ def validate_chunk(
 
     workspace = check_workspace(smoothed, panda, config)
     obstacle = check_obstacle_distance(
-        workspace.ee_positions, context.query, context.map_status, config
+        workspace.ee_positions,
+        context.query,
+        context.map_status,
+        config,
+        target_center_m=context.target_center_m,
+        target_half_extent_m=context.target_half_extent_m,
     )
     limits = check_joint_limits(smoothed, stale.times_s, measured_array, config)
 

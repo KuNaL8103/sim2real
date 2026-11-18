@@ -56,6 +56,7 @@ from std_srvs.srv import Trigger  # noqa: E402
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint  # noqa: E402
 
 from sim2real import contracts  # noqa: E402
+from sim2real.expert import parse_instruction  # noqa: E402
 from sim2real.mapping.config import WorkspaceBounds  # noqa: E402
 from sim2real.mapping.obstacle_query import (  # noqa: E402
     LOW_COVERAGE,
@@ -81,12 +82,14 @@ from sim2real.safety.types import (  # noqa: E402
     MAP_TOO_LARGE,
     TRANSFORM_UNAVAILABLE,
 )
+from sim2real.sim.config import load_sim_configs  # noqa: E402
 from sim2real.sim.qos import (  # noqa: E402
     CONTROLLER_TRAJECTORY_QOS,
     JOINT_STATES_QOS,
     MAP_QOS,
     SAFETY_DIAGNOSTICS_QOS,
     SAFETY_STATUS_QOS,
+    TASK_INSTRUCTION_QOS,
     VLA_RAW_ACTION_QOS,
 )
 from sim2real_msgs.msg import SafetyStatus  # noqa: E402
@@ -231,6 +234,8 @@ class SafetyWatchdogNode(Node):
         super().__init__("safety_watchdog_node", **kwargs)
         self.declare_parameter("config_file", "")
         self.declare_parameter("panda_config", "")
+        self.declare_parameter("sim_config_dir", "")
+        self.declare_parameter("instructions_config", "")
 
         config_file = str(self.get_parameter("config_file").value or "")
         panda_config = str(self.get_parameter("panda_config").value or "")
@@ -238,6 +243,15 @@ class SafetyWatchdogNode(Node):
             config_file or self._default_config_path(),
             panda_config_path=panda_config or self._default_panda_path(),
         )
+        self._scene = load_sim_configs(
+            str(self.get_parameter("sim_config_dir").value or self._default_sim_config_dir())
+        ).scene
+        self._instructions_path = str(
+            self.get_parameter("instructions_config").value or self._default_instructions_path()
+        )
+        self._target_object_id: str | None = None
+        self._target_center_m: np.ndarray | None = None
+        self._target_half_extent_m: float | None = None
         self.gate = SafetyGate(self.config)
         self._lock = threading.RLock()
         self._monotonic = time.monotonic
@@ -290,6 +304,12 @@ class SafetyWatchdogNode(Node):
             _qos_profile(VLA_RAW_ACTION_QOS),
         )
         self.create_subscription(
+            String,
+            contracts.TASK_INSTRUCTION_TOPIC,
+            self._on_task_instruction,
+            _qos_profile(TASK_INSTRUCTION_QOS),
+        )
+        self.create_subscription(
             PointCloud2,
             contracts.WORKSPACE_POINTCLOUD_TOPIC,
             self._on_pointcloud,
@@ -318,6 +338,18 @@ class SafetyWatchdogNode(Node):
     def _default_panda_path(self) -> str:
         return str(Path(__file__).resolve().parents[4] / "configs" / "sim" / "panda.yaml")
 
+    @staticmethod
+    def _repo_root() -> Path:
+        if _bootstrap_root is not None:
+            return _bootstrap_root
+        return Path(__file__).resolve().parents[4]
+
+    def _default_sim_config_dir(self) -> str:
+        return str(self._repo_root() / "configs" / "sim")
+
+    def _default_instructions_path(self) -> str:
+        return str(self._repo_root() / "configs" / "expert" / "instructions.yaml")
+
     # ------------------------------------------------------------------ inputs
     def _on_joint_state(self, message: JointStateMsg) -> None:
         try:
@@ -341,6 +373,27 @@ class SafetyWatchdogNode(Node):
             self._joint_stamp_ns = stamp_ns
             self._joint_received_s = self._monotonic()
             self._joint_valid = True
+
+    def _on_task_instruction(self, message: String) -> None:
+        try:
+            task = parse_instruction(message.data, self._scene, self._instructions_path)
+            cube = self._scene.cubes.get(task.object_id)
+            if cube is None:
+                raise ValueError(f"unknown scene object {task.object_id!r}")
+            with self._lock:
+                self._target_object_id = task.object_id
+                self._target_center_m = np.asarray(cube.position, dtype=np.float64)
+                self._target_half_extent_m = float(cube.size) / 2.0
+            self.get_logger().info(
+                f"target object for obstacle allowance: {task.object_id} "
+                f"centre={np.asarray(cube.position).tolist()}"
+            )
+        except Exception as exc:
+            with self._lock:
+                self._target_object_id = None
+                self._target_center_m = None
+                self._target_half_extent_m = None
+            self.get_logger().warning(f"instruction does not resolve a target object: {exc}")
 
     def _on_pointcloud(self, message: PointCloud2) -> None:
         # The callback only hands the latest message to the worker.
@@ -479,6 +532,10 @@ class SafetyWatchdogNode(Node):
             received_monotonic_s=received_s,
             query=query,
             map_status=map_status,
+            target_center_m=(
+                None if self._target_center_m is None else self._target_center_m.copy()
+            ),
+            target_half_extent_m=self._target_half_extent_m,
         )
 
     # ------------------------------------------------------------------ output
@@ -713,6 +770,9 @@ class SafetyWatchdogNode(Node):
                     "max_map_age_s": self.config.max_map_age_s,
                     "command_period_s": self.config.command_period_s,
                     "command_time_convention": self.config.command_time_convention,
+                    "obstacle_mode": self.config.obstacle_mode,
+                    "table_mask_band_m": self.config.table_mask_band_m,
+                    "target_object_id": self._target_object_id,
                 },
             }
         message = String()

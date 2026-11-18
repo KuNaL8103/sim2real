@@ -179,6 +179,11 @@ class TestSafetyWatchdogNode(unittest.TestCase):
             parameter_overrides=[
                 Parameter("config_file", value=str(self.config_path)),
                 Parameter("panda_config", value=str(REPO_ROOT / "configs" / "sim" / "panda.yaml")),
+                Parameter("sim_config_dir", value=str(REPO_ROOT / "configs" / "sim")),
+                Parameter(
+                    "instructions_config",
+                    value=str(REPO_ROOT / "configs" / "expert" / "instructions.yaml"),
+                ),
             ]
         )
         self.helper = Node("safety_test_helper")
