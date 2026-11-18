@@ -96,7 +96,9 @@ configured volume is ignored. No bridge was built.
 
 **CI.** Both CI jobs for the push before the orchestrator stage at `27bf958` are
 **user-confirmed green** (2026-11-18, Actions tab; supporting evidence only).
-CI for the pipeline orchestrator push still needs the user's Actions-tab confirmation.
+The latest pre-session push at `2025e8c` is **user-confirmed green**
+(2026-11-18, Actions tab; supporting evidence only). CI for the final HEAD of
+this documentation session is **pending user confirmation**.
 
 **Open/pending.** The pre-registered overfit rule is unchanged and **UNMET**
 (arm 0.0333 vs 0.010, gripper 0.00688 vs 0.005, closed loop 0/6); the policy is

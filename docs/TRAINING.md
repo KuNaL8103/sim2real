@@ -729,7 +729,7 @@ instruction works.
 ## 17. Overfit decision rule (pre-registered)
 
 This rule was written and committed **before** any bundle or remote-run change in
-in the bundle-hardening work and before any remote overfit result exists. The numeric bars are a
+the bundle-hardening work and before any remote overfit result exists. The numeric bars are a
 judgement chosen in advance; they are **not derived from the remote data** and
 must not be edited after the remote run.
 

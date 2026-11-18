@@ -468,12 +468,12 @@ Counts below are from this session (2026-11-18) unless marked recorded.
 | Suite | Command | Result |
 | --- | --- | --- |
 | Core, ROS-free (official baseline) | `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` | **667 passed / 0 failed / 32 skipped / 0 errors** (scikit-learn absent) |
-| Lint | `uv run ruff check .` / `uv run ruff format --check .` | all checks passed; 295 files formatted |
+| Lint | `uv run ruff check .` / `uv run ruff format --check .` | all checks passed; 294 files formatted |
 | ROS adapters | `./scripts/build_and_test_ros.sh` (sourced Jazzy) | **699 passed / 0 failed / 5 skipped / 0 errors** |
 | colcon | `colcon test-result --verbose` | **27 tests / 0 errors / 0 failures / 5 skipped** |
 | ML | `scripts/run_ml_tests.sh` | **4 passed / 1 deselected** |
-| CI parity | `./scripts/ci_parity.sh` | recorded: core **664 / 35**, ROS **27 / 0 / 0 / 13** |
-| Clean clone | `./scripts/ci_parity.sh --clean-clone` | recorded at `9cce529`: **663 passed / 36 skipped**, rc 0 |
+| CI parity | `./scripts/ci_parity.sh` | measured 2026-11-18 on the edited tree based on `2025e8c`: core **665 passed / 34 skipped**; ROS **27 / 0 / 0 / 13** |
+| Clean clone | `./scripts/ci_parity.sh --clean-clone` | measured 2026-11-18 at `157123a` and `59c76b1`: **663 passed / 36 skipped**, rc 0 |
 
 A skip is not a pass. Skips mean: ROS is not sourced in the core environment; the optional
 `.venv-ml` or decoded dataset frames are absent; scikit-learn is not installed for the optional
