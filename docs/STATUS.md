@@ -4,7 +4,7 @@ This is the tracked status record. The local status notes file is untracked and 
 this file is authoritative for clones and CI.
 
 - Last verified test run: passed=666 failed=0 skipped=33 errors=0 | date=2026-11-18 | base_commit=27bf958
-- Last verified ROS test run: passed=698 failed=0 skipped=6 errors=0 | date=2026-11-18 | base_commit=27bf958
+- Last verified ROS test run: passed=699 failed=0 skipped=5 errors=0 | date=2026-11-18 | base_commit=27bf958
 - Task 1 status: complete
 
 ## Task 12 status: integrated pipeline, validation matrix, deployment docs (2026-11-18)
@@ -38,7 +38,7 @@ it.
 | suite | result |
 | --- | --- |
 | core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` (after the swap) | **667 passed / 0 failed / 32 skipped / 0 errors** |
-| `.venv-ros` pytest (built ROS + sourced) | **698 passed / 0 failed / 6 skipped / 0 errors** |
+| `.venv-ros` pytest (built ROS + sourced, after the swap) | **699 passed / 0 failed / 5 skipped / 0 errors** |
 | `colcon test` / `colcon test-result --verbose` | **27 tests / 0 errors / 0 failures / 5 skipped** |
 | `scripts/run_ml_tests.sh` (existing `.venv-ml`) | **4 passed / 1 deselected** |
 | `scripts/ci_parity.sh` | **passed**; core half **664 passed / 35 skipped**; ROS half **27 / 0 / 0 / 13 skipped** (scipy/open3d shadowed) |
@@ -71,9 +71,10 @@ torch/scipy/mujoco). **Swapped on 2026-11-18** with exactly two renames
 `.venv-ml/bin/python` imports torch/lerobot/peft, `uv pip list` shows
 scipy/mujoco/open3d absent, `scripts/run_ml_tests.sh` is **4 passed / 1
 deselected**, and one CPU handshake succeeded in **52.62 s**. The ROS-free core
-suite is **667 passed / 32 skipped** after the swap versus **666 / 33** before;
-the +1/-1 is `test_ml_env_independence.py` un-skipping now that `.venv-ml`
-matches `setup_envs.sh`. **`.venv-ml.old` is retained until the user says
+suite is **667 passed / 32 skipped** after the swap versus **666 / 33** before, and
+`.venv-ros` is **699 / 5** versus **698 / 6**; the +1/-1 in each is
+`test_ml_env_independence.py` un-skipping now that `.venv-ml` matches
+`setup_envs.sh`. **`.venv-ml.old` is retained until the user says
 delete.** `.venv-ml` and `.venv-ml.old` match the git-ignore pattern `.venv*/`.
 
 **Live checks.** Headless MuJoCo + mapper (60 s): `/joint_states` **18.04 Hz**,

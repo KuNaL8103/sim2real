@@ -67,7 +67,7 @@ assertion. The clean clone then passed **663 passed / 36 skipped**.
 | --- | --- | --- | --- |
 | `colcon build --symlink-install --parallel-workers 2` | 5 packages built | the adapters, interfaces, and new launches import/build | runtime correctness |
 | `colcon test` + `colcon test-result --verbose` | recorded in the status record | package-level tests | physical behaviour |
-| `.venv-ros/bin/python -m pytest -ra` (sourced ROS) | recorded in the status record | full ROS-marked integration suite, including the new pipeline graph tests | policy quality or safety |
+| `.venv-ros/bin/python -m pytest -ra` (sourced ROS, after the swap) | **699 passed / 0 failed / 5 skipped / 0 errors** | full ROS-marked integration suite, including the new pipeline graph tests | policy quality or safety |
 | `test_pipeline_mock_integration.py` (5 tests) | **5 passed** | fake observations → `vla_inference_node` → `safety_watchdog_node` → controller topic; safety is the only publisher; NaN chunk and missing map produce nothing; strict profile forwards a clean chunk and rejects a 4 mm obstacle; `sim_mock` differs only in `obstacle_mode` | a trained policy; physical safety |
 | HIL guarded test (`test_safety_watchdog.py::TestHilIntegration`) | reused from Task 11; skips with an explicit reason if `controller_manager` is unavailable | the mock stack follows commands, e-stop stops dispatch, reset needs fresh inputs | physical safety |
 
