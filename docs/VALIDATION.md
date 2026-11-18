@@ -26,7 +26,7 @@ Date of this record: 2026-11-18. Base commit before the Task 12 commit:
 | `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` (2026-11-18, tree at the Task 12 commit) | **666 passed / 0 failed / 33 skipped / 0 errors** (scikit-learn absent) | core algorithms, contracts, safety core, orchestrator state machine, resume/quarantine/gates, 10 new orchestrator tests | nothing about GPU, ros2_control, or a real robot |
 | `uv run ruff check .` / `ruff format --check .` | all checks passed; 294 files already formatted | style/import policy | runtime behaviour |
 | `./scripts/ci_parity.sh` (2026-11-18) | **passed**; core half **664 passed / 35 skipped** (`SIM2REAL_SKIP_RENDER=1` adds two render skips); ROS half colcon **27 tests / 0 errors / 0 failures / 13 skipped** | the CI jobs' commands reproduce locally, including the ROS half with scipy/open3d shadowed | CI itself |
-| `./scripts/ci_parity.sh --clean-clone` | recorded after the task commit; see the status record | a fresh clone of the committed tree passes | uncommitted work |
+| `./scripts/ci_parity.sh --clean-clone` (2026-11-18, commit `9cce529`) | **663 passed / 36 skipped**, rc 0 | a fresh clone of the committed tree passes the CI core job without `.venv-ml` | the ROS job (not run by this mode) |
 | `scripts/run_ml_tests.sh` (default `.venv-ml`) | **4 passed / 1 deselected** | ML-marked tests in the existing ML env | the clean rebuild (below) |
 | `.venv-ml.new` rebuild checks (2026-11-18) | **PASSED** — see below | a clean ML environment without scipy/mujoco | the swap (PENDING) |
 
@@ -48,6 +48,14 @@ Built with the pins in `scripts/setup_envs.sh` (no pin changes), CUDA index
 The existing `.venv-ml` was not touched and no swap was performed. The swap is
 **PENDING** the operator's confirmation; keep the old environment as
 `.venv-ml.old` when it happens.
+
+**Finding fixed by the clean clone.** The first clean-clone run errored in the
+orchestrator fixture because `BUILD` in `core_validation` mode carried the
+display string `".venv-ml (lerobot mode) / .venv (core validation)"`; when a
+real `.venv-ml` existed, the interpreter check treated it as `.venv-ml` and ran
+the core validation there. Commit `9cce529` resolves the environment explicitly
+(`core_validation -> .venv`, `lerobot -> .venv-ml`) and adds a regression
+assertion. The clean clone then passed **663 passed / 36 skipped**.
 
 ## L2 — ROS 2 build and integration
 

@@ -3,9 +3,100 @@
 This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
 this file is authoritative for clones and CI.
 
-- Last verified test run: passed=656 failed=0 skipped=28 errors=0 | date=2026-11-18 | base_commit=3779336
-- Last verified ROS test run: passed=683 failed=0 skipped=6 errors=0 | date=2026-11-18 | base_commit=3779336
+- Last verified test run: passed=666 failed=0 skipped=33 errors=0 | date=2026-11-18 | base_commit=27bf958
+- Last verified ROS test run: passed=698 failed=0 skipped=6 errors=0 | date=2026-11-18 | base_commit=27bf958
 - Task 1 status: complete
+
+## Task 12 status: integrated pipeline, validation matrix, deployment docs (2026-11-18)
+
+**Implemented.** A pure-Python orchestrator (`src/sim2real/orchestrator/`) with
+the explicit stages `GENERATE -> FILTER -> BUILD -> TRAIN -> EVALUATE ->
+ANALYZE_FAILURES -> TARGETED_GENERATE`; strict `configs/pipeline/{default,fake_e2e}.yaml`;
+`scripts/pipeline_orchestrator.py`; deterministic stage ids; resume and
+quarantine; atomic cycle manifests and `--lineage`; seed-ledger enforcement;
+hard bounds (cycles, episodes/cycle, wall time, writes, GPU time); approval
+gates; the existing flywheel ledger reused. Integrated launches
+`pipeline_sim.launch.py` and `pipeline_mock_hw.launch.py`, a labelled test-only
+`fake_observation_publisher`, and `configs/safety/sim_mock.yaml`. New docs:
+`docs/VALIDATION.md`, `docs/MANUAL_CHECKS.md`, `docs/RECOVERY.md`, a rewritten
+`README.md` and `docs/DEPLOYMENT.md` (mock bring-up + documented-only physical
+procedure), and the architecture diagrams/orchestrator section.
+
+**Decision recorded (user, 2026-11-18).** `configs/safety/default.yaml` stays
+`obstacle_mode: strict`. `configs/safety/sim_mock.yaml` sets `masked` and
+changes nothing else; it is used only by the simulation/mock launch files and
+CPU end-to-end tests and is validated only on the kinematic fake backend with a
+synthetic map. Real hardware requires the strict default unless the user changes
+it.
+
+**Counts in this session (scikit-learn absent):**
+
+| suite | result |
+| --- | --- |
+| core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` | **666 passed / 0 failed / 33 skipped / 0 errors** |
+| `.venv-ros` pytest (built ROS + sourced) | **698 passed / 0 failed / 6 skipped / 0 errors** |
+| `colcon test` / `colcon test-result --verbose` | **27 tests / 0 errors / 0 failures / 5 skipped** |
+| `scripts/run_ml_tests.sh` (existing `.venv-ml`) | **4 passed / 1 deselected** |
+| `scripts/ci_parity.sh` | **passed**; core half **664 passed / 35 skipped**; ROS half **27 / 0 / 0 / 13 skipped** (scipy/open3d shadowed) |
+| `scripts/ci_parity.sh --clean-clone` (commit `9cce529`) | **663 passed / 36 skipped**, rc 0 |
+| `.venv-ml.new` rebuild checks | **PASSED** (see below); swap **PENDING** |
+
+New tests: 10 core orchestrator tests plus 5 ROS integration tests; the Task 11
+guarded HIL test is reused. Skips are explicit (no `rclpy`, no `.venv-ml`, no
+decoded PNGs, optional sklearn cross-check).
+
+**Clean-clone finding (fixed in `9cce529`).** The first clean-clone run errored
+because `BUILD` in `core_validation` mode carried a display string that the
+interpreter check treated as `.venv-ml`; when a real `.venv-ml` existed, the
+core validation silently ran there. The environment is now resolved explicitly
+(`core_validation -> .venv`, `lerobot -> .venv-ml`) with a regression assertion,
+and the clean clone passed **663 passed / 36 skipped**.
+
+**`.venv-ml.new` rebuild (approved, run).** Built with the pins in
+`scripts/setup_envs.sh` and `ML_TORCH_BACKEND=cu126`; `scipy`, `mujoco`, and
+`open3d` are **absent**; resolved torch **2.11.0+cu126**, torchvision
+**0.26.0+cu126**, lerobot **0.6.1**, peft **0.21.3**, accelerate **1.16.0**,
+transformers **5.5.4**, num2words **0.5.14**; disk **6.7 GB**. Against
+`.venv-ml.new`: `ML_PYTHON=.venv-ml.new/bin/python scripts/run_ml_tests.sh`
+**4 passed / 1 deselected**; both `--help` commands rc 0; one policy-server
+handshake on `outputs/remote/overfit_remote/checkpoint-00001000` **succeeded on
+CPU in 50.32 s** (chunk 50, fps 10, overhead/wrist; parent imported no
+torch/scipy/mujoco). The existing `.venv-ml` was not touched; **no swap was
+performed**. The swap is PENDING the user's confirmation; keep the old one as
+`.venv-ml.old` when it happens. `.venv-ml` still contains the unapproved scipy
+1.18.1 / mujoco 4.0.1.
+
+**Live checks.** Headless MuJoCo + mapper (60 s): `/joint_states` **18.04 Hz**,
+overhead **1.863 Hz**, wrist **1.845 Hz**, `/workspace/pointcloud` **1.999 Hz**,
+**666 points** frame `world`, mapper counters overhead **80** / wrist **79** at
+n=160, no errors. Real fake-backend cycle: **13.74 s**, all seven stages
+completed, full lineage. Mock-hardware launch: controller-topic **publisher
+count 1**, **5.37 Hz** forwarded, diagnostics **164 accepted / 9-point chunk**,
+`/estop` latched and stopped dispatch; three transient `WATCHDOG_MAP_STALE`
+events during startup then a valid map (`age 0.356 s`, coverage 0.031). The
+CLI reset boundary is not reliable (discovery exceeded the 2 s hold); the
+automated in-process test covers refusal and success.
+
+**Documented gap.** `sim_node` has no command subscription, so the live ROS
+chain cannot close a loop through MuJoCo; closed-loop evaluation uses the
+in-process runner. Masked-mode target allowance comes from
+`/task_instruction` parsed against the **nominal** `configs/sim/scene.yaml` cube,
+so a randomized offset, a perception error, or a distractor inside that
+configured volume is ignored. No bridge was built.
+
+**CI.** Both CI jobs for the pre-Task-12 push at `27bf958` are
+**user-confirmed green** (2026-11-18, Actions tab; supporting evidence only).
+CI for the Task 12 push still needs the user's Actions-tab confirmation.
+
+**Open/pending.** The pre-registered overfit rule is unchanged and **UNMET**
+(arm 0.0333 vs 0.010, gripper 0.00688 vs 0.005, closed loop 0/6); the policy is
+under-trained. L5 real-checkpoint smoke **NOT RUN**; L6 Isaac **UNAVAILABLE**;
+L7 physical **NOT RUN**; latency runs 3/4 **NOT RUN**; remote provenance
+**user-reported**; manual checkpoints (Tasks 8, 8b, 10, 11, 11b, RViz, flywheel,
+`.venv-ml` swap, CI) **PENDING** in `docs/MANUAL_CHECKS.md`; MoveIt/OctoMap
+unverified. No policy-quality or physical-safety claim is made. A release tag is
+proposed but **not created**; it needs the user's explicit yes.
+
 
 The Task 10b checks used the code commit `1d8d882` (scheduler, status
 instrumentation, colcon pytest visibility). Both baseline conventions, side by
