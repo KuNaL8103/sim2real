@@ -1,4 +1,4 @@
-"""CLAUDE.md status lines must stay machine-parseable across tasks."""
+"""Local status notes and docs/STATUS.md lines must stay machine-parseable."""
 
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ def status_source() -> Path:
     return CLAUDE_MD if CLAUDE_MD.is_file() else STATUS_MD
 
 
-def claude_text() -> str:
+def status_text() -> str:
     return status_source().read_text(encoding="utf-8")
 
 
 def test_last_verified_line_is_parseable():
-    status = parse_last_verified(claude_text())
+    status = parse_last_verified(status_text())
     assert status.passed >= 0
     assert status.failed >= 0
     assert status.skipped >= 0
@@ -42,7 +42,7 @@ def test_last_verified_line_is_parseable():
 
 
 def test_ros_verified_line_is_parseable():
-    status = parse_last_verified_ros(claude_text())
+    status = parse_last_verified_ros(status_text())
     assert status is not None
     assert status.passed >= 0
     assert status.failed >= 0
@@ -57,7 +57,7 @@ def test_ros_verified_line_is_optional():
 
 
 def test_task1_status_line_is_parseable():
-    status = parse_task1_status(claude_text())
+    status = parse_task1_status(status_text())
     if status.complete:
         assert status.pending == ()
     else:

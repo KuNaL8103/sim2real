@@ -23,12 +23,12 @@ Date of this record: 2026-11-18. Base commit before the Task 12 commit:
 
 | Evidence | Result | Proves | Does NOT prove |
 | --- | --- | --- | --- |
-| `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` (2026-11-18, tree at the Task 12 commit) | **666 passed / 0 failed / 33 skipped / 0 errors** (scikit-learn absent) | core algorithms, contracts, safety core, orchestrator state machine, resume/quarantine/gates, 10 new orchestrator tests | nothing about GPU, ros2_control, or a real robot |
+| `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` (2026-11-18, after the `.venv-ml` swap) | **667 passed / 0 failed / 32 skipped / 0 errors** (scikit-learn absent) | core algorithms, contracts, safety core, orchestrator state machine, resume/quarantine/gates, 10 new orchestrator tests | nothing about GPU, ros2_control, or a real robot |
 | `uv run ruff check .` / `ruff format --check .` | all checks passed; 294 files already formatted | style/import policy | runtime behaviour |
 | `./scripts/ci_parity.sh` (2026-11-18) | **passed**; core half **664 passed / 35 skipped** (`SIM2REAL_SKIP_RENDER=1` adds two render skips); ROS half colcon **27 tests / 0 errors / 0 failures / 13 skipped** | the CI jobs' commands reproduce locally, including the ROS half with scipy/open3d shadowed | CI itself |
 | `./scripts/ci_parity.sh --clean-clone` (2026-11-18, commit `9cce529`) | **663 passed / 36 skipped**, rc 0 | a fresh clone of the committed tree passes the CI core job without `.venv-ml` | the ROS job (not run by this mode) |
 | `scripts/run_ml_tests.sh` (default `.venv-ml`) | **4 passed / 1 deselected** | ML-marked tests in the existing ML env | the clean rebuild (below) |
-| `.venv-ml.new` rebuild checks (2026-11-18) | **PASSED** — see below | a clean ML environment without scipy/mujoco | the swap (PENDING) |
+| `.venv-ml` rebuild and swap (2026-11-18) | **PASSED / DONE** — see below | a clean ML environment without scipy/mujoco, swapped in | the old environment (retained as `.venv-ml.old`) |
 
 ### `.venv-ml.new` rebuild (Task 12)
 
@@ -45,9 +45,13 @@ Built with the pins in `scripts/setup_envs.sh` (no pin changes), CUDA index
 | `scripts/verify_remote_checkpoint.py --help` | rc 0 |
 | policy-server handshake, `outputs/remote/overfit_remote/checkpoint-00001000`, one run, **CPU** (`CUDA_VISIBLE_DEVICES=""`) | **ok in 50.32 s**; checkpoint hash `f47b5e47…`, chunk 50, fps 10, cameras overhead/wrist; parent process imported no torch/scipy/mujoco |
 
-The existing `.venv-ml` was not touched and no swap was performed. The swap is
-**PENDING** the operator's confirmation; keep the old environment as
-`.venv-ml.old` when it happens.
+**Swapped on 2026-11-18** with exactly two renames; `.venv-ml.old` is retained
+until the operator says delete. Post-swap: `.venv-ml/bin/python` imports
+torch/lerobot/peft, `uv pip list` shows scipy/mujoco/open3d absent,
+`scripts/run_ml_tests.sh` is **4 passed / 1 deselected**, one CPU handshake
+succeeded in **52.62 s**, and the ROS-free core suite is **667 passed / 32
+skipped** versus 666 / 33 before (the +1/-1 is
+`test_ml_env_independence.py` un-skipping).
 
 **Finding fixed by the clean clone.** The first clean-clone run errored in the
 orchestrator fixture because `BUILD` in `core_validation` mode carried the
@@ -89,7 +93,7 @@ Orchestrator on the real code path:
 
 ```bash
 uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/fake_e2e.yaml \
-    --root /tmp/opencode/orch_e2e --execute --cycles 1
+    --root /tmp/sim2real/orch_e2e --execute --cycles 1
 ```
 
 Result: `cycle_0001: COMPLETED wall=13.74s`, all seven stages completed, seeds

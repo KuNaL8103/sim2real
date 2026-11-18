@@ -12,7 +12,7 @@ Examples:
 
     # One fake-backend end-to-end cycle on the CPU
     uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/fake_e2e.yaml \
-        --execute --root /tmp/opencode/pipeline_run
+        --execute --root /tmp/sim2real/pipeline_run
 
     # Lineage for a checkpoint produced by an earlier cycle
     uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/default.yaml \

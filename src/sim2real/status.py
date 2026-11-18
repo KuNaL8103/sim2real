@@ -1,8 +1,8 @@
-"""Machine-readable parsing of the status lines in ``CLAUDE.md``.
+"""Machine-readable parsing of the status lines in the local status notes.
 
 Later tasks read the verified test counts from here instead of re-parsing
 prose. The *core* line is mandatory; the *ROS* line is optional. Keep the line
-formats in ``CLAUDE.md`` exactly as documented.
+formats in the local status notes exactly as documented.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ TASK1_STATUS_RE = re.compile(
 
 
 class StatusParseError(ValueError):
-    """Raised when ``CLAUDE.md`` does not contain a parseable status line."""
+    """Raised when the status notes do not contain a parseable status line."""
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ def parse_last_verified(text: str) -> TestRunStatus:
     """Parse the mandatory ``Last verified test run`` (core) line."""
     match = LAST_VERIFIED_RE.search(text)
     if match is None:
-        raise StatusParseError("CLAUDE.md is missing a parseable 'Last verified test run' line")
+        raise StatusParseError("status notes are missing a parseable 'Last verified test run' line")
     return _status_from_match(match)
 
 
@@ -82,10 +82,10 @@ def parse_last_verified_ros(text: str) -> TestRunStatus | None:
 
 
 def parse_task1_status(text: str) -> TaskStatus:
-    """Parse the ``Task 1 status`` line from CLAUDE.md text."""
+    """Parse the ``Task 1 status`` line from status-notes text."""
     match = TASK1_STATUS_RE.search(text)
     if match is None:
-        raise StatusParseError("CLAUDE.md is missing a parseable 'Task 1 status' line")
+        raise StatusParseError("status notes are missing a parseable 'Task 1 status' line")
     status = match.group("status")
     if status == "complete":
         return TaskStatus(complete=True, pending=())

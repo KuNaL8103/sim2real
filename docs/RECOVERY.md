@@ -147,7 +147,7 @@ or use a separate worktree:
 ```bash
 git status --short
 git diff --stat
-git worktree add /tmp/opencode/sim2real_clean HEAD
+git worktree add /tmp/sim2real/sim2real_clean HEAD
 ```
 
 Never use `git checkout -- .`, `git reset --hard`, or force-push.

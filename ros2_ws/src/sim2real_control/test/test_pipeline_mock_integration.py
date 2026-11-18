@@ -183,7 +183,7 @@ class TestPipelineGraph(unittest.TestCase):
     """fake observations + fake inference + safety, in-process."""
 
     def setUp(self) -> None:
-        self.tmp = Path("/tmp/opencode") / f"pipeline_graph_{os.getpid()}"
+        self.tmp = Path("/tmp/sim2real") / f"pipeline_graph_{os.getpid()}"
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.safety_config = _write_safety_config(
             self.tmp, REPO_ROOT / "configs" / "safety" / "sim_mock.yaml"
@@ -314,7 +314,7 @@ class TestStrictProfileStillGuards(unittest.TestCase):
     """The shipped default profile stays strict and still rejects a close obstacle."""
 
     def setUp(self) -> None:
-        self.tmp = Path("/tmp/opencode") / f"pipeline_strict_{os.getpid()}"
+        self.tmp = Path("/tmp/sim2real") / f"pipeline_strict_{os.getpid()}"
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.safety_config = _write_safety_config(
             self.tmp, REPO_ROOT / "configs" / "safety" / "default.yaml"

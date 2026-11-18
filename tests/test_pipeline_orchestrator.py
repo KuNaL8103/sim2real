@@ -348,6 +348,6 @@ def test_shipped_profiles_and_ledger_are_consistent() -> None:
     # The flywheel controller remains the single ledger implementation.
     evaluation = load_evaluation_config(REPO_ROOT / "configs" / "evaluation" / "default.yaml")
     controller = FlywheelController(
-        evaluation, ledger_path="/tmp/opencode/flywheel_test.jsonl", stop_file="/tmp/opencode/STOP"
+        evaluation, ledger_path="/tmp/sim2real/flywheel_test.jsonl", stop_file="/tmp/sim2real/STOP"
     )
     assert controller.status()["will_train"] is False

@@ -1,6 +1,6 @@
 # Status
 
-This is the tracked status record. Local `CLAUDE.md` is untracked and ignored;
+This is the tracked status record. The local status notes file is untracked and ignored;
 this file is authoritative for clones and CI.
 
 - Last verified test run: passed=666 failed=0 skipped=33 errors=0 | date=2026-11-18 | base_commit=27bf958
@@ -8,6 +8,10 @@ this file is authoritative for clones and CI.
 - Task 1 status: complete
 
 ## Task 12 status: integrated pipeline, validation matrix, deployment docs (2026-11-18)
+
+`docs/MASTER_SPEC.md` is kept verbatim as the input specification and still
+contains the original prompt text; it is a provenance record, not project
+documentation.
 
 **Implemented.** A pure-Python orchestrator (`src/sim2real/orchestrator/`) with
 the explicit stages `GENERATE -> FILTER -> BUILD -> TRAIN -> EVALUATE ->
@@ -33,13 +37,13 @@ it.
 
 | suite | result |
 | --- | --- |
-| core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` | **666 passed / 0 failed / 33 skipped / 0 errors** |
+| core ROS-free `env -u PYTHONPATH -u AMENT_PREFIX_PATH uv run pytest -ra` (after the swap) | **667 passed / 0 failed / 32 skipped / 0 errors** |
 | `.venv-ros` pytest (built ROS + sourced) | **698 passed / 0 failed / 6 skipped / 0 errors** |
 | `colcon test` / `colcon test-result --verbose` | **27 tests / 0 errors / 0 failures / 5 skipped** |
 | `scripts/run_ml_tests.sh` (existing `.venv-ml`) | **4 passed / 1 deselected** |
 | `scripts/ci_parity.sh` | **passed**; core half **664 passed / 35 skipped**; ROS half **27 / 0 / 0 / 13 skipped** (scipy/open3d shadowed) |
 | `scripts/ci_parity.sh --clean-clone` (commit `9cce529`) | **663 passed / 36 skipped**, rc 0 |
-| `.venv-ml.new` rebuild checks | **PASSED** (see below); swap **PENDING** |
+| `.venv-ml` rebuild and swap | **PASSED / DONE** (see below) |
 
 New tests: 10 core orchestrator tests plus 5 ROS integration tests; the Task 11
 guarded HIL test is reused. Skips are explicit (no `rclpy`, no `.venv-ml`, no
@@ -52,19 +56,25 @@ core validation silently ran there. The environment is now resolved explicitly
 (`core_validation -> .venv`, `lerobot -> .venv-ml`) with a regression assertion,
 and the clean clone passed **663 passed / 36 skipped**.
 
-**`.venv-ml.new` rebuild (approved, run).** Built with the pins in
-`scripts/setup_envs.sh` and `ML_TORCH_BACKEND=cu126`; `scipy`, `mujoco`, and
-`open3d` are **absent**; resolved torch **2.11.0+cu126**, torchvision
-**0.26.0+cu126**, lerobot **0.6.1**, peft **0.21.3**, accelerate **1.16.0**,
-transformers **5.5.4**, num2words **0.5.14**; disk **6.7 GB**. Against
-`.venv-ml.new`: `ML_PYTHON=.venv-ml.new/bin/python scripts/run_ml_tests.sh`
-**4 passed / 1 deselected**; both `--help` commands rc 0; one policy-server
-handshake on `outputs/remote/overfit_remote/checkpoint-00001000` **succeeded on
-CPU in 50.32 s** (chunk 50, fps 10, overhead/wrist; parent imported no
-torch/scipy/mujoco). The existing `.venv-ml` was not touched; **no swap was
-performed**. The swap is PENDING the user's confirmation; keep the old one as
-`.venv-ml.old` when it happens. `.venv-ml` still contains the unapproved scipy
-1.18.1 / mujoco 4.0.1.
+**`.venv-ml` rebuild and swap (approved, run).** Built `.venv-ml.new` with the
+pins in `scripts/setup_envs.sh` and `ML_TORCH_BACKEND=cu126`; `scipy`, `mujoco`,
+and `open3d` are **absent**; resolved torch **2.11.0+cu126**, torchvision
+**0.26.0+cu126**, lerobot **0.6.1**, peft **0.21.3**, accelerate **1.16.0**
+(previously 0.21.2 / 1.15.0), transformers **5.5.4**, num2words **0.5.14**;
+disk **6.7 GB**. Against `.venv-ml.new`: `ML_PYTHON=.venv-ml.new/bin/python
+scripts/run_ml_tests.sh` **4 passed / 1 deselected**; both `--help` commands
+rc 0; one policy-server handshake on
+`outputs/remote/overfit_remote/checkpoint-00001000` **succeeded on CPU in
+50.32 s** (chunk 50, fps 10, overhead/wrist; parent imported no
+torch/scipy/mujoco). **Swapped on 2026-11-18** with exactly two renames
+(`.venv-ml -> .venv-ml.old`, `.venv-ml.new -> .venv-ml`); post-swap
+`.venv-ml/bin/python` imports torch/lerobot/peft, `uv pip list` shows
+scipy/mujoco/open3d absent, `scripts/run_ml_tests.sh` is **4 passed / 1
+deselected**, and one CPU handshake succeeded in **52.62 s**. The ROS-free core
+suite is **667 passed / 32 skipped** after the swap versus **666 / 33** before;
+the +1/-1 is `test_ml_env_independence.py` un-skipping now that `.venv-ml`
+matches `setup_envs.sh`. **`.venv-ml.old` is retained until the user says
+delete.** `.venv-ml` and `.venv-ml.old` match the git-ignore pattern `.venv*/`.
 
 **Live checks.** Headless MuJoCo + mapper (60 s): `/joint_states` **18.04 Hz**,
 overhead **1.863 Hz**, wrist **1.845 Hz**, `/workspace/pointcloud` **1.999 Hz**,

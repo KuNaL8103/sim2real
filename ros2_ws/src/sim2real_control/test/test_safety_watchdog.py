@@ -162,7 +162,7 @@ def _spin_until(executor, predicate, timeout: float = 10.0) -> bool:
 @unittest.skipIf(IMPORT_ERROR is not None, IMPORT_ERROR or "")
 class TestSafetyWatchdogNode(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path("/tmp/opencode") / f"safety_{self._testMethodName}_{os.getpid()}"
+        self.tmp = Path("/tmp/sim2real") / f"safety_{self._testMethodName}_{os.getpid()}"
         self.tmp.mkdir(parents=True, exist_ok=True)
         # Keep the in-process tests robust against Python scheduling while
         # exercising the same code path; the shipped defaults are covered by
@@ -462,7 +462,7 @@ class TestHilIntegration(unittest.TestCase):
         )
         if probe.returncode != 0:
             raise unittest.SkipTest("controller_manager is not installed")
-        cls.launch_log = Path("/tmp/opencode") / f"hil_{os.getpid()}.log"
+        cls.launch_log = Path("/tmp/sim2real") / f"hil_{os.getpid()}.log"
         cls.launch_log.parent.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env["ROS_DOMAIN_ID"] = "79"

@@ -144,7 +144,7 @@ adapter is an unexercised guard.
 - Optional `render_only_when_subscribed`.
 - Opt-in renderer benchmarks; no default changes.
 - Verification/hardening of `setup_envs.sh`, CI asset options, QoS, asset fetch,
-  and `opencode.json`.
+  and the local tool configuration.
 
 ## Scope of Task 2
 
@@ -1497,7 +1497,7 @@ The evidence (clean seeds 4000-4039, baseline expert, new classifier): 26/40
 successful; successful clean episodes had 0.577 flagged steps on average (max 19)
 and 0.308 collision runs (max 1). Categories were cube-cube 46, cube-hand 25,
 table-finger 11, and finger/non-target-cube 15. The six perturbations on seeds
-4100-4129 and their flag/run means are in `CLAUDE.md`. The old
+4100-4129 and their flag/run means are in the local, untracked status notes. The old
 "any contact" bug is gone; the remaining flags are real classified contacts, not
 the intended grasp.
 

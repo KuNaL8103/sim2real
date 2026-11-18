@@ -10,7 +10,7 @@
 # CI sets SIM2REAL_SKIP_RENDER=1 on the hosted runner; this script mirrors that.
 #
 # --clean-clone mirrors only the CI core job in a fresh local clone (no
-# an ML venv, no CLAUDE.md, no data/). Local fetched assets are copied into the
+# an ML venv, no local status notes, no data/). Local fetched assets are copied into the
 # clone when present so the asset step does not need the network.
 set -euo pipefail
 

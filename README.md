@@ -72,7 +72,7 @@ Run one fake-backend cycle on the CPU (real scripts, fake TRAIN only; seeds
 
 ```bash
 uv run python scripts/pipeline_orchestrator.py --config configs/pipeline/fake_e2e.yaml \
-    --root /tmp/opencode/pipeline_e2e --execute --cycles 1
+    --root /tmp/sim2real/pipeline_e2e --execute --cycles 1
 ```
 
 Lineage for a checkpoint:
@@ -86,7 +86,7 @@ Headless MuJoCo smoke (physics only):
 
 ```bash
 uv run python scripts/collect_rollouts.py --backend mujoco --num 1 --seed 21000 \
-    --out /tmp/opencode/mujoco_smoke
+    --out /tmp/sim2real/mujoco_smoke
 ```
 
 ROS 2 (only if Jazzy is installed):
