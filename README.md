@@ -17,6 +17,12 @@ effective policy success rate of 0/30 (the recorded 1/30 is a success-definition
 0/6 closed-loop success on the training seeds, and an unmet pre-registered overfit rule (first-step
 arm L1 0.0333 rad against a 0.010 bar, gripper 0.00688 m against 0.005).
 
+![MuJoCo scripted expert performing the pick-and-place task, third-person view](docs/assets/demo.gif)
+
+*The scripted expert on seed 21000, rendered from the recorded episode through a free
+third-person camera (0.0 rad joint / 0.0 m object replay error). This is the scripted
+expert, not the trained VLA policy; the policy result is reported honestly below.*
+
 ```text
 scene + seed + instruction
         |
